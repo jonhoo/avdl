@@ -150,7 +150,15 @@ fn run_idl2schemata(
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
     let (source, input_dir) = read_input(&input)?;
-    let (_idl_file, registry) = parse_and_resolve(&source, &input_dir, import_dirs)?;
+    let (idl_file, registry) = parse_and_resolve(&source, &input_dir, import_dirs)?;
+
+    // Extract the protocol namespace so that `schema_to_json` can shorten
+    // fully-qualified type references to simple names when they share the
+    // same namespace (matching Java's `Schema.toString(true)` behavior).
+    let namespace = match &idl_file {
+        IdlFile::ProtocolFile(protocol) => protocol.namespace.clone(),
+        _ => None,
+    };
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
     fs::create_dir_all(&output_dir)
@@ -162,6 +170,11 @@ fn run_idl2schemata(
     // within each schema can be resolved and inlined.
     let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
     let all_lookup = build_lookup(&registry_schemas, None);
+
+    // Share `known_names` across schema iterations so that types inlined
+    // inside a record on first encounter are emitted as bare string
+    // references in subsequent `.avsc` files, matching Java behavior.
+    let mut known_names = IndexSet::new();
 
     // Write each named schema as an individual .avsc file.
     for schema in registry.schemas() {
@@ -178,7 +191,7 @@ fn run_idl2schemata(
             None => continue,
         };
 
-        let json_value = schema_to_json(schema, &mut IndexSet::new(), None, &all_lookup);
+        let json_value = schema_to_json(schema, &mut known_names, namespace.as_deref(), &all_lookup);
         let json_str = serde_json::to_string_pretty(&json_value)
             .map_err(|e| IdlError::Other(format!("serialize JSON for {type_name}: {e}")))
             .map_err(miette::Report::new)?;
