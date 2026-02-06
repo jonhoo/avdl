@@ -265,20 +265,35 @@ fn object_to_schema(
 // Named Type Parsers
 // ==============================================================================
 
+/// Split a potentially fully-qualified Avro name into `(simple_name, Option<namespace>)`.
+///
+/// In Avro's JSON encoding, the `name` field of a named type may contain a
+/// fully-qualified name like `"ns.other.schema.Baz"`. Per the Avro spec, the
+/// portion before the last dot is the namespace and the portion after is the
+/// simple name. This mirrors the Java `Schema.Name` constructor behavior.
+fn split_qualified_name(raw_name: &str) -> (String, Option<String>) {
+    if let Some(pos) = raw_name.rfind('.') {
+        (raw_name[pos + 1..].to_string(), Some(raw_name[..pos].to_string()))
+    } else {
+        (raw_name.to_string(), None)
+    }
+}
+
 fn parse_record(
     obj: &serde_json::Map<String, Value>,
     type_str: &str,
     default_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
-    let name = obj
+    let raw_name = obj
         .get("name")
         .and_then(|n| n.as_str())
-        .ok_or_else(|| IdlError::Parse("record missing 'name'".to_string()))?
-        .to_string();
+        .ok_or_else(|| IdlError::Parse("record missing 'name'".to_string()))?;
+    let (name, inferred_ns) = split_qualified_name(raw_name);
     let namespace = obj
         .get("namespace")
         .and_then(|n| n.as_str())
         .map(|s| s.to_string())
+        .or(inferred_ns)
         .or_else(|| default_namespace.map(|s| s.to_string()));
     let doc = obj
         .get("doc")
@@ -320,15 +335,16 @@ fn parse_enum(
     obj: &serde_json::Map<String, Value>,
     default_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
-    let name = obj
+    let raw_name = obj
         .get("name")
         .and_then(|n| n.as_str())
-        .ok_or_else(|| IdlError::Parse("enum missing 'name'".to_string()))?
-        .to_string();
+        .ok_or_else(|| IdlError::Parse("enum missing 'name'".to_string()))?;
+    let (name, inferred_ns) = split_qualified_name(raw_name);
     let namespace = obj
         .get("namespace")
         .and_then(|n| n.as_str())
         .map(|s| s.to_string())
+        .or(inferred_ns)
         .or_else(|| default_namespace.map(|s| s.to_string()));
     let doc = obj
         .get("doc")
@@ -369,15 +385,16 @@ fn parse_fixed(
     obj: &serde_json::Map<String, Value>,
     default_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
-    let name = obj
+    let raw_name = obj
         .get("name")
         .and_then(|n| n.as_str())
-        .ok_or_else(|| IdlError::Parse("fixed missing 'name'".to_string()))?
-        .to_string();
+        .ok_or_else(|| IdlError::Parse("fixed missing 'name'".to_string()))?;
+    let (name, inferred_ns) = split_qualified_name(raw_name);
     let namespace = obj
         .get("namespace")
         .and_then(|n| n.as_str())
         .map(|s| s.to_string())
+        .or(inferred_ns)
         .or_else(|| default_namespace.map(|s| s.to_string()));
     let doc = obj
         .get("doc")
@@ -1075,5 +1092,169 @@ mod tests {
         .expect("parse bare primitive object");
 
         assert_eq!(schema, AvroSchema::Long);
+    }
+
+    // =========================================================================
+    // Qualified name splitting tests (issue #19)
+    // =========================================================================
+
+    #[test]
+    fn split_qualified_name_simple() {
+        let (name, ns) = split_qualified_name("Baz");
+        assert_eq!(name, "Baz");
+        assert_eq!(ns, None);
+    }
+
+    #[test]
+    fn split_qualified_name_fully_qualified() {
+        let (name, ns) = split_qualified_name("ns.other.schema.Baz");
+        assert_eq!(name, "Baz");
+        assert_eq!(ns, Some("ns.other.schema".to_string()));
+    }
+
+    #[test]
+    fn split_qualified_name_single_dot() {
+        let (name, ns) = split_qualified_name("org.Foo");
+        assert_eq!(name, "Foo");
+        assert_eq!(ns, Some("org".to_string()));
+    }
+
+    #[test]
+    fn record_with_qualified_name_splits_into_name_and_namespace() {
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "ns.other.schema.Baz",
+                "fields": []
+            }),
+            None,
+        )
+        .expect("parse record with qualified name");
+
+        match schema {
+            AvroSchema::Record {
+                name, namespace, ..
+            } => {
+                assert_eq!(name, "Baz");
+                assert_eq!(namespace, Some("ns.other.schema".to_string()));
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn record_with_qualified_name_explicit_namespace_takes_precedence() {
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "ns.other.schema.Baz",
+                "namespace": "explicit.ns",
+                "fields": []
+            }),
+            None,
+        )
+        .expect("parse record with explicit namespace");
+
+        match schema {
+            AvroSchema::Record {
+                name, namespace, ..
+            } => {
+                assert_eq!(name, "Baz");
+                assert_eq!(namespace, Some("explicit.ns".to_string()));
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enum_with_qualified_name_splits() {
+        let schema = json_to_schema(
+            &json!({
+                "type": "enum",
+                "name": "org.example.Suit",
+                "symbols": ["HEARTS"]
+            }),
+            None,
+        )
+        .expect("parse enum with qualified name");
+
+        match schema {
+            AvroSchema::Enum {
+                name, namespace, ..
+            } => {
+                assert_eq!(name, "Suit");
+                assert_eq!(namespace, Some("org.example".to_string()));
+            }
+            other => panic!("expected Enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fixed_with_qualified_name_splits() {
+        let schema = json_to_schema(
+            &json!({
+                "type": "fixed",
+                "name": "com.example.MD5",
+                "size": 16
+            }),
+            None,
+        )
+        .expect("parse fixed with qualified name");
+
+        match schema {
+            AvroSchema::Fixed {
+                name, namespace, ..
+            } => {
+                assert_eq!(name, "MD5");
+                assert_eq!(namespace, Some("com.example".to_string()));
+            }
+            other => panic!("expected Fixed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn record_simple_name_falls_back_to_default_namespace() {
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Event",
+                "fields": []
+            }),
+            Some("org.default"),
+        )
+        .expect("parse record with default namespace");
+
+        match schema {
+            AvroSchema::Record {
+                name, namespace, ..
+            } => {
+                assert_eq!(name, "Event");
+                assert_eq!(namespace, Some("org.default".to_string()));
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn record_qualified_name_overrides_default_namespace() {
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "org.foo.Foo",
+                "fields": []
+            }),
+            Some("org.default"),
+        )
+        .expect("parse record with qualified name overriding default");
+
+        match schema {
+            AvroSchema::Record {
+                name, namespace, ..
+            } => {
+                assert_eq!(name, "Foo");
+                assert_eq!(namespace, Some("org.foo".to_string()));
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
     }
 }
