@@ -1,0 +1,48 @@
+#[allow(
+    dead_code,
+    non_snake_case,
+    non_upper_case_globals,
+    nonstandard_style,
+    unused_imports,
+    unused_mut,
+    unused_braces,
+    unused_variables,
+    clippy::all
+)]
+pub mod idlbaselistener;
+#[allow(
+    dead_code,
+    non_snake_case,
+    non_upper_case_globals,
+    nonstandard_style,
+    unused_imports,
+    unused_mut,
+    unused_braces,
+    unused_variables,
+    clippy::all
+)]
+pub mod idllexer;
+#[allow(
+    dead_code,
+    non_snake_case,
+    non_upper_case_globals,
+    nonstandard_style,
+    unused_imports,
+    unused_mut,
+    unused_braces,
+    unused_variables,
+    clippy::all
+)]
+pub mod idllistener;
+#[allow(
+    dead_code,
+    non_snake_case,
+    non_upper_case_globals,
+    nonstandard_style,
+    unused_imports,
+    unused_mut,
+    unused_braces,
+    unused_variables,
+    clippy::all
+)]
+pub mod idlparser;

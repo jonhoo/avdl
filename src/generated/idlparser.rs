@@ -1,11 +1,4 @@
 // Generated from avro/share/idl_grammar/org/apache/avro/idl/Idl.g4 by ANTLR 4.13.2
-#![allow(dead_code)]
-#![allow(non_snake_case)]
-#![allow(non_upper_case_globals)]
-#![allow(nonstandard_style)]
-#![allow(unused_imports)]
-#![allow(unused_mut)]
-#![allow(unused_braces)]
 use antlr4rust::PredictionContextCache;
 use antlr4rust::parser::{Parser, BaseParser, ParserRecog, ParserNodeType};
 use antlr4rust::token_stream::TokenStream;
