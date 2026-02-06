@@ -24,6 +24,11 @@ The integration tests parse `.avdl` files from the Avro test suite and
 compare the serialized JSON output against golden `.avpr`/`.avsc` files.
 Known issues are tracked in `issues/`.
 
+When comparing our JSON output against the Java tool's golden files,
+**ignore JSON key ordering**. Our output currently sorts keys
+alphabetically. Compare output semantically (parse both as JSON and
+compare values) rather than as raw strings.
+
 ## CLI usage
 
 ```sh
