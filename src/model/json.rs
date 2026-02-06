@@ -17,8 +17,11 @@
 // after the record that uses it -- the expected JSON inlines the enum inside
 // the record's field.
 
+use std::io;
+
 use indexmap::IndexMap;
 use indexmap::IndexSet;
+use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::protocol::{Message, Protocol};
@@ -619,4 +622,328 @@ fn schema_ref_name(
 fn indexmap_to_value(map: IndexMap<String, Value>) -> Value {
     let json_map: Map<String, Value> = map.into_iter().collect();
     Value::Object(json_map)
+}
+
+// =============================================================================
+// Java-Compatible JSON Serialization
+// =============================================================================
+//
+// Java's Jackson library uses `Double.toString()` when serializing double values
+// in JSON. Since JDK 12, `Double.toString()` uses scientific notation when
+// abs(value) >= 1e7 or abs(value) < 1e-3 (for non-zero values). For example,
+// `-1.0e12` is serialized as `-1.0E12` rather than `-1000000000000.0`.
+//
+// Rust's `serde_json` always uses the `ryu` crate's shortest decimal
+// representation, which avoids scientific notation for these values. To match
+// Java's output byte-for-byte, we use a custom `serde_json::ser::Formatter`
+// that overrides `write_f64` to apply Java-style formatting.
+
+/// Format an `f64` value the way Java's `Double.toString()` does.
+///
+/// Java uses scientific notation when `abs(value) >= 1e7` or when `abs(value) > 0`
+/// and `abs(value) < 1e-3`. The significand always includes at least one digit
+/// after the decimal point, and positive exponents have no `+` sign.
+///
+/// Examples:
+/// - `-1.0e12` -> `"-1.0E12"`
+/// - `1.0e-4`  -> `"1.0E-4"`
+/// - `1.5`     -> `"1.5"` (uses default formatting)
+/// - `0.0`     -> `"0.0"` (uses default formatting)
+pub fn format_f64_like_java(val: f64) -> String {
+    // NaN and infinity are handled elsewhere (as JSON strings), but guard
+    // against them here for safety.
+    if val.is_nan() || val.is_infinite() {
+        return format!("{val}");
+    }
+
+    let abs = val.abs();
+    let needs_scientific = (abs >= 1e7) || (abs > 0.0 && abs < 1e-3);
+
+    if !needs_scientific {
+        // For values in the normal range, use ryu's shortest representation
+        // (matching serde_json's default behavior).
+        return ryu::Buffer::new().format(val).to_string();
+    }
+
+    // Use Rust's {:E} formatter to get scientific notation, then adjust to
+    // match Java's format. Rust produces e.g. "-1E12" or "1.23456E10", but
+    // Java always includes a decimal point in the significand: "-1.0E12".
+    let formatted = format!("{val:E}");
+
+    // Find the 'E' separator to split significand and exponent.
+    let e_pos = formatted
+        .find('E')
+        .expect("format {:E} always produces an 'E'");
+    let (significand, exponent_part) = formatted.split_at(e_pos);
+
+    // If the significand lacks a decimal point, insert ".0" before the E.
+    // For example, "-1E12" becomes "-1.0E12".
+    if significand.contains('.') {
+        formatted
+    } else {
+        format!("{significand}.0{exponent_part}")
+    }
+}
+
+/// A JSON formatter that wraps `serde_json::ser::PrettyFormatter` but overrides
+/// `write_f64` to match Java's `Double.toString()` scientific notation behavior.
+///
+/// All other formatting (indentation, key ordering, etc.) is delegated to the
+/// inner `PrettyFormatter`.
+struct JavaPrettyFormatter<'a> {
+    inner: serde_json::ser::PrettyFormatter<'a>,
+}
+
+impl<'a> JavaPrettyFormatter<'a> {
+    fn new() -> Self {
+        Self {
+            inner: serde_json::ser::PrettyFormatter::new(),
+        }
+    }
+}
+
+impl serde_json::ser::Formatter for JavaPrettyFormatter<'_> {
+    // =========================================================================
+    // Override write_f64 to use Java-style scientific notation.
+    // =========================================================================
+
+    fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        let formatted = format_f64_like_java(value);
+        writer.write_all(formatted.as_bytes())
+    }
+
+    // =========================================================================
+    // Delegate all indentation and structural formatting to PrettyFormatter.
+    //
+    // PrettyFormatter only overrides these methods from the Formatter trait;
+    // all other methods (write_null, write_bool, write_i32, etc.) use the
+    // default trait implementations, which are identical between our wrapper
+    // and PrettyFormatter. We only need to delegate the methods that
+    // PrettyFormatter actually overrides.
+    // =========================================================================
+
+    fn begin_array<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_array(writer)
+    }
+
+    fn end_array<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.end_array(writer)
+    }
+
+    fn begin_array_value<W>(&mut self, writer: &mut W, first: bool) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_array_value(writer, first)
+    }
+
+    fn end_array_value<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.end_array_value(writer)
+    }
+
+    fn begin_object<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_object(writer)
+    }
+
+    fn end_object<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.end_object(writer)
+    }
+
+    fn begin_object_key<W>(&mut self, writer: &mut W, first: bool) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_object_key(writer, first)
+    }
+
+    fn begin_object_value<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.begin_object_value(writer)
+    }
+
+    fn end_object_value<W>(&mut self, writer: &mut W) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        self.inner.end_object_value(writer)
+    }
+}
+
+/// Serialize a `serde_json::Value` to a pretty-printed JSON string using
+/// Java-compatible float formatting.
+///
+/// This is a drop-in replacement for `serde_json::to_string_pretty` that
+/// formats `f64` values to match Java's `Double.toString()` output, using
+/// scientific notation for very large or very small values.
+pub fn to_string_pretty_java(value: &Value) -> serde_json::Result<String> {
+    let mut writer = Vec::with_capacity(128);
+    let formatter = JavaPrettyFormatter::new();
+    let mut serializer = serde_json::Serializer::with_formatter(&mut writer, formatter);
+    value.serialize(&mut serializer)?;
+    // Safety: serde_json only produces valid UTF-8.
+    Ok(unsafe { String::from_utf8_unchecked(writer) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // format_f64_like_java: Scientific notation for large/small values
+    // =========================================================================
+
+    #[test]
+    fn large_negative_value_uses_scientific_notation() {
+        assert_eq!(format_f64_like_java(-1.0e12), "-1.0E12");
+    }
+
+    #[test]
+    fn large_positive_value_uses_scientific_notation() {
+        assert_eq!(format_f64_like_java(1.0e12), "1.0E12");
+    }
+
+    #[test]
+    fn boundary_1e7_uses_scientific_notation() {
+        assert_eq!(format_f64_like_java(1.0e7), "1.0E7");
+    }
+
+    #[test]
+    fn just_below_1e7_uses_decimal() {
+        // 9_999_999.0 is below 1e7, so it should use decimal notation.
+        assert_eq!(format_f64_like_java(9_999_999.0), "9999999.0");
+    }
+
+    #[test]
+    fn small_positive_value_uses_scientific_notation() {
+        assert_eq!(format_f64_like_java(1.0e-4), "1.0E-4");
+    }
+
+    #[test]
+    fn boundary_1e_minus_3_uses_decimal() {
+        // 1e-3 is NOT less than 1e-3, so it should use decimal notation.
+        assert_eq!(format_f64_like_java(1.0e-3), "0.001");
+    }
+
+    #[test]
+    fn small_negative_value_uses_scientific_notation() {
+        assert_eq!(format_f64_like_java(-7.89e-5), "-7.89E-5");
+    }
+
+    #[test]
+    fn large_value_with_multiple_significant_digits() {
+        assert_eq!(format_f64_like_java(1.23456e10), "1.23456E10");
+    }
+
+    #[test]
+    fn very_large_value() {
+        assert_eq!(format_f64_like_java(2.5e20), "2.5E20");
+    }
+
+    // =========================================================================
+    // format_f64_like_java: Normal range values (no scientific notation)
+    // =========================================================================
+
+    #[test]
+    fn zero_uses_decimal() {
+        assert_eq!(format_f64_like_java(0.0), "0.0");
+    }
+
+    #[test]
+    fn negative_zero_uses_decimal() {
+        assert_eq!(format_f64_like_java(-0.0), "-0.0");
+    }
+
+    #[test]
+    fn normal_positive_value() {
+        assert_eq!(format_f64_like_java(1.5), "1.5");
+    }
+
+    #[test]
+    fn normal_negative_value() {
+        assert_eq!(format_f64_like_java(-3.14), "-3.14");
+    }
+
+    #[test]
+    fn integer_like_float() {
+        assert_eq!(format_f64_like_java(42.0), "42.0");
+    }
+
+    // =========================================================================
+    // format_f64_like_java: Edge cases
+    // =========================================================================
+
+    #[test]
+    fn nan_returns_nan_string() {
+        assert_eq!(format_f64_like_java(f64::NAN), "NaN");
+    }
+
+    #[test]
+    fn positive_infinity_returns_inf_string() {
+        assert_eq!(format_f64_like_java(f64::INFINITY), "inf");
+    }
+
+    #[test]
+    fn negative_infinity_returns_neg_inf_string() {
+        assert_eq!(format_f64_like_java(f64::NEG_INFINITY), "-inf");
+    }
+
+    // =========================================================================
+    // to_string_pretty_java: Integration with serde_json Value
+    // =========================================================================
+
+    #[test]
+    fn pretty_java_formats_large_float_in_object() {
+        let val = serde_json::json!({
+            "default": -1000000000000.0_f64
+        });
+        let json_str = to_string_pretty_java(&val).expect("serialization succeeds");
+        assert!(
+            json_str.contains("-1.0E12"),
+            "expected scientific notation, got: {json_str}"
+        );
+    }
+
+    #[test]
+    fn pretty_java_preserves_normal_float_formatting() {
+        let val = serde_json::json!({
+            "default": 0.0_f64
+        });
+        let json_str = to_string_pretty_java(&val).expect("serialization succeeds");
+        assert!(
+            json_str.contains("0.0"),
+            "expected 0.0, got: {json_str}"
+        );
+    }
+
+    #[test]
+    fn pretty_java_preserves_integer_formatting() {
+        let val = serde_json::json!({
+            "size": 16
+        });
+        let json_str = to_string_pretty_java(&val).expect("serialization succeeds");
+        assert!(
+            json_str.contains("16"),
+            "expected 16, got: {json_str}"
+        );
+    }
 }

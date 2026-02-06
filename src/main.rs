@@ -16,7 +16,7 @@ use miette::Context;
 
 use avdl::error::IdlError;
 use avdl::import::{import_protocol, import_schema, ImportContext};
-use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json};
+use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json, to_string_pretty_java};
 use avdl::model::protocol::Message;
 use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportEntry, ImportKind};
 use avdl::resolve::SchemaRegistry;
@@ -120,7 +120,7 @@ fn run_idl(
         }
     };
 
-    let json_str = serde_json::to_string_pretty(&json_value)
+    let json_str = to_string_pretty_java(&json_value)
         .map_err(|e| IdlError::Other(format!("serialize JSON: {e}")))
         .map_err(miette::Report::new)?;
 
@@ -192,7 +192,7 @@ fn run_idl2schemata(
         };
 
         let json_value = schema_to_json(schema, &mut known_names, namespace.as_deref(), &all_lookup);
-        let json_str = serde_json::to_string_pretty(&json_value)
+        let json_str = to_string_pretty_java(&json_value)
             .map_err(|e| IdlError::Other(format!("serialize JSON for {type_name}: {e}")))
             .map_err(miette::Report::new)?;
 
