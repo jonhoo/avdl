@@ -146,7 +146,11 @@ pub enum AvroSchema {
     // =========================================================================
     // Forward reference placeholder, resolved after parsing completes.
     // =========================================================================
-    Reference(std::string::String),
+    Reference {
+        name: std::string::String,
+        namespace: Option<std::string::String>,
+        properties: IndexMap<std::string::String, Value>,
+    },
 }
 
 /// A field in a record schema.
@@ -172,6 +176,9 @@ impl AvroSchema {
                 name, namespace, ..
             }
             | AvroSchema::Fixed {
+                name, namespace, ..
+            }
+            | AvroSchema::Reference {
                 name, namespace, ..
             } => Some(match namespace {
                 Some(ns) => format!("{ns}.{name}"),

@@ -100,9 +100,15 @@ impl SchemaRegistry {
     /// don't correspond to a registered type.
     fn collect_unresolved(&self, schema: &AvroSchema, unresolved: &mut Vec<String>) {
         match schema {
-            AvroSchema::Reference(name) => {
-                if !self.schemas.contains_key(name) {
-                    unresolved.push(name.clone());
+            AvroSchema::Reference {
+                name, namespace, ..
+            } => {
+                let full_name = match namespace {
+                    Some(ns) => format!("{ns}.{name}"),
+                    None => name.clone(),
+                };
+                if !self.schemas.contains_key(&full_name) {
+                    unresolved.push(full_name);
                 }
             }
             AvroSchema::Record { fields, .. } => {
@@ -203,7 +209,11 @@ mod tests {
             doc: None,
             fields: vec![crate::model::schema::Field {
                 name: "inner".to_string(),
-                schema: AvroSchema::Reference("Missing".to_string()),
+                schema: AvroSchema::Reference {
+                    name: "Missing".to_string(),
+                    namespace: None,
+                    properties: IndexMap::new(),
+                },
                 doc: None,
                 default: None,
                 order: None,
@@ -239,7 +249,11 @@ mod tests {
             doc: None,
             fields: vec![crate::model::schema::Field {
                 name: "inner".to_string(),
-                schema: AvroSchema::Reference("Inner".to_string()),
+                schema: AvroSchema::Reference {
+                    name: "Inner".to_string(),
+                    namespace: None,
+                    properties: IndexMap::new(),
+                },
                 doc: None,
                 default: None,
                 order: None,
@@ -267,7 +281,11 @@ mod tests {
                 crate::model::schema::Field {
                     name: "items".to_string(),
                     schema: AvroSchema::Array {
-                        items: Box::new(AvroSchema::Reference("MissingA".to_string())),
+                        items: Box::new(AvroSchema::Reference {
+                            name: "MissingA".to_string(),
+                            namespace: None,
+                            properties: IndexMap::new(),
+                        }),
                         properties: IndexMap::new(),
                     },
                     doc: None,
@@ -279,7 +297,11 @@ mod tests {
                 crate::model::schema::Field {
                     name: "lookup".to_string(),
                     schema: AvroSchema::Map {
-                        values: Box::new(AvroSchema::Reference("MissingB".to_string())),
+                        values: Box::new(AvroSchema::Reference {
+                            name: "MissingB".to_string(),
+                            namespace: None,
+                            properties: IndexMap::new(),
+                        }),
                         properties: IndexMap::new(),
                     },
                     doc: None,
@@ -293,7 +315,11 @@ mod tests {
                     schema: AvroSchema::Union {
                         types: vec![
                             AvroSchema::Null,
-                            AvroSchema::Reference("MissingC".to_string()),
+                            AvroSchema::Reference {
+                                name: "MissingC".to_string(),
+                                namespace: None,
+                                properties: IndexMap::new(),
+                            },
                         ],
                         is_nullable_type: true,
                     },

@@ -215,18 +215,23 @@ fn string_to_schema(s: &str, default_namespace: Option<&str>) -> Result<AvroSche
         "double" => Ok(AvroSchema::Double),
         "bytes" => Ok(AvroSchema::Bytes),
         "string" => Ok(AvroSchema::String),
-        name => {
-            // Named type reference. If the name doesn't contain a dot and we
-            // have a default namespace, qualify it.
-            let full_name = if name.contains('.') || default_namespace.is_none() {
-                name.to_string()
+        type_name => {
+            // Named type reference. Split into separate name and namespace
+            // so the Reference tracks them independently.
+            if type_name.contains('.') {
+                let pos = type_name.rfind('.').expect("dot presence checked above");
+                Ok(AvroSchema::Reference {
+                    name: type_name[pos + 1..].to_string(),
+                    namespace: Some(type_name[..pos].to_string()),
+                    properties: IndexMap::new(),
+                })
             } else {
-                format!(
-                    "{}.{name}",
-                    default_namespace.expect("checked for None above")
-                )
-            };
-            Ok(AvroSchema::Reference(full_name))
+                Ok(AvroSchema::Reference {
+                    name: type_name.to_string(),
+                    namespace: default_namespace.map(|s| s.to_string()),
+                    properties: IndexMap::new(),
+                })
+            }
         }
     }
 }
@@ -692,7 +697,14 @@ mod tests {
     fn parse_named_reference_with_namespace() {
         let schema =
             json_to_schema(&json!("Foo"), Some("org.example")).expect("parse reference");
-        assert_eq!(schema, AvroSchema::Reference("org.example.Foo".to_string()));
+        assert_eq!(
+            schema,
+            AvroSchema::Reference {
+                name: "Foo".to_string(),
+                namespace: Some("org.example".to_string()),
+                properties: IndexMap::new(),
+            }
+        );
     }
 
     #[test]
@@ -701,7 +713,11 @@ mod tests {
             json_to_schema(&json!("com.other.Bar"), Some("org.example")).expect("parse fqn");
         assert_eq!(
             schema,
-            AvroSchema::Reference("com.other.Bar".to_string())
+            AvroSchema::Reference {
+                name: "Bar".to_string(),
+                namespace: Some("com.other".to_string()),
+                properties: IndexMap::new(),
+            }
         );
     }
 

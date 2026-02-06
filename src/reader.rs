@@ -639,10 +639,24 @@ fn walk_nullable_type<'input>(
     let base_type = if let Some(prim_ctx) = ctx.primitiveType() {
         walk_primitive_type(&prim_ctx)?
     } else if let Some(ref_ctx) = ctx.identifier() {
-        // Named type reference.
+        // Named type reference. Split the identifier into name and namespace
+        // so the Reference carries them separately, enabling correct namespace
+        // shortening during JSON serialization.
         let type_name = identifier_text(&ref_ctx);
-        let full_name = compute_full_name(namespace, &type_name);
-        AvroSchema::Reference(full_name)
+        if type_name.contains('.') {
+            let pos = type_name.rfind('.').expect("dot presence checked above");
+            AvroSchema::Reference {
+                name: type_name[pos + 1..].to_string(),
+                namespace: Some(type_name[..pos].to_string()),
+                properties: IndexMap::new(),
+            }
+        } else {
+            AvroSchema::Reference {
+                name: type_name.to_string(),
+                namespace: namespace.clone(),
+                properties: IndexMap::new(),
+            }
+        }
     } else {
         return Err(IdlError::Other("nullable type has no inner type".into()));
     };
@@ -823,8 +837,20 @@ fn walk_message<'input>(
         let mut error_schemas = Vec::new();
         for error_id_ctx in &ctx.errors {
             let error_name = identifier_text(error_id_ctx);
-            let full_name = compute_full_name(namespace, &error_name);
-            error_schemas.push(AvroSchema::Reference(full_name));
+            if error_name.contains('.') {
+                let pos = error_name.rfind('.').expect("dot presence checked above");
+                error_schemas.push(AvroSchema::Reference {
+                    name: error_name[pos + 1..].to_string(),
+                    namespace: Some(error_name[..pos].to_string()),
+                    properties: IndexMap::new(),
+                });
+            } else {
+                error_schemas.push(AvroSchema::Reference {
+                    name: error_name.to_string(),
+                    namespace: namespace.clone(),
+                    properties: IndexMap::new(),
+                });
+            }
         }
         Some(error_schemas)
     } else if one_way {
@@ -1130,19 +1156,6 @@ fn parse_integer_as_u32(text: &str) -> Result<u32> {
     Ok(value)
 }
 
-/// Compute the full name for a type reference: if the name already contains
-/// a dot, use it as-is; otherwise prepend the current namespace.
-fn compute_full_name(namespace: &Option<String>, type_name: &str) -> String {
-    if type_name.contains('.') {
-        type_name.to_string()
-    } else {
-        match namespace {
-            Some(ns) if !ns.is_empty() => format!("{ns}.{type_name}"),
-            _ => type_name.to_string(),
-        }
-    }
-}
-
 /// Given an identifier (which may contain dots like `com.example.MyType`),
 /// extract just the name part (after the last dot).
 fn extract_name(identifier: &str) -> String {
@@ -1366,7 +1379,19 @@ fn apply_properties_to_schema(schema: AvroSchema, properties: IndexMap<String, V
             kind: PrimitiveType::String,
             properties,
         },
-        // References cannot carry properties in the Avro model.
+        AvroSchema::Reference {
+            name,
+            namespace,
+            properties: mut existing,
+        } => {
+            existing.extend(properties);
+            AvroSchema::Reference {
+                name,
+                namespace,
+                properties: existing,
+            }
+        }
+        // Union and other types that don't carry top-level properties.
         other => other,
     }
 }
