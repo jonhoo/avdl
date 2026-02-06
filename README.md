@@ -52,6 +52,6 @@ Key upstream sources this port is based on:
 ## Origin
 
 The initial version of this crate was [implemented live on
-YouTube](https://youtube.com/live/NqV_KhDsMIs).
+YouTube](https://youtu.be/vmKvw73V394).
 The stream ends at commit
 [`fac28dd`](https://github.com/apache/avro/commit/fac28dd2dcbdf6f6a12abd5a99a2f290fcf29ae6).
