@@ -1,49 +1,16 @@
-#[allow(
-    dead_code,
-    non_snake_case,
-    non_upper_case_globals,
-    nonstandard_style,
-    unused_imports,
-    unused_mut,
-    unused_braces,
-    unused_variables,
-    clippy::all
-)]
+// Generated ANTLR parser/lexer for Idl.g4. Do not edit by hand.
+// To regenerate, run: scripts/regenerate-antlr.sh
+// See CLAUDE.md for prerequisites and details.
+//
+// Each generated file includes its own #![allow(...)] inner attributes for
+// most warnings. The outer attributes below suppress the remaining warnings
+// that the generator doesn't cover (clippy, unused_parens, unused_variables).
+
+#[allow(clippy::all, unused_variables)]
 pub mod idlbaselistener;
-#[allow(
-    dead_code,
-    non_snake_case,
-    non_upper_case_globals,
-    nonstandard_style,
-    unused_imports,
-    unused_mut,
-    unused_braces,
-    unused_variables,
-    clippy::all
-)]
+#[allow(clippy::all, unused_variables)]
 pub mod idllexer;
-#[allow(
-    dead_code,
-    non_snake_case,
-    non_upper_case_globals,
-    nonstandard_style,
-    unused_imports,
-    unused_mut,
-    unused_braces,
-    unused_variables,
-    clippy::all
-)]
+#[allow(clippy::all, unused_variables)]
 pub mod idllistener;
-#[allow(
-    dead_code,
-    non_snake_case,
-    non_upper_case_globals,
-    nonstandard_style,
-    unused_imports,
-    unused_mut,
-    unused_braces,
-    unused_parens,
-    unused_variables,
-    clippy::all
-)]
+#[allow(clippy::all, unused_parens, unused_variables)]
 pub mod idlparser;

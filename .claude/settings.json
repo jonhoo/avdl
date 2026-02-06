@@ -11,7 +11,9 @@
       "Bash(java -version:*)",
       "Bash(ls:*)",
       "Bash(scripts/compare-golden.sh:*)",
+      "Bash(scripts/regenerate-antlr.sh:*)",
       "Bash(shellcheck:*)",
+      "Bash(uuidgen:*)",
       "Bash(wc:*)",
       "WebFetch(domain:avro.apache.org)"
     ]

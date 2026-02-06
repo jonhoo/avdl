@@ -1,3 +1,4 @@
+#![allow(nonstandard_style)]
 // Generated from avro/share/idl_grammar/org/apache/avro/idl/Idl.g4 by ANTLR 4.13.2
 use antlr4rust::tree::ParseTreeListener;
 use super::idlparser::*;

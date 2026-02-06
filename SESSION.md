@@ -35,3 +35,8 @@ Known issues are tracked in `issues/`.
   `OnTheClasspath.avdl` with `--import-dir` is `FromAfar` + `NestedType`
   which matches what the source files define. Java tool comparison was
   blocked by sandbox restrictions on `java -jar` commands.
+- We should do a pass on all `Err`s that are returned to make sure they
+  propagate information about the location in the source that the
+  problem stemmed from (where that is possible). We should also document
+  this practice in the project's CLAUDE.md so that future generated code
+  continues following that guidance.

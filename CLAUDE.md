@@ -72,6 +72,28 @@ Sub-agents should use this script instead of writing ad-hoc comparison
 scripts. If the script is insufficient, they should file an issue in
 `issues/` about the shortcoming before writing an ad-hoc script.
 
+### Regenerating the ANTLR parser
+
+The generated parser/lexer in `src/generated/` is checked in so that
+building the project only requires Rust. Regeneration is only needed
+when the grammar (`Idl.g4`) changes or the `antlr4rust` submodule is
+updated.
+
+```sh
+scripts/regenerate-antlr.sh                # regenerate using existing JAR
+scripts/regenerate-antlr.sh --rebuild-jar  # rebuild JAR from source first
+```
+
+**Prerequisites** (only for regeneration, not for normal builds):
+- Java (tested with 21)
+- Maven (only if `--rebuild-jar` is used)
+
+The `antlr4rust` submodule is a fork of ANTLR4 that adds Rust target
+support — the upstream ANTLR4 project does not support Rust. The
+pre-built JAR at `antlr4rust/tool/target/antlr4-4.13.3-SNAPSHOT-complete.jar`
+handles the common case. Use `--rebuild-jar` if the `antlr4rust`
+submodule is updated to a newer commit.
+
 ## CLI usage
 
 ```sh

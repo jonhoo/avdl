@@ -1,4 +1,8 @@
 // Generated from avro/share/idl_grammar/org/apache/avro/idl/Idl.g4 by ANTLR 4.13.2
+#![allow(dead_code)]
+#![allow(nonstandard_style)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
 use antlr4rust::atn::ATN;
 use antlr4rust::char_stream::CharStream;
 use antlr4rust::int_stream::IntStream;
