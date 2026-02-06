@@ -1238,10 +1238,15 @@ fn apply_properties(schema: AvroSchema, properties: IndexMap<String, Value>) -> 
             types,
             is_nullable_type: true,
         } if types.len() == 2 => {
-            // Apply properties to the non-null branch (index 1 in the
-            // [null, T] representation before any reordering).
+            // Apply properties to the non-null branch. We find it by type
+            // rather than hardcoding index 1, because nullable unions may be
+            // reordered to `[T, null]` when the field has a non-null default.
             let mut new_types = types;
-            new_types[1] = apply_properties_to_schema(new_types[1].clone(), properties);
+            let non_null_idx = if matches!(new_types[0], AvroSchema::Null) { 1 } else { 0 };
+            new_types[non_null_idx] = apply_properties_to_schema(
+                new_types[non_null_idx].clone(),
+                properties,
+            );
             AvroSchema::Union {
                 types: new_types,
                 is_nullable_type: true,
