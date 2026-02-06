@@ -33,6 +33,14 @@ use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType};
 
+/// Type names that collide with Avro built-in types. Matches Java's
+/// `IdlReader.INVALID_TYPE_NAMES`.
+const INVALID_TYPE_NAMES: &[&str] = &[
+    "boolean", "int", "long", "float", "double",
+    "bytes", "string", "null", "date", "time_ms",
+    "timestamp_ms", "localtimestamp_ms", "uuid",
+];
+
 // ==========================================================================
 // Public API
 // ==========================================================================
@@ -539,6 +547,15 @@ fn walk_record<'input>(
         .or_else(|| namespace.clone());
     let record_name = extract_name(&raw_identifier);
 
+    if INVALID_TYPE_NAMES.contains(&record_name.as_str()) {
+        return Err(make_diagnostic(
+            src,
+            &*name_ctx,
+            format!("Illegal name: {record_name}"),
+        )
+        .into());
+    }
+
     // Save and set the current namespace for field type resolution inside the
     // record body, then restore it afterwards.
     let saved_namespace = namespace.clone();
@@ -673,6 +690,15 @@ fn walk_enum<'input>(
         .or_else(|| enclosing_namespace.clone());
     let enum_name = extract_name(&raw_identifier);
 
+    if INVALID_TYPE_NAMES.contains(&enum_name.as_str()) {
+        return Err(make_diagnostic(
+            src,
+            &*name_ctx,
+            format!("Illegal name: {enum_name}"),
+        )
+        .into());
+    }
+
     // Collect enum symbols.
     let mut symbols = Vec::new();
     for sym_ctx in ctx.enumSymbol_all() {
@@ -721,6 +747,15 @@ fn walk_fixed<'input>(
     let fixed_namespace = compute_namespace(&raw_identifier, &props.namespace)
         .or_else(|| enclosing_namespace.clone());
     let fixed_name = extract_name(&raw_identifier);
+
+    if INVALID_TYPE_NAMES.contains(&fixed_name.as_str()) {
+        return Err(make_diagnostic(
+            src,
+            &*name_ctx,
+            format!("Illegal name: {fixed_name}"),
+        )
+        .into());
+    }
 
     // Parse the size from the IntegerLiteral token.
     let size_tok = ctx.size.as_ref().ok_or_else(|| {
