@@ -964,6 +964,20 @@ fn walk_union_type<'input>(
     for ft_ctx in ctx.fullType_all() {
         types.push(walk_full_type(&ft_ctx, token_stream, src, namespace)?);
     }
+
+    // Reject nested unions (Avro spec: "Unions may not immediately contain
+    // other unions").
+    let ft_ctxs = ctx.fullType_all();
+    for (i, t) in types.iter().enumerate() {
+        if matches!(t, AvroSchema::Union { .. }) {
+            return Err(make_diagnostic(
+                src,
+                &*ft_ctxs[i],
+                "Unions may not immediately contain other unions",
+            ));
+        }
+    }
+
     Ok(AvroSchema::Union {
         types,
         is_nullable_type: false,

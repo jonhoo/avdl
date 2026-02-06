@@ -689,6 +689,31 @@ fn test_import_nonexistent_file() {
     );
 }
 
+/// Nested unions should be rejected during parsing. The Avro specification
+/// states: "Unions may not immediately contain other unions."
+#[test]
+fn test_nested_union_rejected() {
+    let input = r#"
+        @namespace("org.test")
+        protocol NestedUnionTest {
+            record Bad {
+                union { null, union { string, int } } nested;
+            }
+        }
+    "#;
+
+    let result = parse_idl(input);
+    assert!(
+        result.is_err(),
+        "nested unions should be rejected by the parser"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("Unions may not immediately contain other unions"),
+        "error message should mention nested unions, got: {err_msg}"
+    );
+}
+
 // ==============================================================================
 // Extra Directory Tests
 // ==============================================================================
