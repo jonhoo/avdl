@@ -51,7 +51,10 @@ where
     let text = doc_token_text?;
 
     // Strip the /** prefix and */ suffix.
-    let inner = &text[3..text.len() - 2];
+    let inner = text
+        .strip_prefix("/**")
+        .and_then(|s| s.strip_suffix("*/"))
+        .unwrap_or(&text);
     let trimmed = inner.trim();
 
     if trimmed.is_empty() {
@@ -250,5 +253,121 @@ mod tests {
             strip_indents("First line\n    Second line\n    Third line"),
             "First line\nSecond line\nThird line"
         );
+    }
+
+    // =========================================================================
+    // Edge-case tests for `strip_indents` (issue #12)
+    // =========================================================================
+
+    #[test]
+    fn test_strip_indents_empty_string() {
+        // An empty doc comment body (e.g. from `/** */` after trim) should
+        // pass through unchanged.
+        assert_eq!(strip_indents(""), "");
+    }
+
+    #[test]
+    fn test_strip_indents_single_line_star_prefix_with_space() {
+        // `/** * text */` -> after stripping delimiters and trim -> `* text`
+        assert_eq!(strip_indents("* text"), "text");
+    }
+
+    #[test]
+    fn test_strip_indents_single_line_star_prefix_no_space() {
+        // `/** *text */` -> after stripping delimiters and trim -> `*text`
+        assert_eq!(strip_indents("*text"), "text");
+    }
+
+    #[test]
+    fn test_strip_indents_single_line_double_star_with_space() {
+        // `/** ** text */` -> after stripping delimiters and trim -> `** text`
+        assert_eq!(strip_indents("** text"), "text");
+    }
+
+    #[test]
+    fn test_strip_indents_single_line_double_star_no_space() {
+        // `/** **text */` -> after stripping delimiters and trim -> `**text`
+        assert_eq!(strip_indents("**text"), "text");
+    }
+
+    #[test]
+    fn test_strip_indents_multi_line_star_prefix_with_blank_lines() {
+        // Blank lines between star-prefixed lines should be preserved as
+        // empty lines, not cause the star pattern to fail.
+        let input = "* First line\n\n * Second line";
+        assert_eq!(strip_indents(input), "First line\n\nSecond line");
+    }
+
+    #[test]
+    fn test_strip_indents_multi_line_with_tabs() {
+        // Tab-indented subsequent lines should have the common tab indent
+        // stripped.
+        let input = "First line\n\tSecond line\n\tThird line";
+        assert_eq!(strip_indents(input), "First line\nSecond line\nThird line");
+    }
+
+    #[test]
+    fn test_strip_indents_multi_line_mixed_indent_depth() {
+        // When subsequent lines have varying indent depths, only the common
+        // prefix should be stripped.
+        let input = "First\n    Second\n        Third";
+        assert_eq!(strip_indents(input), "First\nSecond\n    Third");
+    }
+
+    #[test]
+    fn test_strip_indents_unicode() {
+        // Unicode content in doc comments should be preserved correctly.
+        assert_eq!(
+            strip_indents("* Ünïcödé text\n * More ünïcödé"),
+            "Ünïcödé text\nMore ünïcödé"
+        );
+    }
+
+    #[test]
+    fn test_strip_indents_single_star_only() {
+        // A doc comment body that is just `*` with no following text.
+        assert_eq!(strip_indents("*"), "");
+    }
+
+    #[test]
+    fn test_strip_indents_double_star_only() {
+        // A doc comment body that is just `**` with no following text.
+        assert_eq!(strip_indents("**"), "");
+    }
+
+    #[test]
+    fn test_strip_indents_multi_line_star_no_space_after_star() {
+        // Multi-line where stars are not followed by a space.
+        let input = "*First line\n *Second line";
+        assert_eq!(strip_indents(input), "First line\nSecond line");
+    }
+
+    #[test]
+    fn test_strip_indents_no_common_indent() {
+        // Multi-line where subsequent lines have no common indent -- the
+        // input should be returned unchanged.
+        let input = "First line\nSecond line\nThird line";
+        assert_eq!(strip_indents(input), "First line\nSecond line\nThird line");
+    }
+
+    #[test]
+    fn test_strip_indents_whitespace_only_lines_ignored_for_indent() {
+        // Blank or whitespace-only subsequent lines should not affect the
+        // common indent calculation.
+        let input = "First\n    Second\n\n    Third";
+        assert_eq!(strip_indents(input), "First\nSecond\n\nThird");
+    }
+
+    #[test]
+    fn test_strip_indents_single_line_plain_text() {
+        // Plain text with no star prefix should pass through unchanged.
+        assert_eq!(strip_indents("Just some text"), "Just some text");
+    }
+
+    #[test]
+    fn test_strip_indents_multi_line_double_star_with_blank_lines() {
+        // Double-star prefix with blank lines interspersed.
+        let input = "** First\n\n ** Second\n ** Third";
+        assert_eq!(strip_indents(input), "First\n\nSecond\nThird");
     }
 }
