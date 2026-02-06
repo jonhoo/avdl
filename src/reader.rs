@@ -969,7 +969,7 @@ fn get_string_from_literal(raw: &str) -> String {
 /// Unescape Java-style string escape sequences.
 fn unescape_java(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars();
+    let mut chars = s.chars().peekable();
 
     while let Some(c) = chars.next() {
         if c == '\\' {
@@ -982,9 +982,13 @@ fn unescape_java(s: &str) -> String {
                 Some('\\') => result.push('\\'),
                 Some('"') => result.push('"'),
                 Some('\'') => result.push('\''),
-                Some('/') => result.push('/'),
                 Some('u') => {
-                    // Unicode escape: \uXXXX
+                    // Unicode escape: \u+XXXX (one or more 'u' characters
+                    // followed by exactly four hex digits). The extra 'u'
+                    // characters are a Java-ism that some IDL files use.
+                    while chars.peek() == Some(&'u') {
+                        chars.next();
+                    }
                     let hex: String = chars.by_ref().take(4).collect();
                     if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
                         if let Some(ch) = char::from_u32(code_point) {
@@ -999,25 +1003,39 @@ fn unescape_java(s: &str) -> String {
                         result.push_str(&hex);
                     }
                 }
-                Some(c2) if c2.is_ascii_digit() && c2 < '8' => {
-                    // Octal escape: \0, \00, \000
+                Some(c2) if c2 >= '0' && c2 <= '7' => {
+                    // Octal escape: 1-3 octal digits. The grammar allows:
+                    //   OctDigit OctDigit?          (1-2 digits, any octal)
+                    //   [0-3] OctDigit OctDigit     (3 digits, first must be 0-3)
+                    // This means a 3-digit sequence is only valid if the first
+                    // digit is 0-3 (keeping the value <= \377 = 255).
                     let mut octal = String::new();
                     octal.push(c2);
-                    // Peek at up to 2 more octal digits.
-                    // We consume by collecting -- but since we can't peek easily
-                    // with a char iterator, we use a simpler approach.
-                    // TODO: full octal escape handling with proper lookahead.
-                    // For now, single-digit octal works for \0 (null).
+                    if let Some(&next) = chars.peek() {
+                        if next >= '0' && next <= '7' {
+                            octal.push(next);
+                            chars.next();
+                            // Only consume a third digit if the first was 0-3.
+                            if c2 <= '3' {
+                                if let Some(&next2) = chars.peek() {
+                                    if next2 >= '0' && next2 <= '7' {
+                                        octal.push(next2);
+                                        chars.next();
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if let Ok(val) = u32::from_str_radix(&octal, 8) {
                         if let Some(ch) = char::from_u32(val) {
                             result.push(ch);
                         } else {
                             result.push('\\');
-                            result.push(c2);
+                            result.push_str(&octal);
                         }
                     } else {
                         result.push('\\');
-                        result.push(c2);
+                        result.push_str(&octal);
                     }
                 }
                 Some(other) => {
@@ -1405,5 +1423,110 @@ fn collect_imports<'input>(
                 path: get_string_from_literal(loc.get_text()),
             });
         }
+    }
+}
+
+// ==========================================================================
+// Tests
+// ==========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ------------------------------------------------------------------
+    // Octal escapes (issue #5)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn octal_single_digit() {
+        // \7 is octal 7 = BEL (U+0007).
+        assert_eq!(unescape_java(r"\7"), "\u{0007}");
+    }
+
+    #[test]
+    fn octal_two_digits() {
+        // \77 is octal 77 = 63 = '?'.
+        assert_eq!(unescape_java(r"\77"), "?");
+    }
+
+    #[test]
+    fn octal_three_digits_newline() {
+        // \012 is octal 012 = 10 = '\n'.
+        assert_eq!(unescape_java(r"\012"), "\n");
+    }
+
+    #[test]
+    fn octal_three_digits_uppercase_a() {
+        // \101 is octal 101 = 65 = 'A'.
+        assert_eq!(unescape_java(r"\101"), "A");
+    }
+
+    #[test]
+    fn octal_three_digits_max() {
+        // \377 is octal 377 = 255 = U+00FF (latin small letter y with diaeresis).
+        assert_eq!(unescape_java(r"\377"), "\u{00FF}");
+    }
+
+    #[test]
+    fn octal_high_first_digit_limits_to_two() {
+        // \477 -- first digit is 4 (> 3), so only two digits are consumed:
+        // \47 = octal 47 = 39 = '\'' and '7' is literal.
+        assert_eq!(unescape_java(r"\477"), "'7");
+    }
+
+    #[test]
+    fn octal_zero() {
+        // \0 is the null character.
+        assert_eq!(unescape_java(r"\0"), "\0");
+    }
+
+    // ------------------------------------------------------------------
+    // Unicode escapes (multi-u support)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn unicode_single_u() {
+        assert_eq!(unescape_java(r"\u0041"), "A");
+    }
+
+    #[test]
+    fn unicode_multi_u() {
+        // \uu0041 and \uuu0041 should both produce 'A'.
+        assert_eq!(unescape_java(r"\uu0041"), "A");
+        assert_eq!(unescape_java(r"\uuu0041"), "A");
+    }
+
+    // ------------------------------------------------------------------
+    // Slash escape removal (issue #16)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn slash_is_not_unescaped() {
+        // \/ is not a valid escape in the grammar. The backslash should be
+        // preserved as-is, producing the two-character sequence "\/".
+        assert_eq!(unescape_java(r"\/"), "\\/");
+    }
+
+    // ------------------------------------------------------------------
+    // Standard escapes (regression)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn standard_escapes() {
+        assert_eq!(unescape_java(r"\n"), "\n");
+        assert_eq!(unescape_java(r"\r"), "\r");
+        assert_eq!(unescape_java(r"\t"), "\t");
+        assert_eq!(unescape_java(r"\b"), "\u{0008}");
+        assert_eq!(unescape_java(r"\f"), "\u{000C}");
+        assert_eq!(unescape_java(r"\\"), "\\");
+        assert_eq!(unescape_java(r#"\""#), "\"");
+        assert_eq!(unescape_java(r"\'"), "'");
+    }
+
+    #[test]
+    fn mixed_escapes() {
+        assert_eq!(unescape_java(r"hello\012world"), "hello\nworld");
+        assert_eq!(unescape_java(r"\101\102\103"), "ABC");
     }
 }
