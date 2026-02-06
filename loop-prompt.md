@@ -88,8 +88,21 @@ diff <(jq -S . tmp/foo.avpr) <(jq -S . $OUTPUT_DIR/foo.avpr)
       - Creates debug example in `examples/` to verify (`cargo run --example`)
       - Runs `cargo test` to check for regressions
       - Cleans up debug examples
-      - Commits with `commit-writer` skill
-   c. Merge each branch into `main`: `cd main && git merge fix/issue-description`
+      - Stages changes with `git add <specific-files>`
+      **Note:** Sub-agents cannot `git commit`, write to `/tmp`, or use
+      the `commit-writer` skill because these operations require
+      interactive permission approval which is auto-denied for
+      background/sub-agents. The parent agent must commit after the
+      sub-agent finishes.
+   c. After each sub-agent completes, the **parent agent** reviews the
+      staged changes, commits in the worktree, then merges into `main`:
+      ```bash
+      cd /home/jon/dev/stream/avdl/avdl-worktrees/wt-X
+      git diff --cached --stat  # review
+      git commit -m "..."       # parent commits
+      cd /home/jon/dev/stream/avdl/main
+      git merge fix/issue-description
+      ```
    d. Verify: `cargo test` in main
    e. If merge conflicts occur, resolve before proceeding
 
