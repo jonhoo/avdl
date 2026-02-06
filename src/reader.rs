@@ -352,7 +352,7 @@ fn walk_named_schema<'input>(
     } else if let Some(enum_ctx) = ctx.enumDeclaration() {
         walk_enum(&enum_ctx, token_stream, namespace)?
     } else if let Some(record_ctx) = ctx.recordDeclaration() {
-        walk_record(&record_ctx, token_stream, registry, namespace)?
+        walk_record(&record_ctx, token_stream, namespace)?
     } else {
         return Err(IdlError::Other(
             "unknown named schema declaration".into(),
@@ -368,10 +368,14 @@ fn walk_named_schema<'input>(
 // Record
 // ==========================================================================
 
+// NOTE: The ANTLR grammar's `recordBody` rule only permits `fieldDeclaration`
+// children — it does not include `namedSchemaDeclaration`. Therefore
+// `walk_record` does not need access to the schema registry. If the grammar
+// is ever extended to allow nested named schema declarations inside records,
+// a `registry: &mut SchemaRegistry` parameter would need to be added back.
 fn walk_record<'input>(
     ctx: &RecordDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
-    _registry: &mut SchemaRegistry,
     namespace: &mut Option<String>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream);
