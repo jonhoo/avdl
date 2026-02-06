@@ -1,0 +1,6 @@
+[submodule "avro"]
+	path = avro
+	url = https://github.com/apache/avro.git
+[submodule "antlr4rust"]
+	path = antlr4rust
+	url = https://github.com/antlr4rust/antlr4.git
