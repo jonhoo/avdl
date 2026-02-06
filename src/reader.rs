@@ -158,6 +158,11 @@ fn walk_schema_properties<'input>(
         match name.as_str() {
             "namespace" => {
                 if let Value::String(s) = &value {
+                    if result.namespace.is_some() {
+                        return Err(IdlError::Other(
+                            "duplicate @namespace annotation".into(),
+                        ));
+                    }
                     result.namespace = Some(s.clone());
                 } else {
                     return Err(IdlError::Other(
