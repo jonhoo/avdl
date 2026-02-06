@@ -18,7 +18,7 @@ use avdl::error::IdlError;
 use avdl::import::{import_protocol, import_schema, ImportContext};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json};
 use avdl::model::protocol::Message;
-use avdl::reader::{parse_idl, IdlFile, ImportEntry, ImportKind};
+use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportEntry, ImportKind};
 use avdl::resolve::SchemaRegistry;
 
 // ==============================================================================
@@ -239,19 +239,28 @@ fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf)> {
 }
 
 /// Parse IDL source and recursively resolve all imports.
+///
+/// The key insight for correct type ordering: `parse_idl` returns declaration
+/// items (imports and local types) in source order. We process them
+/// sequentially here -- resolving imports when encountered and registering
+/// local types when encountered -- so the registry reflects declaration order.
 fn parse_and_resolve(
     source: &str,
     input_dir: &Path,
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<(IdlFile, SchemaRegistry)> {
-    let (idl_file, mut registry, imports) =
+    let (idl_file, decl_items) =
         parse_idl(source).map_err(miette::Report::new)?;
 
+    let mut registry = SchemaRegistry::new();
     let mut import_ctx = ImportContext::new(import_dirs);
     let mut messages = IndexMap::new();
 
-    resolve_imports(
-        &imports,
+    // Process declaration items in source order: resolve imports when
+    // encountered, register local types when encountered. This ensures the
+    // registry reflects the original declaration order from the IDL file.
+    process_decl_items(
+        &decl_items,
         &mut registry,
         &mut import_ctx,
         input_dir,
@@ -259,8 +268,9 @@ fn parse_and_resolve(
     )?;
 
     // For protocol files, rebuild the types list from the registry (which now
-    // includes imported types) and prepend imported messages before the
-    // protocol's own messages so that the output order matches Java behavior.
+    // includes imported types in declaration order) and prepend imported
+    // messages before the protocol's own messages so that the output order
+    // matches Java behavior.
     let idl_file = match idl_file {
         IdlFile::ProtocolFile(mut protocol) => {
             protocol.types = registry.schemas().cloned().collect();
@@ -275,77 +285,114 @@ fn parse_and_resolve(
     Ok((idl_file, registry))
 }
 
-/// Recursively resolve import entries, registering schemas and merging
-/// messages into the current protocol.
-fn resolve_imports(
-    imports: &[ImportEntry],
+/// Process declaration items (imports and local types) in source order.
+///
+/// This function iterates the interleaved declaration items, resolving imports
+/// when encountered and registering local types when encountered. This ensures
+/// the registry reflects the correct declaration order from the IDL file,
+/// matching Java's behavior where imported types appear at the position of
+/// their import statement.
+fn process_decl_items(
+    decl_items: &[DeclItem],
     registry: &mut SchemaRegistry,
     import_ctx: &mut ImportContext,
     current_dir: &Path,
     messages: &mut IndexMap<String, Message>,
 ) -> miette::Result<()> {
-    for import in imports {
-        let resolved_path = import_ctx
-            .resolve_import(&import.path, current_dir)
-            .map_err(miette::Report::new)?;
-
-        // Skip files we've already imported (cycle prevention).
-        if import_ctx.mark_imported(&resolved_path) {
-            continue;
-        }
-
-        let import_dir = resolved_path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-
-        match import.kind {
-            ImportKind::Protocol => {
-                let imported_messages = import_protocol(&resolved_path, registry)
-                    .map_err(miette::Report::new)
-                    .wrap_err_with(|| {
-                        format!("import protocol {}", resolved_path.display())
-                    })?;
-                messages.extend(imported_messages);
-            }
-            ImportKind::Schema => {
-                import_schema(&resolved_path, registry)
-                    .map_err(miette::Report::new)
-                    .wrap_err_with(|| {
-                        format!("import schema {}", resolved_path.display())
-                    })?;
-            }
-            ImportKind::Idl => {
-                let imported_source = fs::read_to_string(&resolved_path)
-                    .map_err(|e| IdlError::Io { source: e })
-                    .map_err(miette::Report::new)
-                    .wrap_err_with(|| {
-                        format!("read imported IDL {}", resolved_path.display())
-                    })?;
-
-                let (imported_idl, imported_registry, nested_imports) =
-                    parse_idl(&imported_source)
-                        .map_err(miette::Report::new)
-                        .wrap_err_with(|| {
-                            format!("parse imported IDL {}", resolved_path.display())
-                        })?;
-
-                registry.merge(imported_registry);
-
-                // If the imported IDL is a protocol, merge its messages.
-                if let IdlFile::ProtocolFile(imported_protocol) = &imported_idl {
-                    messages.extend(imported_protocol.messages.clone());
-                }
-
-                // Recursively resolve imports from the imported file.
-                resolve_imports(
-                    &nested_imports,
+    for item in decl_items {
+        match item {
+            DeclItem::Import(import) => {
+                resolve_single_import(
+                    import,
                     registry,
                     import_ctx,
-                    &import_dir,
+                    current_dir,
                     messages,
                 )?;
             }
+            DeclItem::Type(schema) => {
+                // Register the locally-defined type in the registry at this
+                // position, preserving its source-order placement relative to
+                // imports.
+                registry
+                    .register(schema.clone())
+                    .map_err(IdlError::Other)
+                    .map_err(miette::Report::new)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Resolve a single import entry, registering schemas and merging messages
+/// into the current protocol.
+fn resolve_single_import(
+    import: &ImportEntry,
+    registry: &mut SchemaRegistry,
+    import_ctx: &mut ImportContext,
+    current_dir: &Path,
+    messages: &mut IndexMap<String, Message>,
+) -> miette::Result<()> {
+    let resolved_path = import_ctx
+        .resolve_import(&import.path, current_dir)
+        .map_err(miette::Report::new)?;
+
+    // Skip files we've already imported (cycle prevention).
+    if import_ctx.mark_imported(&resolved_path) {
+        return Ok(());
+    }
+
+    let import_dir = resolved_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    match import.kind {
+        ImportKind::Protocol => {
+            let imported_messages = import_protocol(&resolved_path, registry)
+                .map_err(miette::Report::new)
+                .wrap_err_with(|| {
+                    format!("import protocol {}", resolved_path.display())
+                })?;
+            messages.extend(imported_messages);
+        }
+        ImportKind::Schema => {
+            import_schema(&resolved_path, registry)
+                .map_err(miette::Report::new)
+                .wrap_err_with(|| {
+                    format!("import schema {}", resolved_path.display())
+                })?;
+        }
+        ImportKind::Idl => {
+            let imported_source = fs::read_to_string(&resolved_path)
+                .map_err(|e| IdlError::Io { source: e })
+                .map_err(miette::Report::new)
+                .wrap_err_with(|| {
+                    format!("read imported IDL {}", resolved_path.display())
+                })?;
+
+            let (imported_idl, nested_decl_items) =
+                parse_idl(&imported_source)
+                    .map_err(miette::Report::new)
+                    .wrap_err_with(|| {
+                        format!("parse imported IDL {}", resolved_path.display())
+                    })?;
+
+            // If the imported IDL is a protocol, merge its messages.
+            if let IdlFile::ProtocolFile(imported_protocol) = &imported_idl {
+                messages.extend(imported_protocol.messages.clone());
+            }
+
+            // Recursively process declaration items from the imported file,
+            // preserving their source order for correct type ordering.
+            process_decl_items(
+                &nested_decl_items,
+                registry,
+                import_ctx,
+                &import_dir,
+                messages,
+            )?;
         }
     }
 

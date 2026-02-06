@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use avdl::import::{import_protocol, import_schema, ImportContext};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json};
-use avdl::reader::{parse_idl, IdlFile, ImportKind};
+use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportKind};
 use indexmap::IndexSet;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -42,56 +42,55 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, mut registry, imports) =
+    let (idl_file, decl_items) =
         parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    // Resolve non-IDL imports (schema and protocol). IDL imports require
-    // recursive parsing, which is handled by the caller if needed.
+    // Process declaration items in source order to build a correctly ordered
+    // registry. This resolves non-IDL imports and registers local types.
+    let mut registry = avdl::resolve::SchemaRegistry::new();
     let current_dir = avdl_path
         .parent()
         .expect("avdl_path should have a parent directory");
     let search_dirs: Vec<PathBuf> = import_dirs.iter().map(|p| p.to_path_buf()).collect();
     let import_ctx = ImportContext::new(search_dirs);
 
-    for import in &imports {
-        let resolved = import_ctx
-            .resolve_import(&import.path, current_dir)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "failed to resolve import '{}' from {}: {e}",
-                    import.path,
-                    avdl_path.display()
-                )
-            });
-
-        match import.kind {
-            ImportKind::Schema => {
-                import_schema(&resolved, &mut registry)
-                    .unwrap_or_else(|e| panic!("failed to import schema {}: {e}", resolved.display()));
-            }
-            ImportKind::Protocol => {
-                let messages = import_protocol(&resolved, &mut registry)
+    for item in &decl_items {
+        match item {
+            DeclItem::Import(import) => {
+                let resolved = import_ctx
+                    .resolve_import(&import.path, current_dir)
                     .unwrap_or_else(|e| {
-                        panic!("failed to import protocol {}: {e}", resolved.display())
+                        panic!(
+                            "failed to resolve import '{}' from {}: {e}",
+                            import.path,
+                            avdl_path.display()
+                        )
                     });
-                // Merge imported messages into the protocol (handled below
-                // when we reconstruct the protocol).
-                if let IdlFile::ProtocolFile(_) = &idl_file {
-                    // Protocol import messages are merged below.
-                    // We store them temporarily -- but since our current test
-                    // cases with protocol imports are skipped, this is a
-                    // placeholder.
-                    let _ = messages;
+
+                match import.kind {
+                    ImportKind::Schema => {
+                        import_schema(&resolved, &mut registry)
+                            .unwrap_or_else(|e| panic!("failed to import schema {}: {e}", resolved.display()));
+                    }
+                    ImportKind::Protocol => {
+                        let _messages = import_protocol(&resolved, &mut registry)
+                            .unwrap_or_else(|e| {
+                                panic!("failed to import protocol {}: {e}", resolved.display())
+                            });
+                    }
+                    ImportKind::Idl => {
+                        // IDL imports require recursive parsing. For test cases that
+                        // need this, use `parse_and_serialize_with_idl_imports` instead.
+                        panic!(
+                            "IDL imports not supported in basic parse_and_serialize; \
+                             use parse_and_serialize_with_idl_imports for '{}'",
+                            import.path
+                        );
+                    }
                 }
             }
-            ImportKind::Idl => {
-                // IDL imports require recursive parsing. For test cases that
-                // need this, use `parse_and_serialize_with_idl_imports` instead.
-                panic!(
-                    "IDL imports not supported in basic parse_and_serialize; \
-                     use parse_and_serialize_with_idl_imports for '{}'",
-                    import.path
-                );
+            DeclItem::Type(schema) => {
+                let _ = registry.register(schema.clone());
             }
         }
     }
@@ -134,12 +133,13 @@ fn idl_file_to_json(idl_file: IdlFile, registry: avdl::resolve::SchemaRegistry) 
 ///
 /// This handles the full import pipeline: for each `import idl` statement,
 /// it recursively parses the imported `.avdl` file and merges its types and
-/// messages into the current protocol.
+/// messages into the current protocol. Declaration items are processed in
+/// source order to preserve correct type ordering.
 fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, mut registry, imports) =
+    let (idl_file, decl_items) =
         parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     let current_dir = avdl_path
@@ -147,6 +147,7 @@ fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path])
         .expect("avdl_path should have a parent directory");
     let search_dirs: Vec<PathBuf> = import_dirs.iter().map(|p| p.to_path_buf()).collect();
     let mut import_ctx = ImportContext::new(search_dirs);
+    let mut registry = avdl::resolve::SchemaRegistry::new();
 
     // Mark the current file as imported to prevent cycles.
     let canonical = avdl_path
@@ -157,58 +158,19 @@ fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path])
     // Accumulate messages from IDL imports.
     let mut imported_messages = indexmap::IndexMap::new();
 
-    for import in &imports {
-        let resolved = import_ctx
-            .resolve_import(&import.path, current_dir)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "failed to resolve import '{}' from {}: {e}",
-                    import.path,
-                    avdl_path.display()
-                )
-            });
-
-        // Skip already-imported files (cycle prevention).
-        if import_ctx.mark_imported(&resolved) {
-            continue;
-        }
-
-        match import.kind {
-            ImportKind::Schema => {
-                import_schema(&resolved, &mut registry).unwrap_or_else(|e| {
-                    panic!("failed to import schema {}: {e}", resolved.display())
-                });
-            }
-            ImportKind::Protocol => {
-                let messages = import_protocol(&resolved, &mut registry).unwrap_or_else(|e| {
-                    panic!("failed to import protocol {}: {e}", resolved.display())
-                });
-                imported_messages.extend(messages);
-            }
-            ImportKind::Idl => {
-                // Recursively parse the imported IDL file.
-                let imported_input = fs::read_to_string(&resolved).unwrap_or_else(|e| {
-                    panic!("failed to read imported IDL {}: {e}", resolved.display())
-                });
-                let (imported_idl, imported_registry, _nested_imports) =
-                    parse_idl(&imported_input).unwrap_or_else(|e| {
-                        panic!("failed to parse imported IDL {}: {e}", resolved.display())
-                    });
-
-                // Merge the imported registry into ours.
-                registry.merge(imported_registry);
-
-                // If the imported file is a protocol, merge its messages too.
-                if let IdlFile::ProtocolFile(imported_protocol) = imported_idl {
-                    imported_messages.extend(imported_protocol.messages);
-                }
-            }
-        }
-    }
+    // Process declaration items in source order, recursively resolving imports.
+    process_decl_items_test(
+        &decl_items,
+        &mut registry,
+        &mut import_ctx,
+        current_dir,
+        &mut imported_messages,
+    );
 
     // For protocol files, prepend imported messages before dispatching.
     let idl_file = match idl_file {
         IdlFile::ProtocolFile(mut protocol) => {
+            protocol.types = registry.schemas().cloned().collect();
             let own_messages = protocol.messages;
             protocol.messages = imported_messages;
             protocol.messages.extend(own_messages);
@@ -218,6 +180,82 @@ fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path])
     };
 
     idl_file_to_json(idl_file, registry)
+}
+
+/// Process declaration items in source order for integration tests, mirroring
+/// the logic in `main.rs::process_decl_items`.
+fn process_decl_items_test(
+    decl_items: &[DeclItem],
+    registry: &mut avdl::resolve::SchemaRegistry,
+    import_ctx: &mut ImportContext,
+    current_dir: &Path,
+    messages: &mut indexmap::IndexMap<String, avdl::model::protocol::Message>,
+) {
+    for item in decl_items {
+        match item {
+            DeclItem::Import(import) => {
+                let resolved = import_ctx
+                    .resolve_import(&import.path, current_dir)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "failed to resolve import '{}': {e}",
+                            import.path,
+                        )
+                    });
+
+                // Skip already-imported files (cycle prevention).
+                if import_ctx.mark_imported(&resolved) {
+                    continue;
+                }
+
+                let import_dir = resolved
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."));
+
+                match import.kind {
+                    ImportKind::Schema => {
+                        import_schema(&resolved, registry).unwrap_or_else(|e| {
+                            panic!("failed to import schema {}: {e}", resolved.display())
+                        });
+                    }
+                    ImportKind::Protocol => {
+                        let imported_messages = import_protocol(&resolved, registry).unwrap_or_else(|e| {
+                            panic!("failed to import protocol {}: {e}", resolved.display())
+                        });
+                        messages.extend(imported_messages);
+                    }
+                    ImportKind::Idl => {
+                        // Recursively parse the imported IDL file.
+                        let imported_input = fs::read_to_string(&resolved).unwrap_or_else(|e| {
+                            panic!("failed to read imported IDL {}: {e}", resolved.display())
+                        });
+                        let (imported_idl, nested_decl_items) =
+                            parse_idl(&imported_input).unwrap_or_else(|e| {
+                                panic!("failed to parse imported IDL {}: {e}", resolved.display())
+                            });
+
+                        // If the imported file is a protocol, merge its messages.
+                        if let IdlFile::ProtocolFile(imported_protocol) = &imported_idl {
+                            messages.extend(imported_protocol.messages.clone());
+                        }
+
+                        // Recursively process nested declaration items.
+                        process_decl_items_test(
+                            &nested_decl_items,
+                            registry,
+                            import_ctx,
+                            &import_dir,
+                            messages,
+                        );
+                    }
+                }
+            }
+            DeclItem::Type(schema) => {
+                let _ = registry.register(schema.clone());
+            }
+        }
+    }
 }
 
 /// Load an expected output file (`.avpr` or `.avsc`) as a `serde_json::Value`.

@@ -21,8 +21,8 @@ use std::rc::Rc;
 
 use antlr4rust::common_token_stream::CommonTokenStream;
 use antlr4rust::token::Token;
-use antlr4rust::tree::ParseTree;
-use antlr4rust::InputStream;
+use antlr4rust::tree::{ParseTree, Tree};
+use antlr4rust::{InputStream, TidExt};
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -32,7 +32,6 @@ use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType};
-use crate::resolve::SchemaRegistry;
 
 // ==========================================================================
 // Public API
@@ -67,12 +66,25 @@ pub enum ImportKind {
     Schema,
 }
 
-/// Parse an Avro IDL string into an `IdlFile` and a registry of named types.
+/// A declaration item in source order. Captures both import statements and
+/// local type definitions interleaved exactly as they appear in the IDL file.
+/// This preserves the declaration order so that the caller can register types
+/// and resolve imports in the correct sequence.
+#[derive(Debug, Clone)]
+pub enum DeclItem {
+    /// An import statement to be resolved later.
+    Import(ImportEntry),
+    /// A locally-defined named type (record, enum, or fixed).
+    Type(AvroSchema),
+}
+
+/// Parse an Avro IDL string into an `IdlFile` and a list of declaration items.
 ///
-/// The returned `SchemaRegistry` contains all named types (records, enums,
-/// fixed) defined in the IDL, in definition order. The returned `Vec<ImportEntry>`
-/// contains any import statements encountered but not yet resolved.
-pub fn parse_idl(input: &str) -> Result<(IdlFile, SchemaRegistry, Vec<ImportEntry>)> {
+/// The returned `Vec<DeclItem>` contains all imports and locally-defined types
+/// in source order. The caller is responsible for processing these items in
+/// order (resolving imports and registering types) to produce a correctly
+/// ordered `SchemaRegistry`.
+pub fn parse_idl(input: &str) -> Result<(IdlFile, Vec<DeclItem>)> {
     parse_idl_named(input, "<input>")
 }
 
@@ -81,7 +93,7 @@ pub fn parse_idl(input: &str) -> Result<(IdlFile, SchemaRegistry, Vec<ImportEntr
 pub fn parse_idl_named(
     input: &str,
     source_name: &str,
-) -> Result<(IdlFile, SchemaRegistry, Vec<ImportEntry>)> {
+) -> Result<(IdlFile, Vec<DeclItem>)> {
     let input_stream = InputStream::new(input);
     let lexer = IdlLexer::new(input_stream);
     let token_stream = CommonTokenStream::new(lexer);
@@ -105,20 +117,18 @@ pub fn parse_idl_named(
         name: source_name,
     };
 
-    let mut registry = SchemaRegistry::new();
     let mut namespace: Option<String> = None;
-    let mut imports = Vec::new();
+    let mut decl_items = Vec::new();
 
     let idl_file = walk_idl_file(
         &tree,
         token_stream,
         &src,
-        &mut registry,
         &mut namespace,
-        &mut imports,
+        &mut decl_items,
     )?;
 
-    Ok((idl_file, registry, imports))
+    Ok((idl_file, decl_items))
 }
 
 // ==========================================================================
@@ -330,18 +340,22 @@ fn walk_schema_properties<'input>(
 // ==========================================================================
 
 /// Top-level dispatch: protocol mode vs. schema mode.
+///
+/// Instead of registering types in a SchemaRegistry during parsing, this
+/// function collects all imports and local type definitions into `decl_items`
+/// in source order. The caller processes these items sequentially to build a
+/// correctly ordered registry.
 fn walk_idl_file<'input>(
     ctx: &IdlFileContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    registry: &mut SchemaRegistry,
     namespace: &mut Option<String>,
-    imports: &mut Vec<ImportEntry>,
+    decl_items: &mut Vec<DeclItem>,
 ) -> Result<IdlFile> {
     // Protocol mode: the IDL contains `protocol Name { ... }`.
     if let Some(protocol_ctx) = ctx.protocolDeclaration() {
         let protocol =
-            walk_protocol(&protocol_ctx, token_stream, src, registry, namespace, imports)?;
+            walk_protocol(&protocol_ctx, token_stream, src, namespace, decl_items)?;
         return Ok(IdlFile::ProtocolFile(protocol));
     }
 
@@ -358,13 +372,19 @@ fn walk_idl_file<'input>(
         *namespace = if id.is_empty() { None } else { Some(id) };
     }
 
-    // Collect imports (schema mode can also have them).
-    collect_imports(&ctx.importStatement_all(), imports);
-
-    // Walk named schemas. In schema mode, we register them in the registry
-    // but don't collect them into a types list (there's no protocol).
-    for ns_ctx in ctx.namedSchemaDeclaration_all() {
-        let _schema = walk_named_schema(&ns_ctx, token_stream, src, registry, namespace)?;
+    // Walk the body children in source order, interleaving imports and named
+    // schema declarations. The grammar rule is:
+    //   (imports+=importStatement | namedSchemas+=namedSchemaDeclaration)*
+    // We iterate all children to preserve the original declaration order.
+    let mut local_schemas = Vec::new();
+    for child in ctx.get_children() {
+        if let Ok(import_ctx) = child.clone().downcast_rc::<ImportStatementContextAll<'input>>() {
+            collect_single_import(&import_ctx, decl_items);
+        } else if let Ok(ns_ctx) = child.downcast_rc::<NamedSchemaDeclarationContextAll<'input>>() {
+            let schema = walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
+            local_schemas.push(schema.clone());
+            decl_items.push(DeclItem::Type(schema));
+        }
     }
 
     // The main schema declaration uses `schema <fullType>;`.
@@ -380,9 +400,8 @@ fn walk_idl_file<'input>(
     // `status_schema.avdl` that define named types without an explicit schema
     // declaration. The Java `IdlFile.outputString()` serializes these as a JSON
     // array of all named schemas.
-    let all_schemas: Vec<AvroSchema> = registry.schemas().cloned().collect();
-    if !all_schemas.is_empty() {
-        return Ok(IdlFile::NamedSchemasFile(all_schemas));
+    if !local_schemas.is_empty() {
+        return Ok(IdlFile::NamedSchemasFile(local_schemas));
     }
 
     Err(make_diagnostic(
@@ -393,13 +412,17 @@ fn walk_idl_file<'input>(
 }
 
 /// Walk a protocol declaration and return a complete `Protocol`.
+///
+/// Instead of registering types immediately, this function iterates the
+/// protocol body's children in source order, appending `DeclItem::Import`
+/// and `DeclItem::Type` entries to `decl_items`. Messages are collected
+/// directly into the protocol since they don't affect type ordering.
 fn walk_protocol<'input>(
     ctx: &ProtocolDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    registry: &mut SchemaRegistry,
     namespace: &mut Option<String>,
-    imports: &mut Vec<ImportEntry>,
+    decl_items: &mut Vec<DeclItem>,
 ) -> Result<Protocol> {
     // Extract doc comment by scanning hidden tokens before the context's start token.
     let doc = extract_doc_from_context(ctx, token_stream);
@@ -426,62 +449,60 @@ fn walk_protocol<'input>(
         .protocolDeclarationBody()
         .ok_or_else(|| make_diagnostic(src, ctx, "missing protocol body"))?;
 
-    // Collect imports from the body.
-    collect_imports(&body.importStatement_all(), imports);
-
-    // Walk named schemas in the body. We collect the top-level schemas
-    // directly into `types` rather than pulling them from the registry, because
-    // the registry flattens all named types (including those nested inside
-    // records). The Java tools inline nested types at their first reference
-    // point; only top-level declarations appear in the `types` array.
-    let mut types = Vec::new();
-    for ns_ctx in body.namedSchemaDeclaration_all() {
-        let schema = walk_named_schema(&ns_ctx, token_stream, src, registry, namespace)?;
-        types.push(schema);
-    }
-
-    // Walk messages in the body.
+    // Walk the protocol body children in source order. The ANTLR grammar
+    // interleaves imports, named schema declarations, and message declarations:
+    //   protocolDeclarationBody: '{' (import | namedSchema | message)* '}'
+    // We iterate all children and dispatch based on type, preserving the
+    // original declaration order for imports and types.
     let mut messages = IndexMap::new();
-    for msg_ctx in body.messageDeclaration_all() {
-        let (msg_name, message) = walk_message(&msg_ctx, token_stream, src, namespace)?;
-        messages.insert(msg_name, message);
+    for child in body.get_children() {
+        if let Ok(import_ctx) = child.clone().downcast_rc::<ImportStatementContextAll<'input>>() {
+            collect_single_import(&import_ctx, decl_items);
+        } else if let Ok(ns_ctx) = child.clone().downcast_rc::<NamedSchemaDeclarationContextAll<'input>>() {
+            let schema = walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
+            decl_items.push(DeclItem::Type(schema));
+        } else if let Ok(msg_ctx) = child.downcast_rc::<MessageDeclarationContextAll<'input>>() {
+            let (msg_name, message) = walk_message(&msg_ctx, token_stream, src, namespace)?;
+            messages.insert(msg_name, message);
+        }
     }
 
+    // The types list in the Protocol is initially empty; the caller will
+    // populate it from the registry after processing all DeclItems in order.
     Ok(Protocol {
         name: protocol_name,
         namespace: namespace.clone(),
         doc,
         properties: protocol_properties,
-        types,
+        types: Vec::new(),
         messages,
     })
 }
 
 /// Dispatch to record, enum, or fixed based on the named schema declaration.
-fn walk_named_schema<'input>(
+///
+/// This function parses the named schema but does NOT register it in a
+/// SchemaRegistry. The caller is responsible for registration, which allows
+/// imports and local types to be registered in source order.
+fn walk_named_schema_no_register<'input>(
     ctx: &NamedSchemaDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    registry: &mut SchemaRegistry,
     namespace: &mut Option<String>,
 ) -> Result<AvroSchema> {
-    let schema = if let Some(fixed_ctx) = ctx.fixedDeclaration() {
-        walk_fixed(&fixed_ctx, token_stream, src, namespace)?
+    if let Some(fixed_ctx) = ctx.fixedDeclaration() {
+        walk_fixed(&fixed_ctx, token_stream, src, namespace)
     } else if let Some(enum_ctx) = ctx.enumDeclaration() {
-        walk_enum(&enum_ctx, token_stream, src, namespace)?
+        walk_enum(&enum_ctx, token_stream, src, namespace)
     } else if let Some(record_ctx) = ctx.recordDeclaration() {
-        walk_record(&record_ctx, token_stream, src, namespace)?
+        walk_record(&record_ctx, token_stream, src, namespace)
     } else {
-        return Err(make_diagnostic(
+        Err(make_diagnostic(
             src,
             ctx,
             "unknown named schema declaration",
-        ));
-    };
-    registry
-        .register(schema.clone())
-        .map_err(IdlError::Other)?;
-    Ok(schema)
+        ))
+    }
 }
 
 // ==========================================================================
@@ -1587,28 +1608,27 @@ where
     extract_doc_comment(token_stream, token_index)
 }
 
-/// Collect import statements into the imports list.
-fn collect_imports<'input>(
-    import_ctxs: &[Rc<ImportStatementContextAll<'input>>],
-    imports: &mut Vec<ImportEntry>,
+/// Parse a single import statement and append it as a `DeclItem::Import` to
+/// the declaration items list.
+fn collect_single_import<'input>(
+    import_ctx: &ImportStatementContextAll<'input>,
+    decl_items: &mut Vec<DeclItem>,
 ) {
-    for import_ctx in import_ctxs {
-        let kind_tok = import_ctx.importType.as_ref();
-        let location_tok = import_ctx.location.as_ref();
+    let kind_tok = import_ctx.importType.as_ref();
+    let location_tok = import_ctx.location.as_ref();
 
-        if let (Some(kind), Some(loc)) = (kind_tok, location_tok) {
-            let import_kind = match kind.get_token_type() {
-                Idl_IDL => ImportKind::Idl,
-                Idl_Protocol => ImportKind::Protocol,
-                Idl_Schema => ImportKind::Schema,
-                _ => continue,
-            };
+    if let (Some(kind), Some(loc)) = (kind_tok, location_tok) {
+        let import_kind = match kind.get_token_type() {
+            Idl_IDL => ImportKind::Idl,
+            Idl_Protocol => ImportKind::Protocol,
+            Idl_Schema => ImportKind::Schema,
+            _ => return,
+        };
 
-            imports.push(ImportEntry {
-                kind: import_kind,
-                path: get_string_from_literal(loc.get_text()),
-            });
-        }
+        decl_items.push(DeclItem::Import(ImportEntry {
+            kind: import_kind,
+            path: get_string_from_literal(loc.get_text()),
+        }));
     }
 }
 
