@@ -469,36 +469,37 @@ pub fn schema_to_json(
         // Reference: resolve against the lookup to inline at first use, or
         // output a bare name for subsequent uses.
         // =====================================================================
-        AvroSchema::Reference(full_name) => {
+        AvroSchema::Reference {
+            name,
+            namespace,
+            ..
+        } => {
+            let full_name = match namespace {
+                Some(ns) => format!("{ns}.{name}"),
+                None => name.clone(),
+            };
+
             // If already serialized, output a bare name (possibly shortened).
-            if known_names.contains(full_name) {
-                if let Some(dot_pos) = full_name.rfind('.') {
-                    let ns = &full_name[..dot_pos];
-                    let simple = &full_name[dot_pos + 1..];
-                    return Value::String(schema_ref_name(
-                        simple,
-                        Some(ns),
-                        enclosing_namespace,
-                    ));
-                } else {
-                    return Value::String(full_name.clone());
-                }
+            if known_names.contains(&full_name) {
+                return Value::String(schema_ref_name(
+                    name,
+                    namespace.as_deref(),
+                    enclosing_namespace,
+                ));
             }
 
             // Try to resolve from the lookup and inline the full definition.
-            if let Some(resolved) = lookup.get(full_name) {
+            if let Some(resolved) = lookup.get(&full_name) {
                 return schema_to_json(resolved, known_names, enclosing_namespace, lookup);
             }
 
             // Unresolvable reference -- output as a bare name string, applying
             // namespace shortening when possible.
-            if let Some(dot_pos) = full_name.rfind('.') {
-                let ns = &full_name[..dot_pos];
-                let simple = &full_name[dot_pos + 1..];
-                Value::String(schema_ref_name(simple, Some(ns), enclosing_namespace))
-            } else {
-                Value::String(full_name.clone())
-            }
+            Value::String(schema_ref_name(
+                name,
+                namespace.as_deref(),
+                enclosing_namespace,
+            ))
         }
     }
 }
