@@ -152,14 +152,6 @@ fn run_idl2schemata(
     let (source, input_dir) = read_input(&input)?;
     let (idl_file, registry) = parse_and_resolve(&source, &input_dir, import_dirs)?;
 
-    // Extract the protocol namespace so that `schema_to_json` can shorten
-    // fully-qualified type references to simple names when they share the
-    // same namespace (matching Java's `Schema.toString(true)` behavior).
-    let namespace = match &idl_file {
-        IdlFile::ProtocolFile(protocol) => protocol.namespace.clone(),
-        _ => None,
-    };
-
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
     fs::create_dir_all(&output_dir)
         .map_err(|e| IdlError::Io { source: e })
@@ -171,13 +163,12 @@ fn run_idl2schemata(
     let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
     let all_lookup = build_lookup(&registry_schemas, None);
 
-    // Share `known_names` across schema iterations so that types inlined
-    // inside a record on first encounter are emitted as bare string
-    // references in subsequent `.avsc` files, matching Java behavior.
-    let mut known_names = IndexSet::new();
-
-    // Write each named schema as an individual .avsc file.
+    // Write each named schema as an individual .avsc file. Each schema gets
+    // its own `known_names` set, matching Java's `Schema.toString(true)` which
+    // creates a fresh `HashSet` per call. This ensures each `.avsc` file is
+    // self-contained with all referenced types inlined on first occurrence.
     for schema in registry.schemas() {
+        let mut known_names = IndexSet::new();
         let type_name = match schema.full_name() {
             Some(name) => name,
             // Skip non-named schemas (primitives, etc.).
@@ -191,13 +182,18 @@ fn run_idl2schemata(
             None => continue,
         };
 
-        let json_value = schema_to_json(schema, &mut known_names, namespace.as_deref(), &all_lookup);
+        // Pass `None` as `enclosing_namespace` so that each standalone `.avsc`
+        // file always includes an explicit `"namespace"` key. Java's
+        // `Schema.toString(true)` passes `null` for the same reason — standalone
+        // schemas have no enclosing context to inherit namespace from.
+        let json_value = schema_to_json(schema, &mut known_names, None, &all_lookup);
         let json_str = to_string_pretty_java(&json_value)
             .map_err(|e| IdlError::Other(format!("serialize JSON for {type_name}: {e}")))
             .map_err(miette::Report::new)?;
 
         let file_path = output_dir.join(format!("{simple_name}.avsc"));
-        fs::write(&file_path, &json_str)
+        // Append trailing newline to match Java's `PrintStream.println()`.
+        fs::write(&file_path, format!("{json_str}\n"))
             .map_err(|e| IdlError::Io { source: e })
             .map_err(miette::Report::new)
             .wrap_err_with(|| format!("write {}", file_path.display()))?;
@@ -426,7 +422,9 @@ fn write_output(output: &Option<String>, content: &str) -> miette::Result<()> {
         Ok(())
     } else {
         let path = PathBuf::from(output.as_ref().expect("checked for None above"));
-        fs::write(&path, content)
+        // Append a trailing newline to match the golden files. Java's
+        // `IdlTool` uses `PrintStream.println()` which adds one.
+        fs::write(&path, format!("{content}\n"))
             .map_err(|e| IdlError::Io { source: e })
             .map_err(miette::Report::new)
             .wrap_err_with(|| format!("write {}", path.display()))
