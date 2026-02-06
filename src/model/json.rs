@@ -620,3 +620,898 @@ fn indexmap_to_value(map: IndexMap<String, Value>) -> Value {
     let json_map: Map<String, Value> = map.into_iter().collect();
     Value::Object(json_map)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    /// Serialize a schema with no prior known names, no enclosing namespace,
+    /// and an empty lookup table. Suitable for testing standalone schemas.
+    fn serialize_schema(schema: &AvroSchema) -> Value {
+        schema_to_json(schema, &mut IndexSet::new(), None, &IndexMap::new())
+    }
+
+    /// Serialize a schema with the given known names and lookup, returning the
+    /// updated known_names set for subsequent assertions.
+    fn serialize_schema_tracking(
+        schema: &AvroSchema,
+        known_names: &mut IndexSet<String>,
+        enclosing_ns: Option<&str>,
+        lookup: &SchemaLookup,
+    ) -> Value {
+        schema_to_json(schema, known_names, enclosing_ns, lookup)
+    }
+
+    // =========================================================================
+    // Primitive types
+    // =========================================================================
+
+    #[test]
+    fn primitives_serialize_as_bare_strings() {
+        assert_eq!(serialize_schema(&AvroSchema::Null), json!("null"));
+        assert_eq!(serialize_schema(&AvroSchema::Boolean), json!("boolean"));
+        assert_eq!(serialize_schema(&AvroSchema::Int), json!("int"));
+        assert_eq!(serialize_schema(&AvroSchema::Long), json!("long"));
+        assert_eq!(serialize_schema(&AvroSchema::Float), json!("float"));
+        assert_eq!(serialize_schema(&AvroSchema::Double), json!("double"));
+        assert_eq!(serialize_schema(&AvroSchema::Bytes), json!("bytes"));
+        assert_eq!(serialize_schema(&AvroSchema::String), json!("string"));
+    }
+
+    // =========================================================================
+    // Annotated primitives
+    // =========================================================================
+
+    #[test]
+    fn annotated_primitive_serializes_as_object() {
+        let mut props = IndexMap::new();
+        props.insert("foo.bar".to_string(), json!("baz"));
+
+        let schema = AvroSchema::AnnotatedPrimitive {
+            kind: super::super::schema::PrimitiveType::Long,
+            properties: props,
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(result, json!({"type": "long", "foo.bar": "baz"}));
+    }
+
+    // =========================================================================
+    // Record
+    // =========================================================================
+
+    #[test]
+    fn record_serializes_with_correct_key_order() {
+        let schema = AvroSchema::Record {
+            name: "Person".to_string(),
+            namespace: Some("com.example".to_string()),
+            doc: Some("A person record.".to_string()),
+            fields: vec![
+                Field {
+                    name: "name".to_string(),
+                    schema: AvroSchema::String,
+                    doc: None,
+                    default: None,
+                    order: None,
+                    aliases: vec![],
+                    properties: IndexMap::new(),
+                },
+                Field {
+                    name: "age".to_string(),
+                    schema: AvroSchema::Int,
+                    doc: None,
+                    default: Some(json!(0)),
+                    order: None,
+                    aliases: vec![],
+                    properties: IndexMap::new(),
+                },
+            ],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(
+            result,
+            json!({
+                "type": "record",
+                "name": "Person",
+                "namespace": "com.example",
+                "doc": "A person record.",
+                "fields": [
+                    {"name": "name", "type": "string"},
+                    {"name": "age", "type": "int", "default": 0}
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn error_record_uses_error_type() {
+        let schema = AvroSchema::Record {
+            name: "TestError".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![Field {
+                name: "message".to_string(),
+                schema: AvroSchema::String,
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: IndexMap::new(),
+            }],
+            is_error: true,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(result["type"], json!("error"));
+        assert_eq!(result["name"], json!("TestError"));
+    }
+
+    #[test]
+    fn record_with_aliases_and_properties() {
+        let mut props = IndexMap::new();
+        props.insert("my-prop".to_string(), json!({"key": 42}));
+
+        let schema = AvroSchema::Record {
+            name: "Rec".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec!["OldRec".to_string()],
+            properties: props,
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(result["aliases"], json!(["OldRec"]));
+        assert_eq!(result["my-prop"], json!({"key": 42}));
+    }
+
+    #[test]
+    fn record_omits_namespace_when_same_as_enclosing() {
+        // When the record's namespace matches the enclosing protocol namespace,
+        // the "namespace" key should be omitted from the JSON output.
+        let schema = AvroSchema::Record {
+            name: "Rec".to_string(),
+            namespace: Some("org.example".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = schema_to_json(
+            &schema,
+            &mut IndexSet::new(),
+            Some("org.example"),
+            &IndexMap::new(),
+        );
+        assert!(result.get("namespace").is_none());
+    }
+
+    #[test]
+    fn record_includes_namespace_when_different_from_enclosing() {
+        let schema = AvroSchema::Record {
+            name: "Rec".to_string(),
+            namespace: Some("org.other".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = schema_to_json(
+            &schema,
+            &mut IndexSet::new(),
+            Some("org.example"),
+            &IndexMap::new(),
+        );
+        assert_eq!(result["namespace"], json!("org.other"));
+    }
+
+    // =========================================================================
+    // Enum
+    // =========================================================================
+
+    #[test]
+    fn enum_serializes_correctly() {
+        let schema = AvroSchema::Enum {
+            name: "Status".to_string(),
+            namespace: Some("org.test".to_string()),
+            doc: Some("Status enum.".to_string()),
+            symbols: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+            default: Some("C".to_string()),
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(
+            result,
+            json!({
+                "type": "enum",
+                "name": "Status",
+                "namespace": "org.test",
+                "doc": "Status enum.",
+                "symbols": ["A", "B", "C"],
+                "default": "C"
+            })
+        );
+    }
+
+    #[test]
+    fn enum_omits_default_when_absent() {
+        let schema = AvroSchema::Enum {
+            name: "Kind".to_string(),
+            namespace: None,
+            doc: None,
+            symbols: vec!["FOO".to_string(), "BAR".to_string()],
+            default: None,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = serialize_schema(&schema);
+        assert!(result.get("default").is_none());
+    }
+
+    // =========================================================================
+    // Fixed
+    // =========================================================================
+
+    #[test]
+    fn fixed_serializes_correctly() {
+        let schema = AvroSchema::Fixed {
+            name: "MD5".to_string(),
+            namespace: None,
+            doc: Some("An MD5 hash.".to_string()),
+            size: 16,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(
+            result,
+            json!({
+                "type": "fixed",
+                "name": "MD5",
+                "doc": "An MD5 hash.",
+                "size": 16
+            })
+        );
+    }
+
+    // =========================================================================
+    // Array
+    // =========================================================================
+
+    #[test]
+    fn array_serializes_correctly() {
+        let schema = AvroSchema::Array {
+            items: Box::new(AvroSchema::String),
+            properties: IndexMap::new(),
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(result, json!({"type": "array", "items": "string"}));
+    }
+
+    #[test]
+    fn array_with_properties() {
+        let mut props = IndexMap::new();
+        props.insert("foo.bar".to_string(), json!("baz"));
+
+        let schema = AvroSchema::Array {
+            items: Box::new(AvroSchema::Int),
+            properties: props,
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(
+            result,
+            json!({"type": "array", "items": "int", "foo.bar": "baz"})
+        );
+    }
+
+    // =========================================================================
+    // Map
+    // =========================================================================
+
+    #[test]
+    fn map_serializes_correctly() {
+        let schema = AvroSchema::Map {
+            values: Box::new(AvroSchema::Int),
+            properties: IndexMap::new(),
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(result, json!({"type": "map", "values": "int"}));
+    }
+
+    // =========================================================================
+    // Union
+    // =========================================================================
+
+    #[test]
+    fn union_serializes_as_array() {
+        let schema = AvroSchema::Union {
+            types: vec![AvroSchema::Null, AvroSchema::String],
+            is_nullable_type: true,
+        };
+
+        let result = serialize_schema(&schema);
+        assert_eq!(result, json!(["null", "string"]));
+    }
+
+    // =========================================================================
+    // Logical types
+    // =========================================================================
+
+    #[test]
+    fn logical_type_date() {
+        let schema = AvroSchema::Logical {
+            logical_type: LogicalType::Date,
+            properties: IndexMap::new(),
+        };
+        assert_eq!(
+            serialize_schema(&schema),
+            json!({"type": "int", "logicalType": "date"})
+        );
+    }
+
+    #[test]
+    fn logical_type_time_millis() {
+        let schema = AvroSchema::Logical {
+            logical_type: LogicalType::TimeMillis,
+            properties: IndexMap::new(),
+        };
+        assert_eq!(
+            serialize_schema(&schema),
+            json!({"type": "int", "logicalType": "time-millis"})
+        );
+    }
+
+    #[test]
+    fn logical_type_timestamp_millis() {
+        let schema = AvroSchema::Logical {
+            logical_type: LogicalType::TimestampMillis,
+            properties: IndexMap::new(),
+        };
+        assert_eq!(
+            serialize_schema(&schema),
+            json!({"type": "long", "logicalType": "timestamp-millis"})
+        );
+    }
+
+    #[test]
+    fn logical_type_local_timestamp_millis() {
+        let schema = AvroSchema::Logical {
+            logical_type: LogicalType::LocalTimestampMillis,
+            properties: IndexMap::new(),
+        };
+        assert_eq!(
+            serialize_schema(&schema),
+            json!({"type": "long", "logicalType": "local-timestamp-millis"})
+        );
+    }
+
+    #[test]
+    fn logical_type_uuid() {
+        let schema = AvroSchema::Logical {
+            logical_type: LogicalType::Uuid,
+            properties: IndexMap::new(),
+        };
+        assert_eq!(
+            serialize_schema(&schema),
+            json!({"type": "string", "logicalType": "uuid"})
+        );
+    }
+
+    #[test]
+    fn logical_type_decimal() {
+        let schema = AvroSchema::Logical {
+            logical_type: LogicalType::Decimal {
+                precision: 6,
+                scale: 2,
+            },
+            properties: IndexMap::new(),
+        };
+        assert_eq!(
+            serialize_schema(&schema),
+            json!({"type": "bytes", "logicalType": "decimal", "precision": 6, "scale": 2})
+        );
+    }
+
+    // =========================================================================
+    // Reference inlining behavior
+    // =========================================================================
+
+    #[test]
+    fn reference_inlines_full_definition_on_first_use() {
+        // Build a lookup with a record definition. A Reference pointing to it
+        // should inline the full record JSON on first encounter.
+        let record = AvroSchema::Record {
+            name: "Ping".to_string(),
+            namespace: Some("org.example".to_string()),
+            doc: None,
+            fields: vec![Field {
+                name: "ts".to_string(),
+                schema: AvroSchema::Long,
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: IndexMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let mut lookup = IndexMap::new();
+        lookup.insert("org.example.Ping".to_string(), record);
+
+        let reference = AvroSchema::Reference {
+            name: "Ping".to_string(),
+            namespace: Some("org.example".to_string()),
+            properties: IndexMap::new(),
+        };
+
+        let mut known = IndexSet::new();
+        let result = serialize_schema_tracking(&reference, &mut known, None, &lookup);
+
+        // First use: should be the full record definition (an object).
+        assert!(result.is_object(), "first use of reference should inline the full definition");
+        assert_eq!(result["type"], json!("record"));
+        assert_eq!(result["name"], json!("Ping"));
+    }
+
+    #[test]
+    fn reference_emits_bare_name_on_subsequent_use() {
+        let record = AvroSchema::Record {
+            name: "Ping".to_string(),
+            namespace: Some("org.example".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let mut lookup = IndexMap::new();
+        lookup.insert("org.example.Ping".to_string(), record);
+
+        let reference = AvroSchema::Reference {
+            name: "Ping".to_string(),
+            namespace: Some("org.example".to_string()),
+            properties: IndexMap::new(),
+        };
+
+        let mut known = IndexSet::new();
+        // First use inlines the definition.
+        let _ = serialize_schema_tracking(&reference, &mut known, None, &lookup);
+        // Second use should be a bare name string.
+        let result = serialize_schema_tracking(&reference, &mut known, None, &lookup);
+        assert_eq!(result, json!("org.example.Ping"));
+    }
+
+    #[test]
+    fn reference_uses_short_name_when_namespace_matches_enclosing() {
+        let record = AvroSchema::Record {
+            name: "Ping".to_string(),
+            namespace: Some("org.example".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let mut lookup = IndexMap::new();
+        lookup.insert("org.example.Ping".to_string(), record);
+
+        let reference = AvroSchema::Reference {
+            name: "Ping".to_string(),
+            namespace: Some("org.example".to_string()),
+            properties: IndexMap::new(),
+        };
+
+        let mut known = IndexSet::new();
+        // First use inlines.
+        let _ = serialize_schema_tracking(
+            &reference,
+            &mut known,
+            Some("org.example"),
+            &lookup,
+        );
+        // Second use within the same namespace should use the short name.
+        let result = serialize_schema_tracking(
+            &reference,
+            &mut known,
+            Some("org.example"),
+            &lookup,
+        );
+        assert_eq!(result, json!("Ping"));
+    }
+
+    // =========================================================================
+    // schema_ref_name
+    // =========================================================================
+
+    #[test]
+    fn ref_name_returns_simple_when_namespace_matches() {
+        assert_eq!(
+            schema_ref_name("Foo", Some("org.example"), Some("org.example")),
+            "Foo"
+        );
+    }
+
+    #[test]
+    fn ref_name_returns_qualified_when_namespaces_differ() {
+        assert_eq!(
+            schema_ref_name("Foo", Some("org.other"), Some("org.example")),
+            "org.other.Foo"
+        );
+    }
+
+    #[test]
+    fn ref_name_returns_simple_when_no_namespace() {
+        assert_eq!(schema_ref_name("Foo", None, None), "Foo");
+    }
+
+    #[test]
+    fn ref_name_returns_qualified_when_only_type_has_namespace() {
+        assert_eq!(
+            schema_ref_name("Foo", Some("org.example"), None),
+            "org.example.Foo"
+        );
+    }
+
+    // =========================================================================
+    // Field serialization
+    // =========================================================================
+
+    #[test]
+    fn field_with_doc_default_and_order() {
+        let field = Field {
+            name: "kind".to_string(),
+            schema: AvroSchema::String,
+            doc: Some("The kind.".to_string()),
+            default: Some(json!("FOO")),
+            order: Some(FieldOrder::Descending),
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = field_to_json(
+            &field,
+            &mut IndexSet::new(),
+            None,
+            &IndexMap::new(),
+        );
+        assert_eq!(result["name"], json!("kind"));
+        assert_eq!(result["type"], json!("string"));
+        assert_eq!(result["doc"], json!("The kind."));
+        assert_eq!(result["default"], json!("FOO"));
+        assert_eq!(result["order"], json!("descending"));
+    }
+
+    #[test]
+    fn field_ascending_order_is_omitted() {
+        let field = Field {
+            name: "x".to_string(),
+            schema: AvroSchema::Int,
+            doc: None,
+            default: None,
+            order: Some(FieldOrder::Ascending),
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = field_to_json(
+            &field,
+            &mut IndexSet::new(),
+            None,
+            &IndexMap::new(),
+        );
+        // Ascending is the default and should be omitted.
+        assert!(result.get("order").is_none());
+    }
+
+    #[test]
+    fn field_with_ignore_order() {
+        let field = Field {
+            name: "x".to_string(),
+            schema: AvroSchema::Int,
+            doc: None,
+            default: None,
+            order: Some(FieldOrder::Ignore),
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let result = field_to_json(
+            &field,
+            &mut IndexSet::new(),
+            None,
+            &IndexMap::new(),
+        );
+        assert_eq!(result["order"], json!("ignore"));
+    }
+
+    #[test]
+    fn field_with_aliases_and_properties() {
+        let mut props = IndexMap::new();
+        props.insert("custom-prop".to_string(), json!(true));
+
+        let field = Field {
+            name: "hash".to_string(),
+            schema: AvroSchema::Bytes,
+            doc: None,
+            default: None,
+            order: None,
+            aliases: vec!["old_hash".to_string(), "h".to_string()],
+            properties: props,
+        };
+
+        let result = field_to_json(
+            &field,
+            &mut IndexSet::new(),
+            None,
+            &IndexMap::new(),
+        );
+        assert_eq!(result["aliases"], json!(["old_hash", "h"]));
+        assert_eq!(result["custom-prop"], json!(true));
+    }
+
+    // =========================================================================
+    // Protocol serialization
+    // =========================================================================
+
+    #[test]
+    fn protocol_to_json_minimal() {
+        let protocol = Protocol {
+            name: "Echo".to_string(),
+            namespace: Some("org.example".to_string()),
+            doc: None,
+            properties: IndexMap::new(),
+            types: vec![AvroSchema::Record {
+                name: "Ping".to_string(),
+                namespace: Some("org.example".to_string()),
+                doc: None,
+                fields: vec![Field {
+                    name: "ts".to_string(),
+                    schema: AvroSchema::Long,
+                    doc: None,
+                    default: Some(json!(-1)),
+                    order: None,
+                    aliases: vec![],
+                    properties: IndexMap::new(),
+                }],
+                is_error: false,
+                aliases: vec![],
+                properties: IndexMap::new(),
+            }],
+            messages: IndexMap::new(),
+        };
+
+        let result = protocol_to_json(&protocol);
+        assert_eq!(result["protocol"], json!("Echo"));
+        assert_eq!(result["namespace"], json!("org.example"));
+        let types = result["types"].as_array().expect("types should be an array");
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0]["name"], json!("Ping"));
+        assert_eq!(result["messages"], json!({}));
+    }
+
+    #[test]
+    fn protocol_with_doc_and_properties() {
+        let mut props = IndexMap::new();
+        props.insert("version".to_string(), json!("1.0"));
+
+        let protocol = Protocol {
+            name: "Greeter".to_string(),
+            namespace: None,
+            doc: Some("A greeter protocol.".to_string()),
+            properties: props,
+            types: vec![],
+            messages: IndexMap::new(),
+        };
+
+        let result = protocol_to_json(&protocol);
+        assert_eq!(result["protocol"], json!("Greeter"));
+        assert_eq!(result["doc"], json!("A greeter protocol."));
+        assert_eq!(result["version"], json!("1.0"));
+    }
+
+    #[test]
+    fn protocol_with_messages() {
+        let protocol = Protocol {
+            name: "Svc".to_string(),
+            namespace: Some("org.example".to_string()),
+            doc: None,
+            properties: IndexMap::new(),
+            types: vec![],
+            messages: {
+                let mut msgs = IndexMap::new();
+                msgs.insert(
+                    "hello".to_string(),
+                    Message {
+                        doc: Some("Say hello.".to_string()),
+                        properties: IndexMap::new(),
+                        request: vec![Field {
+                            name: "greeting".to_string(),
+                            schema: AvroSchema::String,
+                            doc: None,
+                            default: None,
+                            order: None,
+                            aliases: vec![],
+                            properties: IndexMap::new(),
+                        }],
+                        response: AvroSchema::String,
+                        errors: None,
+                        one_way: false,
+                    },
+                );
+                msgs.insert(
+                    "ping".to_string(),
+                    Message {
+                        doc: None,
+                        properties: IndexMap::new(),
+                        request: vec![],
+                        response: AvroSchema::Null,
+                        errors: None,
+                        one_way: true,
+                    },
+                );
+                msgs
+            },
+        };
+
+        let result = protocol_to_json(&protocol);
+        let messages = result["messages"].as_object().expect("messages should be an object");
+        assert_eq!(messages.len(), 2);
+
+        let hello = &messages["hello"];
+        assert_eq!(hello["doc"], json!("Say hello."));
+        assert_eq!(hello["response"], json!("string"));
+        assert!(hello.get("one-way").is_none());
+
+        let ping = &messages["ping"];
+        assert_eq!(ping["one-way"], json!(true));
+        assert_eq!(ping["response"], json!("null"));
+    }
+
+    // =========================================================================
+    // build_lookup
+    // =========================================================================
+
+    #[test]
+    fn build_lookup_collects_nested_types() {
+        // A record containing a field with an enum type. Both the record and
+        // the enum should appear in the lookup.
+        let status_enum = AvroSchema::Enum {
+            name: "Status".to_string(),
+            namespace: Some("org.example".to_string()),
+            doc: None,
+            symbols: vec!["A".to_string(), "B".to_string()],
+            default: None,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let record = AvroSchema::Record {
+            name: "Rec".to_string(),
+            namespace: Some("org.example".to_string()),
+            doc: None,
+            fields: vec![Field {
+                name: "status".to_string(),
+                schema: status_enum,
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: IndexMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let lookup = build_lookup(&[record], Some("org.example"));
+        assert!(lookup.contains_key("org.example.Rec"));
+        assert!(lookup.contains_key("org.example.Status"));
+    }
+
+    #[test]
+    fn build_lookup_uses_default_namespace_for_unqualified_types() {
+        // A record with no explicit namespace should inherit the default.
+        let record = AvroSchema::Record {
+            name: "Rec".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let lookup = build_lookup(&[record], Some("org.default"));
+        assert!(lookup.contains_key("org.default.Rec"));
+    }
+
+    // =========================================================================
+    // Named type deduplication: second occurrence becomes bare string
+    // =========================================================================
+
+    #[test]
+    fn named_type_second_occurrence_is_bare_string() {
+        let schema = AvroSchema::Record {
+            name: "Rec".to_string(),
+            namespace: Some("org.test".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let mut known = IndexSet::new();
+        let lookup = IndexMap::new();
+
+        // First serialization: full object.
+        let first = serialize_schema_tracking(&schema, &mut known, None, &lookup);
+        assert!(first.is_object());
+
+        // Second serialization: bare string.
+        let second = serialize_schema_tracking(&schema, &mut known, None, &lookup);
+        assert_eq!(second, json!("org.test.Rec"));
+    }
+
+    #[test]
+    fn named_type_second_occurrence_uses_short_name_in_same_namespace() {
+        let schema = AvroSchema::Enum {
+            name: "Color".to_string(),
+            namespace: Some("org.palette".to_string()),
+            doc: None,
+            symbols: vec!["RED".to_string()],
+            default: None,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let mut known = IndexSet::new();
+        let lookup = IndexMap::new();
+
+        // First serialization within matching namespace: full object.
+        let first = serialize_schema_tracking(
+            &schema,
+            &mut known,
+            Some("org.palette"),
+            &lookup,
+        );
+        assert!(first.is_object());
+
+        // Second serialization within same namespace: short name.
+        let second = serialize_schema_tracking(
+            &schema,
+            &mut known,
+            Some("org.palette"),
+            &lookup,
+        );
+        assert_eq!(second, json!("Color"));
+    }
+}
