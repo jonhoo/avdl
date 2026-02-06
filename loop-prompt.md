@@ -40,14 +40,18 @@ Each agent should pursue its own line of investigation autonomously. If it finds
   toes — prefer filing issues and using `tmp/` + `examples/`
 - Do not update `SESSION.md`, that will be done by the orchestrating
   agent
+- **Check existing issues before filing** — read the contents of each
+  file in `issues/` to avoid filing duplicates. Also check SESSION.md
+  for previously investigated items.
 
 **Comparison commands:** See the "Comparing against the Java tool"
 section in CLAUDE.md, or use `scripts/compare-golden.sh`.
 
 **After agents complete:**
 1. Review new files in `issues/` — deduplicate against existing issues
-2. Commit all new issue entries using `commit-writer` skill
-3. **If no new issues were filed → STOP the loop entirely**
+2. Review SESSION.md for observations that warrant new issues
+3. Commit all new issue entries using `commit-writer` skill
+4. **If no new issues were filed → STOP the loop entirely**
 
 ### Phase 2: Issue Resolution
 
@@ -69,6 +73,9 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
      merging. To minimize conflicts, order merges so that additive
      changes (new tests, new functions) merge before transformative
      changes (refactors, renames).
+   - Small, self-contained fixes to the same file (e.g., `main.rs`
+     one-liners) can often be batched into a single wave and applied
+     sequentially by the parent agent without sub-agents.
 
 3. **For each wave:**
    a. **Prepare worktrees** (not in sub-agents):
@@ -117,7 +124,22 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
 
 4. Repeat for each wave until all grouped issues are resolved.
 
-### Phase 3: Return to Phase 1
+### Phase 3: Cleanup and Reflection
+
+After all waves complete:
+
+1. **Update resolved issues**: Remove issue files for fixes that were
+   merged. Also close any issues that are non-goals (see CLAUDE.md).
+2. **Update existing issue files**: Enrich remaining issues with any
+   new information learned during the iteration (e.g., partially
+   addressed gaps, updated priorities).
+3. **Review SESSION.md**: File issues for any observations that
+   warrant them. Clean up entries that have been addressed.
+4. **Attempt to improve this prompt**: Review what went well and what
+   was friction during this iteration. Update this file with any
+   improvements — better instructions, new tips, corrected
+   assumptions. Commit the change.
+5. **Return to Phase 1** for the next iteration.
 
 ---
 
@@ -128,3 +150,28 @@ After each wave merge:
 - `scripts/compare-golden.sh idl` — all 18 files report results
 - `scripts/compare-golden.sh idl2schemata` — per-schema output compared
 - For test suite changes: verify new tests pass and cover the intended behavior
+
+---
+
+## Tips from Previous Iterations
+
+- **Batch simple fixes**: When multiple issues only need 1-3 line
+  changes to the same file (e.g., `main.rs`), apply them all in a
+  single worktree or directly on main instead of spawning separate
+  sub-agents. Wave 1 demonstrated this effectively.
+- **Expect merge conflicts in test files**: When two parallel agents
+  both add tests to `integration.rs`, the second merge will conflict.
+  Both test blocks should be kept — the conflict is purely positional.
+- **Discovery agents duplicate effort**: Phase 1 agents often
+  rediscover the same issues. Budget for deduplication time after
+  agents complete. Having agents check existing issues before filing
+  helps but doesn't eliminate duplicates.
+- **`compare-golden.sh` has limitations**: It can't find the Java JAR
+  from worktrees (issue `2931799a`). Run comparisons from `main/`
+  after merging, not from worktrees.
+- **Build cache staleness**: When a sub-agent modifies library code
+  (e.g., `reader.rs`), the test binary may not recompile. Use
+  `touch src/reader.rs` before `cargo test` if tests seem stale.
+- **Byte-identical output is a non-goal**: See CLAUDE.md. Don't file
+  issues about whitespace differences from the Java tool. Only
+  semantic (structural JSON) correctness matters.
