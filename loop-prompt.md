@@ -8,13 +8,9 @@ The `avdl` project is a Rust port of Apache Avro's IDL compiler (`idl` and `idl2
 - Main repo: `/home/jon/dev/stream/avdl/main/`
 - Worktrees: `/home/jon/dev/stream/avdl/avdl-worktrees/wt-{a..k}`
 - Java tool: `/home/jon/dev/stream/avdl/avro-tools-1.12.1.jar`
-- Test inputs: `avro/lang/java/idl/src/test/idl/input/` (18 .avdl files)
-- Expected outputs: `avro/lang/java/idl/src/test/idl/output/` (18 .avpr/.avsc)
-- Classpath imports: `avro/lang/java/idl/src/test/idl/putOnClassPath/`
-- Extra tests: `avro/lang/java/idl/src/test/idl/extra/`
-- Java test classes: `avro/lang/java/idl/src/test/java/org/apache/avro/idl/`
-- Java tools tests: `avro/lang/java/tools/src/test/idl/` (protocol.avdl/.avpr, schema.avdl/.avsc — additional golden-file pairs for the `idl` and `idl2schemata` CLI entry points)
-- Java tools test classes: `avro/lang/java/tools/src/test/java/org/apache/avro/tool/` (e.g., `TestIdlTool.java`, `TestIdlToSchemataTool.java`)
+
+See CLAUDE.md for test input/output/classpath directories and all
+reference file paths.
 
 ---
 
@@ -24,7 +20,7 @@ The `avdl` project is a Rust port of Apache Avro's IDL compiler (`idl` and `idl2
 
 Launch many sub-agents (blocking, in `main/`) for **open-ended exploration** of issues with the `idl` and `idl2schemata` subcommands. The goal is broad, creative discovery — agents should actively look for discrepancies, edge cases, and missing behaviors by:
 
-- Investigating the Java test suites in `avro/lang/java/idl/src/test/` and `avro/lang/java/tools/src/test/idl/` — reading unit tests, running .avdl files, studying what behaviors are tested
+- Investigating the Java test suites (see CLAUDE.md for paths) — reading unit tests, running .avdl files, studying what behaviors are tested
 - Running `.avdl` files through both the Rust `idl` subcommand and the Java `idl` tool, comparing protocol/schema JSON outputs
 - Running `idl2schemata` on representative inputs and comparing per-schema `.avsc` output against Java tool
 - Exploring edge cases, error paths, unusual inputs, and uncommon IDL features for both subcommands
@@ -34,28 +30,17 @@ Launch many sub-agents (blocking, in `main/`) for **open-ended exploration** of 
 Each agent should pursue its own line of investigation autonomously. If it finds a discrepancy, it does first-level triage (identify root cause, affected files) and files an issue under `issues/`.
 
 **Agent rules:**
-- Use `mktemp -d tmp/XXXXXX` for temp files (NOT `/tmp`)
-- Avoid modifying `src/` to prevent agents stepping on each others' toes — prefer filing issues and using `tmp/` + `examples/`
-- Use `jq -S .` for JSON comparison
-- File new issues under `issues/` with filename `$(uuidgen)-short-description.md`
-- Do first-level triage: symptom, root cause, affected files, reproduction, suggested fix
-- Check existing `issues/` first to avoid duplicates
-- Use Rust example files in `examples/` for debugging
-- Do not update `SESSION.md`, that will be done by the orchestrating agent
+- Follow the conventions in CLAUDE.md for temp files (`tmp/`),
+  issue filing (`issues/`), debug examples, and JSON comparison
+- Do first-level triage: symptom, root cause, affected files,
+  reproduction, suggested fix
+- Avoid modifying `src/` to prevent agents stepping on each others'
+  toes — prefer filing issues and using `tmp/` + `examples/`
+- Do not update `SESSION.md`, that will be done by the orchestrating
+  agent
 
-**Comparison commands:**
-```bash
-INPUT_DIR=avro/lang/java/idl/src/test/idl/input
-OUTPUT_DIR=avro/lang/java/idl/src/test/idl/output
-CLASSPATH_DIR=avro/lang/java/idl/src/test/idl/putOnClassPath
-
-# Rust tool:
-cargo run -- idl [--import-dir $INPUT_DIR] [--import-dir $CLASSPATH_DIR] $INPUT_DIR/foo.avdl tmp/foo.avpr
-# Java tool:
-java -jar ../avro-tools-1.12.1.jar idl $INPUT_DIR/foo.avdl tmp/foo-java.avpr
-# Compare:
-diff <(jq -S . tmp/foo.avpr) <(jq -S . $OUTPUT_DIR/foo.avpr)
-```
+**Comparison commands:** See the "Comparing against the Java tool"
+section in CLAUDE.md.
 
 **After agents complete:**
 1. Review new files in `issues/` — deduplicate against existing issues

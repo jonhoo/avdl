@@ -31,6 +31,30 @@ Java uses spaces before colons and a different array/object
 line-breaking style, so compare semantically (parse both as JSON and
 compare values) rather than as raw strings.
 
+### Comparing against the Java tool
+
+```sh
+INPUT_DIR=avro/lang/java/idl/src/test/idl/input
+OUTPUT_DIR=avro/lang/java/idl/src/test/idl/output
+CLASSPATH_DIR=avro/lang/java/idl/src/test/idl/putOnClassPath
+
+# Rust:
+cargo run -- idl --import-dir $INPUT_DIR --import-dir $CLASSPATH_DIR \
+  $INPUT_DIR/foo.avdl tmp/foo.avpr
+# Java:
+java -jar ../avro-tools-1.12.1.jar idl $INPUT_DIR/foo.avdl tmp/foo-java.avpr
+# Compare (semantic):
+diff <(jq -S . tmp/foo.avpr) <(jq -S . $OUTPUT_DIR/foo.avpr)
+```
+
+For ad-hoc debugging, create a temporary Rust example in `examples/`
+and run it with `cargo run --example <name>`. Remove the example
+after use.
+
+Use `tmp/` (project-local) for intermediate files and comparison
+artifacts, not `/tmp`. This keeps outputs discoverable and
+project-scoped. The `tmp/` directory is gitignored.
+
 ## CLI usage
 
 ```sh
@@ -54,6 +78,7 @@ src/
   lib.rs                 Module declarations
   reader.rs              Core ANTLR tree walker — the heart of the parser
   model/
+    mod.rs               Re-exports schema, protocol, json modules
     schema.rs            AvroSchema enum, Field, LogicalType, FieldOrder, PrimitiveType
     protocol.rs          Protocol and Message structs
     json.rs              JSON serialization matching Java avro-tools output format
@@ -113,6 +138,12 @@ semantics.
   and a `folder/` subdirectory with relative imports.
 - `avro/lang/java/idl/src/test/idl/extra/` — additional test inputs
   (`protocolSyntax.avdl`, `schemaSyntax.avdl`).
+- `avro/lang/java/tools/src/test/idl/` — additional golden-file
+  pairs (`protocol.avdl`/`.avpr`, `schema.avdl`/`.avsc`) for the
+  `idl` and `idl2schemata` CLI entry points.
+- `avro/lang/java/tools/src/test/java/org/apache/avro/tool/` — Java
+  test classes (`TestIdlTool.java`, `TestIdlToSchemataTool.java`)
+  that exercise CLI behavior.
 
 You can also validate against the Java tool directly:
 
@@ -183,8 +214,7 @@ See `src/doc_comments.rs`.
 ## Tricky areas
 
 These are areas where the implementation is non-obvious or where
-bugs are likely to hide. Consult the corresponding `issues/` file
-for known problems.
+bugs are likely to hide.
 
 ### Nullable type reordering
 
@@ -199,7 +229,7 @@ Types without an explicit `@namespace` annotation inherit the
 enclosing protocol's namespace. This affects the fully-qualified name
 used for `SchemaRegistry` lookup keys and `SchemaLookup` keys during
 JSON serialization. Getting this wrong causes reference resolution
-failures. See `issues/01-namespace-not-propagated-in-schema-mode.md`.
+failures.
 
 ### Schema mode vs protocol mode
 
@@ -207,25 +237,24 @@ Avro IDL files can define either a protocol (`protocol Foo { ... }`)
 or a standalone schema (`schema int;` or bare named type
 declarations). The two modes have different serialization paths and
 different namespace/reference-resolution behaviour. Schema mode is
-less thoroughly tested. See `issues/02-reference-inlining-in-schema-mode.md`.
+less thoroughly tested.
 
 ### Properties on primitives
 
-Annotations like `@foo("bar") int` need special handling because bare
-primitive types serialize as plain strings (`"int"`), not objects.
-The `AnnotatedPrimitive` variant wraps a primitive with its
-properties so it can serialize as `{"type": "int", "foo": "bar"}`.
+Primitives with annotations (e.g., `@foo("bar") int`) are wrapped in
+the `AnnotatedPrimitive` variant, which serializes as
+`{"type": "int", "foo": "bar"}` instead of a bare `"int"` string.
 
-### NaN and Infinity in JSON defaults
+## Issue tracking
 
-`NaN` and `Infinity` are not valid JSON. When they appear as field
-defaults for float/double fields, the Java tools serialize them as
-string values (`"NaN"`, `"Infinity"`, `"-Infinity"`). Our JSON
-serialization must match this.
+Issues live in `issues/`, one file per issue. Filename format:
+`<uuid>-short-description.md` (use `$(uuidgen)`). Some older issues
+use numeric prefixes instead. Check existing issues before filing to
+avoid duplicates.
 
-### Literal syntax
-
-The legal syntax for string, integer, and float literals is defined
-by the ANTLR grammar (`Idl.g4`), not by Java stdlib decoding
-functions. Our literal parsing should accept exactly what the grammar
-permits. See `issues/16-literal-parsing-should-match-grammar.md`.
+Each issue file should include:
+- **Symptom**: what's wrong or missing
+- **Root cause**: why it happens (if known)
+- **Affected files**: which source files are involved
+- **Reproduction**: commands or test case to reproduce
+- **Suggested fix**: approach sketch
