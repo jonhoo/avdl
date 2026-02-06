@@ -384,7 +384,8 @@ fn walk_record<'input>(
 
     // Compute namespace: `@namespace` on the record overrides; otherwise
     // the identifier may contain dots, or we fall back to the enclosing namespace.
-    let record_namespace = compute_namespace(&raw_identifier, &props.namespace);
+    let record_namespace = compute_namespace(&raw_identifier, &props.namespace)
+        .or_else(|| namespace.clone());
     let record_name = extract_name(&raw_identifier);
 
     // Save and set the current namespace for field type resolution inside the
