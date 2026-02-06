@@ -25,8 +25,10 @@ compare the serialized JSON output against golden `.avpr`/`.avsc` files.
 Known issues are tracked in `issues/`.
 
 When comparing our JSON output against the Java tool's golden files,
-**ignore JSON key ordering**. Our output currently sorts keys
-alphabetically. Compare output semantically (parse both as JSON and
+note that key ordering now matches the Avro-specified order (matching
+Java's output). The remaining formatting difference is whitespace:
+Java uses spaces before colons and a different array/object
+line-breaking style, so compare semantically (parse both as JSON and
 compare values) rather than as raw strings.
 
 ## CLI usage
