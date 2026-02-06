@@ -756,13 +756,30 @@ fn walk_full_type<'input>(
         .plainType()
         .ok_or_else(|| make_diagnostic(src, ctx, "missing plain type in fullType"))?;
 
-    let mut schema = walk_plain_type(&plain_ctx, token_stream, src, namespace)?;
+    let schema = walk_plain_type(&plain_ctx, token_stream, src, namespace)?;
+
+    // Type references may not be annotated. When the resolved type is a bare
+    // reference to a previously-defined named type, any accumulated schema
+    // properties (from annotations like `@foo("bar")`) are semantically invalid
+    // -- the annotation is ambiguous (does it apply to the field or the type?).
+    // The Java implementation checks this in exitNullableType (IdlReader.java
+    // lines 776-777) and throws "Type references may not be annotated".
+    if !props.properties.is_empty() && is_type_reference(&schema) {
+        return Err(make_diagnostic(
+            src,
+            ctx,
+            "Type references may not be annotated",
+        )
+        .into());
+    }
 
     // Apply custom properties to the schema. For nullable unions we apply
     // properties to the non-null branch (matching the Java behavior).
-    if !props.properties.is_empty() {
-        schema = apply_properties(schema, props.properties);
-    }
+    let schema = if !props.properties.is_empty() {
+        apply_properties(schema, props.properties)
+    } else {
+        schema
+    };
 
     Ok(schema)
 }
@@ -999,6 +1016,18 @@ fn walk_message<'input>(
 
     // Check for oneway.
     let one_way = ctx.oneway.is_some();
+
+    // One-way messages must return void (AvroSchema::Null). The Avro specification
+    // requires one-way messages to have a null response and no errors. The Java
+    // implementation checks this in exitMessageDeclaration (IdlReader.java line 715).
+    if one_way && response != AvroSchema::Null {
+        return Err(make_diagnostic(
+            src,
+            ctx,
+            &format!("One-way message '{}' must return void", message_name),
+        )
+        .into());
+    }
 
     // Check for throws clause. The `errors` field on the context ext struct
     // contains only the error type identifiers (not the message name).
@@ -1388,6 +1417,21 @@ fn compute_namespace(identifier: &str, explicit_namespace: &Option<String>) -> O
     }
 }
 
+/// Check whether a schema is a type reference (a bare name referring to a
+/// previously-defined named type) or a nullable union wrapping a type reference.
+/// Used to reject annotations on type references, matching the Java behavior.
+fn is_type_reference(schema: &AvroSchema) -> bool {
+    match schema {
+        AvroSchema::Reference { .. } => true,
+        // A nullable type reference (`MD5?`) wraps the reference in a union.
+        AvroSchema::Union {
+            types,
+            is_nullable_type: true,
+        } => types.iter().any(|t| matches!(t, AvroSchema::Reference { .. })),
+        _ => false,
+    }
+}
+
 /// When `type?` creates a union `[null, T]` and the field's default is non-null,
 /// reorder the union to `[T, null]` so that the default value matches the first
 /// branch. This matches the Java `fixOptionalSchema` behavior.
@@ -1734,5 +1778,83 @@ mod tests {
     fn mixed_escapes() {
         assert_eq!(unescape_java(r"hello\012world"), "hello\nworld");
         assert_eq!(unescape_java(r"\101\102\103"), "ABC");
+    }
+
+    // ------------------------------------------------------------------
+    // One-way messages must return void (issue #877f0e96)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn oneway_nonvoid_return_is_rejected() {
+        let idl = r#"
+            @namespace("test")
+            protocol OneWayTest {
+                record Msg { string text; }
+                Msg send(Msg m) oneway;
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for one-way message with non-void return");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("must return void"),
+            "error should mention 'must return void', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn oneway_void_return_is_accepted() {
+        let idl = r#"
+            @namespace("test")
+            protocol OneWayTest {
+                record Msg { string text; }
+                void send(Msg m) oneway;
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_ok(), "one-way void message should be accepted");
+    }
+
+    // ------------------------------------------------------------------
+    // Annotations on type references must be rejected (issue #caeb40b1)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn annotation_on_type_reference_is_rejected() {
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                fixed MD5(16);
+                record R {
+                    @foo("bar") MD5 hash = "0000000000000000";
+                }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(
+            result.is_err(),
+            "expected error for annotation on type reference"
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("may not be annotated"),
+            "error should mention 'may not be annotated', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn annotation_on_primitive_type_is_accepted() {
+        // Annotations on primitive types are fine -- only type references
+        // (bare names referring to previously-defined types) are rejected.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R {
+                    @foo("bar") string name;
+                }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_ok(), "annotation on primitive type should be accepted");
     }
 }
