@@ -1,0 +1,6 @@
+- `import.rs`: Primitive types with custom properties but no logical type lose those properties (marked with TODO in code).
+- `import.rs`: Unknown logical types on primitives are silently dropped rather than preserved (marked with TODO in code).
+- `reader.rs`: `unescape_java` only handles single-digit octal escapes (e.g. `\0`). Multi-digit octal escapes (`\012`, `\377`) are not fully supported yet (marked with TODO in code).
+- `reader.rs`: Primitive types and `Reference` nodes cannot carry custom schema properties in the current model. Properties applied to a primitive via `@prop("val") int` are silently dropped (marked with TODO in code).
+- `reader.rs`: `walk_record` receives a `_registry` parameter but does not use it. In the Java implementation, records can contain nested named schema declarations -- this is not yet handled.
+- `reader.rs`: The `apply_properties` function for nullable unions always targets index `[1]` (the non-null branch). After `fix_optional_schema` reorders to `[T, null]`, index `[1]` becomes `null`. These two operations should be coordinated so properties land on the correct branch regardless of reordering.
