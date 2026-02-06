@@ -6,12 +6,15 @@
 // through our IDL reader, serializes the result to JSON, and compares it
 // semantically against the expected `.avpr` or `.avsc` output file.
 //
-// We compare parsed `serde_json::Value` trees rather than strings, so
-// differences in whitespace or key ordering within standard JSON objects do not
-// cause false failures. (Note: Avro's JSON output preserves key order via
-// `IndexMap`, so order-sensitive comparison is actually desirable for full
-// fidelity, but `serde_json::Value` uses `BTreeMap` internally, which
-// normalizes key order. This is acceptable for correctness testing.)
+// JSON comparison approach: We compare `serde_json::Value` trees via
+// `assert_eq!`. With the `preserve_order` feature enabled on `serde_json`,
+// `Value::Object` uses `IndexMap` internally, so key ordering is preserved
+// during both deserialization and comparison. This means our comparisons are
+// sensitive to key order, which is the desired behavior since the Avro spec
+// defines a canonical key order for schema JSON. If `preserve_order` were
+// disabled, `Value` would use `BTreeMap` and sort keys alphabetically, making
+// comparisons order-insensitive -- still correct for semantic equality, but
+// unable to detect key-ordering regressions.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -416,4 +419,396 @@ fn test_status_schema() {
     let actual = parse_and_serialize(&input_path("status_schema.avdl"), &[]);
     let expected = load_expected(&output_path("status.avsc"));
     assert_eq!(actual, expected);
+}
+
+// ==============================================================================
+// `idl2schemata` Tests
+// ==============================================================================
+//
+// These tests exercise the `idl2schemata` pipeline, which extracts individual
+// named schemas from a protocol and serializes each as a standalone `.avsc`
+// JSON object. This mirrors the `avro-tools idl2schemata` subcommand.
+
+/// Parse an `.avdl` file through the `idl2schemata` pipeline: parse the
+/// protocol, collect named schemas from the registry, and serialize each one
+/// as a standalone JSON value.
+///
+/// Returns a map of `SimpleName -> serde_json::Value` for each named schema.
+fn parse_idl2schemata(
+    avdl_path: &Path,
+    import_dirs: &[&Path],
+) -> indexmap::IndexMap<String, Value> {
+    let input = fs::read_to_string(avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let (idl_file, decl_items) =
+        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+    let current_dir = avdl_path
+        .parent()
+        .expect("avdl_path should have a parent directory");
+    let search_dirs: Vec<PathBuf> = import_dirs.iter().map(|p| p.to_path_buf()).collect();
+    let import_ctx = ImportContext::new(search_dirs);
+
+    for item in &decl_items {
+        match item {
+            DeclItem::Import(import) => {
+                let resolved = import_ctx
+                    .resolve_import(&import.path, current_dir)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "failed to resolve import '{}' from {}: {e}",
+                            import.path,
+                            avdl_path.display()
+                        )
+                    });
+
+                match import.kind {
+                    ImportKind::Schema => {
+                        import_schema(&resolved, &mut registry)
+                            .unwrap_or_else(|e| panic!("failed to import schema {}: {e}", resolved.display()));
+                    }
+                    ImportKind::Protocol => {
+                        let _messages = import_protocol(&resolved, &mut registry)
+                            .unwrap_or_else(|e| {
+                                panic!("failed to import protocol {}: {e}", resolved.display())
+                            });
+                    }
+                    ImportKind::Idl => {
+                        panic!(
+                            "IDL imports not supported in parse_idl2schemata; '{}'",
+                            import.path
+                        );
+                    }
+                }
+            }
+            DeclItem::Type(schema) => {
+                let _ = registry.register(schema.clone());
+            }
+        }
+    }
+
+    // Extract the protocol namespace for reference shortening.
+    let namespace = match &idl_file {
+        IdlFile::ProtocolFile(protocol) => protocol.namespace.clone(),
+        _ => None,
+    };
+
+    // Build a lookup table and serialize each named schema individually,
+    // sharing `known_names` across iterations to match the behavior of
+    // `run_idl2schemata` in main.rs.
+    let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
+    let all_lookup = build_lookup(&registry_schemas, None);
+    let mut known_names = IndexSet::new();
+    let mut result = indexmap::IndexMap::new();
+
+    for schema in &registry_schemas {
+        if let Some(simple_name) = schema.name() {
+            let json_value =
+                schema_to_json(schema, &mut known_names, namespace.as_deref(), &all_lookup);
+            result.insert(simple_name.to_string(), json_value);
+        }
+    }
+
+    result
+}
+
+/// Test `idl2schemata` for `echo.avdl`.
+///
+/// The Echo protocol has two record types (`Ping` and `Pong`). The
+/// `idl2schemata` path should produce one `.avsc` file for each.
+#[test]
+fn test_idl2schemata_echo() {
+    let schemata = parse_idl2schemata(&input_path("echo.avdl"), &[]);
+
+    // echo.avdl defines two records: Ping and Pong.
+    assert_eq!(
+        schemata.keys().collect::<Vec<_>>(),
+        vec!["Ping", "Pong"],
+        "expected Ping and Pong schemas from echo.avdl"
+    );
+
+    // Verify Ping schema structure.
+    let ping = &schemata["Ping"];
+    assert_eq!(ping["type"], "record");
+    assert_eq!(ping["name"], "Ping");
+    let ping_fields = ping["fields"].as_array().expect("Ping should have fields");
+    assert_eq!(ping_fields.len(), 2);
+    assert_eq!(ping_fields[0]["name"], "timestamp");
+    assert_eq!(ping_fields[1]["name"], "text");
+
+    // Verify Pong schema structure. Since Ping was already serialized, the
+    // `ping` field's type should be the bare name "Ping", not the full record.
+    let pong = &schemata["Pong"];
+    assert_eq!(pong["type"], "record");
+    assert_eq!(pong["name"], "Pong");
+    let pong_fields = pong["fields"].as_array().expect("Pong should have fields");
+    let ping_field = &pong_fields[1];
+    assert_eq!(ping_field["name"], "ping");
+    assert_eq!(
+        ping_field["type"], "Ping",
+        "second occurrence of Ping should be a bare name reference"
+    );
+}
+
+/// Test `idl2schemata` for `simple.avdl`.
+///
+/// The Simple protocol has several named types: Kind (enum), Status (enum),
+/// TestRecord (record), MD5 (fixed), and TestError (error record). Verifies
+/// correct file names and that each schema serializes to the expected JSON.
+#[test]
+fn test_idl2schemata_simple() {
+    let schemata = parse_idl2schemata(&input_path("simple.avdl"), &[]);
+
+    let names: Vec<&String> = schemata.keys().collect();
+    assert_eq!(
+        names,
+        vec!["Kind", "Status", "TestRecord", "MD5", "TestError"],
+        "expected five named schemas from simple.avdl in declaration order"
+    );
+
+    // Kind: enum with three symbols and an alias.
+    let kind = &schemata["Kind"];
+    assert_eq!(kind["type"], "enum");
+    assert_eq!(kind["symbols"].as_array().unwrap().len(), 3);
+    assert_eq!(kind["aliases"], serde_json::json!(["org.foo.KindOf"]));
+
+    // Status: enum with default.
+    let status = &schemata["Status"];
+    assert_eq!(status["type"], "enum");
+    assert_eq!(status["default"], "C");
+
+    // TestRecord: record with fields, doc, and custom property.
+    let test_record = &schemata["TestRecord"];
+    assert_eq!(test_record["type"], "record");
+    assert_eq!(test_record["doc"], "A TestRecord.");
+    assert!(test_record.get("my-property").is_some());
+    let fields = test_record["fields"].as_array().expect("TestRecord should have fields");
+    assert!(fields.len() > 5, "TestRecord should have many fields");
+
+    // MD5: fixed type with size 16. Since it was already inlined inside
+    // TestRecord's `hash` field, the standalone serialization should be a
+    // bare string reference.
+    let md5 = &schemata["MD5"];
+    assert_eq!(
+        *md5,
+        serde_json::Value::String("MD5".to_string()),
+        "MD5 was already inlined in TestRecord, so its standalone entry should be a bare name"
+    );
+
+    // TestError: error record.
+    let test_error = &schemata["TestError"];
+    assert_eq!(test_error["type"], "error");
+    assert_eq!(test_error["name"], "TestError");
+}
+
+// ==============================================================================
+// Negative / Error-Case Tests
+// ==============================================================================
+//
+// These tests verify that the parser correctly rejects invalid input.
+
+/// Duplicate type definitions should produce an error when registering with
+/// the schema registry. The parser itself accepts the syntax, but the registry
+/// enforces uniqueness.
+#[test]
+fn test_duplicate_type_definition() {
+    let input = r#"
+        @namespace("org.test")
+        protocol DupTest {
+            record Dup { string name; }
+            record Dup { int id; }
+        }
+    "#;
+
+    let result = parse_idl(input);
+    match result {
+        Ok((IdlFile::ProtocolFile(_), decl_items)) => {
+            // The parser may accept duplicate names, but registering them
+            // in the SchemaRegistry should fail.
+            let mut registry = avdl::resolve::SchemaRegistry::new();
+            let mut saw_error = false;
+            for item in &decl_items {
+                if let DeclItem::Type(schema) = item {
+                    if registry.register(schema.clone()).is_err() {
+                        saw_error = true;
+                    }
+                }
+            }
+            assert!(
+                saw_error,
+                "registering duplicate type names should produce an error"
+            );
+        }
+        Err(_) => {
+            // If the parser itself rejects it, that's also acceptable.
+        }
+        Ok(_) => {
+            panic!("expected a protocol file or parse error for duplicate type input");
+        }
+    }
+}
+
+/// Importing a nonexistent file should produce an error during import resolution.
+#[test]
+fn test_import_nonexistent_file() {
+    let input = r#"
+        @namespace("org.test")
+        protocol ImportTest {
+            import schema "does_not_exist.avsc";
+            record Rec { string name; }
+        }
+    "#;
+
+    let (_, decl_items) =
+        parse_idl(input).expect("parsing the IDL text itself should succeed");
+
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+    let import_ctx = ImportContext::new(vec![]);
+
+    // Try to resolve the import -- it should fail because the file doesn't exist.
+    let mut saw_resolve_error = false;
+    for item in &decl_items {
+        if let DeclItem::Import(import) = item {
+            let result = import_ctx.resolve_import(&import.path, Path::new("."));
+            if result.is_err() {
+                saw_resolve_error = true;
+            } else {
+                // The path resolved, but the file shouldn't exist on disk.
+                let resolved = result.unwrap();
+                if import_schema(&resolved, &mut registry).is_err() {
+                    saw_resolve_error = true;
+                }
+            }
+        }
+    }
+    assert!(
+        saw_resolve_error,
+        "importing a nonexistent file should produce an error"
+    );
+}
+
+// ==============================================================================
+// Extra Directory Tests
+// ==============================================================================
+//
+// The `extra/` directory contains test inputs that the Java TestIdlReader tests
+// against but that are not in the standard `input/` directory.
+
+const EXTRA_DIR: &str = "avro/lang/java/idl/src/test/idl/extra";
+
+/// Test `extra/protocolSyntax.avdl`: a minimal protocol with one record type.
+///
+/// Verifies that the parser returns a `ProtocolFile` with:
+/// - Protocol name "Parrot" in namespace "communication"
+/// - One named type: the record `Message`
+/// - One message: `echo`
+#[test]
+fn test_extra_protocol_syntax() {
+    let avdl_path = PathBuf::from(EXTRA_DIR).join("protocolSyntax.avdl");
+    let input = fs::read_to_string(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let (idl_file, decl_items) =
+        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    // Verify it's a protocol file.
+    let protocol = match idl_file {
+        IdlFile::ProtocolFile(p) => p,
+        other => panic!("expected ProtocolFile, got {:?}", std::mem::discriminant(&other)),
+    };
+
+    assert_eq!(protocol.name, "Parrot");
+    assert_eq!(protocol.namespace.as_deref(), Some("communication"));
+
+    // Verify one named type: the Message record.
+    let type_items: Vec<_> = decl_items
+        .iter()
+        .filter_map(|item| match item {
+            DeclItem::Type(schema) => Some(schema),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(type_items.len(), 1, "protocolSyntax.avdl should define exactly one named type");
+    assert_eq!(
+        type_items[0].full_name(),
+        Some("communication.Message".to_string()),
+        "the named type should be communication.Message"
+    );
+
+    // Verify one message: echo.
+    assert_eq!(protocol.messages.len(), 1);
+    assert!(
+        protocol.messages.contains_key("echo"),
+        "protocol should have an 'echo' message"
+    );
+}
+
+/// Test `extra/schemaSyntax.avdl`: a schema-mode file with `schema array<Message>;`.
+///
+/// Verifies that the parser returns a `SchemaFile` with:
+/// - Main schema is an array type whose items are the Message record
+/// - One named type in the declaration items: the `Message` record
+#[test]
+fn test_extra_schema_syntax() {
+    let avdl_path = PathBuf::from(EXTRA_DIR).join("schemaSyntax.avdl");
+    let input = fs::read_to_string(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let (idl_file, decl_items) =
+        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    // Verify it's a schema file (not a protocol).
+    let schema = match idl_file {
+        IdlFile::SchemaFile(s) => s,
+        other => panic!("expected SchemaFile, got {:?}", std::mem::discriminant(&other)),
+    };
+
+    // The main schema should be an array type.
+    match &schema {
+        avdl::model::schema::AvroSchema::Array { items, .. } => {
+            // The items should reference the Message record. It might be
+            // a Reference or an inline Record depending on parse order.
+            match items.as_ref() {
+                avdl::model::schema::AvroSchema::Reference { name, namespace, .. } => {
+                    assert_eq!(name, "Message");
+                    // Namespace could be Some("communication") or resolved later.
+                    if let Some(ns) = namespace {
+                        assert_eq!(ns, "communication");
+                    }
+                }
+                avdl::model::schema::AvroSchema::Record { name, .. } => {
+                    assert_eq!(name, "Message");
+                }
+                other => panic!(
+                    "expected array items to be a Reference or Record for Message, got {:?}",
+                    std::mem::discriminant(other)
+                ),
+            }
+        }
+        other => panic!(
+            "expected Array schema, got {:?}",
+            std::mem::discriminant(other)
+        ),
+    }
+
+    // Verify the declaration items contain the Message record.
+    let type_items: Vec<_> = decl_items
+        .iter()
+        .filter_map(|item| match item {
+            DeclItem::Type(schema) => Some(schema),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        type_items.len(),
+        1,
+        "schemaSyntax.avdl should define exactly one named type"
+    );
+    assert_eq!(
+        type_items[0].full_name(),
+        Some("communication.Message".to_string()),
+        "the named type should be communication.Message"
+    );
 }
