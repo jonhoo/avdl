@@ -11,12 +11,13 @@ use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use miette::Context;
 
 use avdl::error::IdlError;
 use avdl::import::{import_protocol, import_schema, ImportContext};
 use avdl::model::json::{protocol_to_json, schema_to_json, SchemaLookup};
+use avdl::model::protocol::Message;
 use avdl::reader::{parse_idl, IdlFile, ImportEntry, ImportKind};
 use avdl::resolve::SchemaRegistry;
 
@@ -226,18 +227,29 @@ fn parse_and_resolve(
         parse_idl(source).map_err(miette::Report::new)?;
 
     let mut import_ctx = ImportContext::new(import_dirs);
+    let mut messages = IndexMap::new();
 
     resolve_imports(
         &imports,
         &mut registry,
         &mut import_ctx,
         input_dir,
-        &idl_file,
+        &mut messages,
     )?;
 
-    // For protocol files, rebuild the protocol's types list to include any
-    // types added by imports.
-    let idl_file = rebuild_protocol_types(idl_file, &registry);
+    // For protocol files, rebuild the types list from the registry (which now
+    // includes imported types) and prepend imported messages before the
+    // protocol's own messages so that the output order matches Java behavior.
+    let idl_file = match idl_file {
+        IdlFile::ProtocolFile(mut protocol) => {
+            protocol.types = registry.schemas().cloned().collect();
+            let own_messages = std::mem::take(&mut protocol.messages);
+            protocol.messages = messages;
+            protocol.messages.extend(own_messages);
+            IdlFile::ProtocolFile(protocol)
+        }
+        other => other,
+    };
 
     Ok((idl_file, registry))
 }
@@ -249,7 +261,7 @@ fn resolve_imports(
     registry: &mut SchemaRegistry,
     import_ctx: &mut ImportContext,
     current_dir: &Path,
-    _idl_file: &IdlFile,
+    messages: &mut IndexMap<String, Message>,
 ) -> miette::Result<()> {
     for import in imports {
         let resolved_path = import_ctx
@@ -268,15 +280,12 @@ fn resolve_imports(
 
         match import.kind {
             ImportKind::Protocol => {
-                let _messages = import_protocol(&resolved_path, registry)
+                let imported_messages = import_protocol(&resolved_path, registry)
                     .map_err(miette::Report::new)
                     .wrap_err_with(|| {
                         format!("import protocol {}", resolved_path.display())
                     })?;
-                // TODO: merge imported messages into the current protocol.
-                // The Java implementation merges them, but this requires
-                // mutable access to the protocol which we build immutably.
-                // For now, types are registered but messages are not merged.
+                messages.extend(imported_messages);
             }
             ImportKind::Schema => {
                 import_schema(&resolved_path, registry)
@@ -302,32 +311,24 @@ fn resolve_imports(
 
                 registry.merge(imported_registry);
 
+                // If the imported IDL is a protocol, merge its messages.
+                if let IdlFile::ProtocolFile(imported_protocol) = &imported_idl {
+                    messages.extend(imported_protocol.messages.clone());
+                }
+
                 // Recursively resolve imports from the imported file.
                 resolve_imports(
                     &nested_imports,
                     registry,
                     import_ctx,
                     &import_dir,
-                    &imported_idl,
+                    messages,
                 )?;
             }
         }
     }
 
     Ok(())
-}
-
-/// After import resolution, the protocol's `types` list may be stale (it was
-/// captured before imports were processed). Rebuild it from the registry so
-/// that imported types appear in the output.
-fn rebuild_protocol_types(idl_file: IdlFile, registry: &SchemaRegistry) -> IdlFile {
-    match idl_file {
-        IdlFile::ProtocolFile(mut protocol) => {
-            protocol.types = registry.schemas().cloned().collect();
-            IdlFile::ProtocolFile(protocol)
-        }
-        other => other,
-    }
 }
 
 /// Write output to a file or stdout.
