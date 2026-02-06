@@ -96,6 +96,12 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
         }
     }
 
+    idl_file_to_json(idl_file, registry)
+}
+
+/// Serialize an `IdlFile` to a `serde_json::Value`, using the given registry
+/// for reference resolution.
+fn idl_file_to_json(idl_file: IdlFile, registry: avdl::resolve::SchemaRegistry) -> Value {
     match idl_file {
         IdlFile::ProtocolFile(mut protocol) => {
             // Merge any types discovered during import resolution into the
@@ -110,6 +116,16 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
             let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
             let lookup = build_lookup(&registry_schemas, None);
             schema_to_json(&schema, &mut IndexSet::new(), None, &lookup)
+        }
+        IdlFile::NamedSchemasFile(schemas) => {
+            // Bare named type declarations are serialized as a JSON array.
+            let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
+            let lookup = build_lookup(&registry_schemas, None);
+            let json_schemas: Vec<Value> = schemas
+                .iter()
+                .map(|s| schema_to_json(s, &mut IndexSet::new(), None, &lookup))
+                .collect();
+            Value::Array(json_schemas)
         }
     }
 }
@@ -190,28 +206,18 @@ fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path])
         }
     }
 
-    match idl_file {
+    // For protocol files, prepend imported messages before dispatching.
+    let idl_file = match idl_file {
         IdlFile::ProtocolFile(mut protocol) => {
-            // The protocol's own types were registered first, then imports
-            // added theirs. Rebuild the types list from the merged registry.
-            protocol.types = registry.into_schemas();
-            // Merge imported messages (imported messages come before the
-            // protocol's own messages in the Java implementation, but for
-            // now we append -- the test expectations will reveal the correct
-            // order).
             let own_messages = protocol.messages;
             protocol.messages = imported_messages;
             protocol.messages.extend(own_messages);
-            protocol_to_json(&protocol)
+            IdlFile::ProtocolFile(protocol)
         }
-        IdlFile::SchemaFile(schema) => {
-            // Build a lookup from registry schemas so that references can be
-            // resolved and inlined, matching the protocol-mode behavior.
-            let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
-            let lookup = build_lookup(&registry_schemas, None);
-            schema_to_json(&schema, &mut IndexSet::new(), None, &lookup)
-        }
-    }
+        other => other,
+    };
+
+    idl_file_to_json(idl_file, registry)
 }
 
 /// Load an expected output file (`.avpr` or `.avsc`) as a `serde_json::Value`.
@@ -364,69 +370,12 @@ fn test_schema_syntax() {
 /// default). Its expected output is `status.avsc`, which is a JSON array
 /// containing a single schema.
 ///
-/// Note: `status_schema.avdl` uses the schema syntax without a `schema` keyword
-/// -- it just defines a namespace and an enum. The expected output is a JSON
-/// array `[{...}]`, which represents the list of named schemas defined in the
-/// file. Our parser currently returns a single `IdlFile::SchemaFile` for the
-/// main schema or an error if there is no `schema` declaration. Since
-/// `status_schema.avdl` has no explicit `schema` keyword, parsing it standalone
-/// may require special handling. We test it anyway to see what happens.
+/// This file uses bare named type declarations without a `schema` keyword,
+/// so the parser returns `IdlFile::NamedSchemasFile` and the output is a
+/// JSON array of all named schemas.
 #[test]
 fn test_status_schema() {
-    let avdl_path = input_path("status_schema.avdl");
-    let input = fs::read_to_string(&avdl_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
-
-    let result = parse_idl(&input);
-
-    // The status_schema.avdl file defines a namespace and an enum but has no
-    // `schema <type>;` declaration. The parser may return an error for this
-    // case. If parsing succeeds, we compare against the expected output.
-    // If it fails, we mark this as a known limitation.
-    match result {
-        Ok((idl_file, registry, _imports)) => {
-            // Build a lookup from registry schemas so that references can be
-            // resolved and inlined.
-            let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
-            let lookup = build_lookup(&registry_schemas, None);
-
-            let actual = match idl_file {
-                IdlFile::SchemaFile(schema) => {
-                    schema_to_json(&schema, &mut IndexSet::new(), None, &lookup)
-                }
-                IdlFile::ProtocolFile(protocol) => {
-                    protocol_to_json(&protocol)
-                }
-            };
-
-            // The expected output for status.avsc is a JSON array of schemas.
-            // Our parser might return the enum directly. Build the expected
-            // array form from the registry if needed.
-            let expected = load_expected(&output_path("status.avsc"));
-
-            // If the expected is an array and our actual is a single schema,
-            // wrap it to match.
-            if expected.is_array() && !actual.is_array() {
-                let schemas: Vec<Value> = registry
-                    .schemas()
-                    .map(|s| {
-                        schema_to_json(s, &mut IndexSet::new(), None, &lookup)
-                    })
-                    .collect();
-                assert_eq!(Value::Array(schemas), expected);
-            } else {
-                assert_eq!(actual, expected);
-            }
-        }
-        Err(e) => {
-            // The status_schema.avdl has no `schema` declaration, so the parser
-            // might reject it. This is a known limitation -- record it but do
-            // not fail the test.
-            eprintln!(
-                "NOTE: test_status_schema skipped (parser returned error: {e}). \
-                 The status_schema.avdl file has no `schema` declaration, which \
-                 is not yet supported in standalone schema parsing mode."
-            );
-        }
-    }
+    let actual = parse_and_serialize(&input_path("status_schema.avdl"), &[]);
+    let expected = load_expected(&output_path("status.avsc"));
+    assert_eq!(actual, expected);
 }

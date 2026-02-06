@@ -106,6 +106,18 @@ fn run_idl(
             let lookup = build_lookup(&registry_schemas, None);
             schema_to_json(schema, &mut IndexSet::new(), None, &lookup)
         }
+        IdlFile::NamedSchemasFile(schemas) => {
+            // Bare named type declarations (no `schema` keyword) are serialized
+            // as a JSON array of all named schemas, matching Java's
+            // `IdlFile.outputString()` behavior.
+            let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
+            let lookup = build_lookup(&registry_schemas, None);
+            let json_schemas: Vec<serde_json::Value> = schemas
+                .iter()
+                .map(|s| schema_to_json(s, &mut IndexSet::new(), None, &lookup))
+                .collect();
+            serde_json::Value::Array(json_schemas)
+        }
     };
 
     let json_str = serde_json::to_string_pretty(&json_value)

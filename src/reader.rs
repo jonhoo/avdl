@@ -42,7 +42,13 @@ use crate::resolve::SchemaRegistry;
 #[derive(Debug)]
 pub enum IdlFile {
     ProtocolFile(Protocol),
+    /// A file with an explicit `schema <type>;` declaration. Serialized as a
+    /// single JSON schema object.
     SchemaFile(AvroSchema),
+    /// A file with bare named type declarations (no `schema` keyword and no
+    /// `protocol`). Serialized as a JSON array of all named schemas, matching
+    /// the Java `IdlFile.outputString()` behavior.
+    NamedSchemasFile(Vec<AvroSchema>),
 }
 
 /// Import type discovered during parsing. The actual import resolution is
@@ -370,12 +376,13 @@ fn walk_idl_file<'input>(
     }
 
     // If there are named schemas but no explicit `schema <type>;` declaration,
-    // return the last registered schema as the "main" schema. This handles IDL
-    // files like `status_schema.avdl` that define named types without an explicit
-    // schema declaration — the Java parser treats these as valid schema-mode files
-    // where the named types are the schema output.
-    if let Some(last_schema) = registry.last() {
-        return Ok(IdlFile::SchemaFile(last_schema.clone()));
+    // return all registered schemas. This handles IDL files like
+    // `status_schema.avdl` that define named types without an explicit schema
+    // declaration. The Java `IdlFile.outputString()` serializes these as a JSON
+    // array of all named schemas.
+    let all_schemas: Vec<AvroSchema> = registry.schemas().cloned().collect();
+    if !all_schemas.is_empty() {
+        return Ok(IdlFile::NamedSchemasFile(all_schemas));
     }
 
     Err(make_diagnostic(
