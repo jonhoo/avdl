@@ -1,2 +1,382 @@
-// Schema registry for named type tracking and forward reference resolution.
-// Will be implemented in Step 4.
+// ==============================================================================
+// Schema Registry: Named Type Tracking and Forward Reference Validation
+// ==============================================================================
+//
+// The Avro IDL allows forward references -- a record field can reference a type
+// that hasn't been defined yet. During parsing, these unresolved type names are
+// stored as `AvroSchema::Reference(full_name)`. After all types in the protocol
+// are parsed, we validate that every `Reference` node points to a type that was
+// actually registered.
+//
+// The `Reference` variant intentionally stays in the schema tree rather than
+// being replaced inline with the full definition. The JSON serializer (in
+// model/json.rs) renders `Reference` nodes as bare name strings, which is the
+// correct Avro protocol JSON representation for subsequent occurrences of a
+// named type.
+
+use indexmap::IndexMap;
+
+use crate::model::schema::AvroSchema;
+
+/// Registry of named Avro types, tracking definition order for output.
+///
+/// Named types (record, enum, fixed) are registered as they're parsed.
+/// Forward references can then be validated against this registry.
+pub struct SchemaRegistry {
+    /// Named schemas indexed by full name (namespace.name), in registration order.
+    schemas: IndexMap<String, AvroSchema>,
+}
+
+impl SchemaRegistry {
+    pub fn new() -> Self {
+        SchemaRegistry {
+            schemas: IndexMap::new(),
+        }
+    }
+
+    /// Register a named schema. The schema must have a full name (i.e., be a
+    /// record, enum, or fixed type). Returns an error if the name is already
+    /// registered or if the schema is not a named type.
+    pub fn register(&mut self, schema: AvroSchema) -> Result<(), String> {
+        let full_name = schema
+            .full_name()
+            .ok_or_else(|| "cannot register non-named schema".to_string())?;
+        if self.schemas.contains_key(&full_name) {
+            return Err(format!("duplicate schema name: {full_name}"));
+        }
+        self.schemas.insert(full_name, schema);
+        Ok(())
+    }
+
+    /// Look up a named schema by full name.
+    pub fn lookup(&self, full_name: &str) -> Option<&AvroSchema> {
+        self.schemas.get(full_name)
+    }
+
+    /// Check whether a name is registered.
+    pub fn contains(&self, full_name: &str) -> bool {
+        self.schemas.contains_key(full_name)
+    }
+
+    /// Return all registered schemas in registration order, consuming the
+    /// registry. This is used to build the `types` array in protocol output.
+    pub fn into_schemas(self) -> Vec<AvroSchema> {
+        self.schemas.into_values().collect()
+    }
+
+    /// Return all registered schemas as a reference, in registration order.
+    pub fn schemas(&self) -> impl Iterator<Item = &AvroSchema> {
+        self.schemas.values()
+    }
+
+    /// Merge schemas from another registry (used for imports).
+    /// Schemas already present (by full name) are skipped, preserving the
+    /// original definition.
+    pub fn merge(&mut self, other: SchemaRegistry) {
+        for (name, schema) in other.schemas {
+            self.schemas.entry(name).or_insert(schema);
+        }
+    }
+
+    /// Validate that all `AvroSchema::Reference` nodes in registered schemas
+    /// point to actually registered types. Returns a sorted, deduplicated list
+    /// of unresolved names (empty if everything resolves).
+    pub fn validate_references(&self) -> Vec<String> {
+        let mut unresolved = Vec::new();
+        for schema in self.schemas.values() {
+            self.collect_unresolved(schema, &mut unresolved);
+        }
+        unresolved.sort();
+        unresolved.dedup();
+        unresolved
+    }
+
+    /// Recursively walk a schema tree and collect any `Reference` names that
+    /// don't correspond to a registered type.
+    fn collect_unresolved(&self, schema: &AvroSchema, unresolved: &mut Vec<String>) {
+        match schema {
+            AvroSchema::Reference(name) => {
+                if !self.schemas.contains_key(name) {
+                    unresolved.push(name.clone());
+                }
+            }
+            AvroSchema::Record { fields, .. } => {
+                for field in fields {
+                    self.collect_unresolved(&field.schema, unresolved);
+                }
+            }
+            AvroSchema::Array { items, .. } => {
+                self.collect_unresolved(items, unresolved);
+            }
+            AvroSchema::Map { values, .. } => {
+                self.collect_unresolved(values, unresolved);
+            }
+            AvroSchema::Union { types, .. } => {
+                for t in types {
+                    self.collect_unresolved(t, unresolved);
+                }
+            }
+            // Primitives, logical types, enums, and fixed types contain no
+            // nested schema references to validate.
+            _ => {}
+        }
+    }
+}
+
+impl Default for SchemaRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indexmap::IndexMap;
+
+    #[test]
+    fn test_register_and_lookup() {
+        let mut reg = SchemaRegistry::new();
+        let schema = AvroSchema::Record {
+            name: "Ping".to_string(),
+            namespace: Some("org.example".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+        reg.register(schema).unwrap();
+        assert!(reg.contains("org.example.Ping"));
+        assert!(reg.lookup("org.example.Ping").is_some());
+        assert!(!reg.contains("Ping"));
+    }
+
+    #[test]
+    fn test_duplicate_registration() {
+        let mut reg = SchemaRegistry::new();
+        let schema = AvroSchema::Enum {
+            name: "Status".to_string(),
+            namespace: None,
+            doc: None,
+            symbols: vec!["A".to_string()],
+            default: None,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+        reg.register(schema.clone()).unwrap();
+        assert!(reg.register(schema).is_err());
+    }
+
+    #[test]
+    fn test_registration_order_preserved() {
+        let mut reg = SchemaRegistry::new();
+        for name in ["Alpha", "Beta", "Gamma"] {
+            reg.register(AvroSchema::Fixed {
+                name: name.to_string(),
+                namespace: None,
+                doc: None,
+                size: 16,
+                aliases: vec![],
+                properties: IndexMap::new(),
+            })
+            .unwrap();
+        }
+        let names: Vec<_> = reg
+            .schemas()
+            .filter_map(|s| s.name().map(str::to_string))
+            .collect();
+        assert_eq!(names, vec!["Alpha", "Beta", "Gamma"]);
+    }
+
+    #[test]
+    fn test_validate_references() {
+        let mut reg = SchemaRegistry::new();
+        reg.register(AvroSchema::Record {
+            name: "Outer".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![crate::model::schema::Field {
+                name: "inner".to_string(),
+                schema: AvroSchema::Reference("Missing".to_string()),
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: IndexMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        })
+        .unwrap();
+        let unresolved = reg.validate_references();
+        assert_eq!(unresolved, vec!["Missing"]);
+    }
+
+    #[test]
+    fn test_validate_references_resolves_known_types() {
+        let mut reg = SchemaRegistry::new();
+        // Register "Inner" first, then "Outer" which references it.
+        reg.register(AvroSchema::Record {
+            name: "Inner".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        })
+        .unwrap();
+        reg.register(AvroSchema::Record {
+            name: "Outer".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![crate::model::schema::Field {
+                name: "inner".to_string(),
+                schema: AvroSchema::Reference("Inner".to_string()),
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: IndexMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        })
+        .unwrap();
+        let unresolved = reg.validate_references();
+        assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn test_validate_nested_references() {
+        let mut reg = SchemaRegistry::new();
+        // A record with references nested inside array, map, and union types.
+        reg.register(AvroSchema::Record {
+            name: "Container".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![
+                crate::model::schema::Field {
+                    name: "items".to_string(),
+                    schema: AvroSchema::Array {
+                        items: Box::new(AvroSchema::Reference("MissingA".to_string())),
+                        properties: IndexMap::new(),
+                    },
+                    doc: None,
+                    default: None,
+                    order: None,
+                    aliases: vec![],
+                    properties: IndexMap::new(),
+                },
+                crate::model::schema::Field {
+                    name: "lookup".to_string(),
+                    schema: AvroSchema::Map {
+                        values: Box::new(AvroSchema::Reference("MissingB".to_string())),
+                        properties: IndexMap::new(),
+                    },
+                    doc: None,
+                    default: None,
+                    order: None,
+                    aliases: vec![],
+                    properties: IndexMap::new(),
+                },
+                crate::model::schema::Field {
+                    name: "choice".to_string(),
+                    schema: AvroSchema::Union {
+                        types: vec![
+                            AvroSchema::Null,
+                            AvroSchema::Reference("MissingC".to_string()),
+                        ],
+                        is_nullable_type: true,
+                    },
+                    doc: None,
+                    default: None,
+                    order: None,
+                    aliases: vec![],
+                    properties: IndexMap::new(),
+                },
+            ],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        })
+        .unwrap();
+        let unresolved = reg.validate_references();
+        assert_eq!(unresolved, vec!["MissingA", "MissingB", "MissingC"]);
+    }
+
+    #[test]
+    fn test_merge_registries() {
+        let mut reg1 = SchemaRegistry::new();
+        reg1.register(AvroSchema::Fixed {
+            name: "Hash".to_string(),
+            namespace: None,
+            doc: None,
+            size: 32,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        })
+        .unwrap();
+
+        let mut reg2 = SchemaRegistry::new();
+        reg2.register(AvroSchema::Fixed {
+            name: "Hash".to_string(),
+            namespace: None,
+            doc: None,
+            size: 64, // Different size -- should be ignored since reg1 already has "Hash".
+            aliases: vec![],
+            properties: IndexMap::new(),
+        })
+        .unwrap();
+        reg2.register(AvroSchema::Fixed {
+            name: "Token".to_string(),
+            namespace: None,
+            doc: None,
+            size: 16,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        })
+        .unwrap();
+
+        reg1.merge(reg2);
+        assert!(reg1.contains("Hash"));
+        assert!(reg1.contains("Token"));
+
+        // The original "Hash" (size 32) should be preserved, not overwritten.
+        if let Some(AvroSchema::Fixed { size, .. }) = reg1.lookup("Hash") {
+            assert_eq!(*size, 32);
+        } else {
+            panic!("expected Fixed schema for Hash");
+        }
+    }
+
+    #[test]
+    fn test_into_schemas_order() {
+        let mut reg = SchemaRegistry::new();
+        for name in ["X", "Y", "Z"] {
+            reg.register(AvroSchema::Fixed {
+                name: name.to_string(),
+                namespace: None,
+                doc: None,
+                size: 8,
+                aliases: vec![],
+                properties: IndexMap::new(),
+            })
+            .unwrap();
+        }
+        let schemas = reg.into_schemas();
+        let names: Vec<_> = schemas.iter().filter_map(|s| s.name()).collect();
+        assert_eq!(names, vec!["X", "Y", "Z"]);
+    }
+
+    #[test]
+    fn test_register_non_named_schema_fails() {
+        let mut reg = SchemaRegistry::new();
+        let result = reg.register(AvroSchema::Int);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("non-named"));
+    }
+}
