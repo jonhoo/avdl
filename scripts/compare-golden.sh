@@ -8,6 +8,11 @@
 #   scripts/compare-golden.sh idl2schemata echo  # single file
 #   scripts/compare-golden.sh types import     # show type names for a file
 #
+# Environment:
+#   AVRO_TOOLS_JAR  Override the path to avro-tools-1.12.1.jar. When unset,
+#                   the script searches ../avro-tools-1.12.1.jar relative to
+#                   the repo root, then relative to the main worktree root.
+#
 # Exit code: 0 if all comparisons pass, 1 if any fail.
 
 set -euo pipefail
@@ -48,6 +53,47 @@ else
 fi
 
 # ==============================================================================
+# Locate the Java avro-tools JAR
+# ==============================================================================
+
+# Search order:
+#   1. AVRO_TOOLS_JAR environment variable (explicit override)
+#   2. $REPO_ROOT/../avro-tools-1.12.1.jar (works from the main checkout)
+#   3. Main worktree's sibling (via `git worktree list`, for worktrees)
+find_avro_tools_jar() {
+    # 1. Explicit override.
+    if [ -n "${AVRO_TOOLS_JAR:-}" ] && [ -f "$AVRO_TOOLS_JAR" ]; then
+        echo "$AVRO_TOOLS_JAR"
+        return 0
+    fi
+
+    # 2. Relative to this repo root (works from the main checkout).
+    local candidate="$REPO_ROOT/../avro-tools-1.12.1.jar"
+    if [ -f "$candidate" ]; then
+        echo "$candidate"
+        return 0
+    fi
+
+    # 3. Locate the main worktree root and check its sibling.
+    if command -v git >/dev/null 2>&1; then
+        local main_worktree
+        main_worktree="$(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null \
+            | head -1 | sed 's/^worktree //')"
+        if [ -n "$main_worktree" ]; then
+            candidate="$main_worktree/../avro-tools-1.12.1.jar"
+            if [ -f "$candidate" ]; then
+                echo "$candidate"
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+AVRO_JAR="$(find_avro_tools_jar)" || AVRO_JAR=""
+
+# ==============================================================================
 # Helpers
 # ==============================================================================
 
@@ -81,6 +127,24 @@ import_flags_for() {
             echo ""
             ;;
     esac
+}
+
+# Build a Java -cp classpath that includes the JAR and any import directories
+# the given .avdl file needs. The Java tool resolves imports via classpath, not
+# --import-dir flags, so we must translate import dirs into classpath entries.
+java_classpath_for() {
+    local jar="$1"
+    local file="$2"
+    local cp="$jar"
+    case "$file" in
+        import.avdl|nestedimport.avdl)
+            cp="$cp:$INPUT_DIR:$CLASSPATH_DIR"
+            ;;
+        baseball.avdl|schema_syntax_schema.avdl)
+            cp="$cp:$INPUT_DIR"
+            ;;
+    esac
+    echo "$cp"
 }
 
 # Return the golden output filename and extension for a given .avdl file.
@@ -223,12 +287,14 @@ run_idl2schemata() {
         find "$outdir" -name '*.avsc' -printf '          %f\n' | sort
 
         # If Java tool is available, compare against it.
-        local java_jar="$REPO_ROOT/../avro-tools-1.12.1.jar"
-        if [ -f "$java_jar" ]; then
+        if [ -n "$AVRO_JAR" ]; then
             local java_outdir="$TMPDIR_BASE/idl2schemata-${name}-java"
             mkdir -p "$java_outdir"
-            # shellcheck disable=SC2086
-            if java -jar "$java_jar" idl2schemata $flags "$input_file" "$java_outdir" 2>/dev/null; then
+            # The Java tool resolves imports via classpath, not --import-dir,
+            # so we build a classpath that includes the import directories.
+            local java_cp
+            java_cp="$(java_classpath_for "$AVRO_JAR" "${name}.avdl")"
+            if java -cp "$java_cp" org.apache.avro.tool.Main idl2schemata "$input_file" "$java_outdir" 2>/dev/null; then
                 # Compare each Rust .avsc against Java's.
                 for avsc in "$outdir"/*.avsc; do
                     local avsc_name

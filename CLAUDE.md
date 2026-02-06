@@ -61,13 +61,19 @@ project-scoped. The `tmp/` directory is gitignored.
 
 `scripts/compare-golden.sh` compares Rust `idl` and `idl2schemata`
 output against the golden test files. It handles import-dir flags,
-golden file name mapping, and concurrent-safe temp directories.
+golden file name mapping, and concurrent-safe temp directories. The
+script works from both the main checkout and git worktrees — it
+locates the avro-tools JAR by searching relative to the repo root,
+then falling back to the main worktree root.
 
 ```sh
 scripts/compare-golden.sh idl              # all 18 .avdl files
 scripts/compare-golden.sh idl simple       # single file
 scripts/compare-golden.sh idl2schemata     # key idl2schemata files
 scripts/compare-golden.sh types import     # show type names in order
+
+# Override the JAR path if needed:
+AVRO_TOOLS_JAR=/path/to/avro-tools.jar scripts/compare-golden.sh idl
 ```
 
 Sub-agents should use this script instead of writing ad-hoc comparison
