@@ -27,7 +27,7 @@ use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::doc_comments::extract_doc_comment;
-use crate::error::{IdlError, Result};
+use crate::error::{IdlError, ParseDiagnostic, Result};
 use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
@@ -67,6 +67,15 @@ pub enum ImportKind {
 /// fixed) defined in the IDL, in definition order. The returned `Vec<ImportEntry>`
 /// contains any import statements encountered but not yet resolved.
 pub fn parse_idl(input: &str) -> Result<(IdlFile, SchemaRegistry, Vec<ImportEntry>)> {
+    parse_idl_named(input, "<input>")
+}
+
+/// Parse an Avro IDL string, attaching `source_name` to any error diagnostics
+/// so that error messages identify the originating file.
+pub fn parse_idl_named(
+    input: &str,
+    source_name: &str,
+) -> Result<(IdlFile, SchemaRegistry, Vec<ImportEntry>)> {
     let input_stream = InputStream::new(input);
     let lexer = IdlLexer::new(input_stream);
     let token_stream = CommonTokenStream::new(lexer);
@@ -85,6 +94,11 @@ pub fn parse_idl(input: &str) -> Result<(IdlFile, SchemaRegistry, Vec<ImportEntr
     // backwards from a token index through hidden-channel tokens).
     let token_stream = &parser.input;
 
+    let src = SourceInfo {
+        source: input,
+        name: source_name,
+    };
+
     let mut registry = SchemaRegistry::new();
     let mut namespace: Option<String> = None;
     let mut imports = Vec::new();
@@ -92,6 +106,7 @@ pub fn parse_idl(input: &str) -> Result<(IdlFile, SchemaRegistry, Vec<ImportEntr
     let idl_file = walk_idl_file(
         &tree,
         token_stream,
+        &src,
         &mut registry,
         &mut namespace,
         &mut imports,
@@ -107,6 +122,79 @@ pub fn parse_idl(input: &str) -> Result<(IdlFile, SchemaRegistry, Vec<ImportEntr
 /// Concrete token stream type produced by our lexer. Every walk function
 /// threads this through so it can extract doc comments from hidden tokens.
 type TS<'input> = CommonTokenStream<'input, IdlLexer<'input, InputStream<&'input str>>>;
+
+// ==========================================================================
+// Source Location Diagnostic Helpers
+// ==========================================================================
+
+/// Carries the original source text and a display name through the tree walk
+/// so that error messages can include source location context via miette.
+struct SourceInfo<'a> {
+    source: &'a str,
+    name: &'a str,
+}
+
+/// Construct an `IdlError::Diagnostic` with source location extracted from
+/// an ANTLR parse tree context's start token.
+///
+/// The start token gives us a byte offset into the original source text. We
+/// use the token's `get_start()` and `get_stop()` to compute a byte-level
+/// `SourceSpan` that miette can render as an underlined region in the error
+/// output.
+fn make_diagnostic<'input>(
+    src: &SourceInfo<'_>,
+    ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'input>,
+    message: impl Into<String>,
+) -> IdlError {
+    let start_token = ctx.start();
+    let offset = start_token.get_start();
+    let stop = start_token.get_stop();
+
+    // Compute a span covering at least one character. ANTLR byte offsets are
+    // inclusive on both ends, so length = stop - start + 1.
+    let (offset, length) = if offset >= 0 && stop >= offset {
+        (offset as usize, (stop - offset + 1) as usize)
+    } else if offset >= 0 {
+        (offset as usize, 1)
+    } else {
+        // No valid position available; point at the start of the file.
+        (0, 0)
+    };
+
+    let message = message.into();
+    IdlError::Diagnostic(ParseDiagnostic {
+        src: miette::NamedSource::new(src.name, src.source.to_string()),
+        span: miette::SourceSpan::new(offset.into(), length),
+        message,
+    })
+}
+
+/// Like `make_diagnostic` but takes a raw `Token` reference instead of a
+/// context node. Useful when the error relates to a specific token field
+/// (e.g. `ctx.size`, `ctx.typeName`) rather than the whole context.
+fn make_diagnostic_from_token(
+    src: &SourceInfo<'_>,
+    token: &impl Token,
+    message: impl Into<String>,
+) -> IdlError {
+    let offset = token.get_start();
+    let stop = token.get_stop();
+
+    let (offset, length) = if offset >= 0 && stop >= offset {
+        (offset as usize, (stop - offset + 1) as usize)
+    } else if offset >= 0 {
+        (offset as usize, 1)
+    } else {
+        (0, 0)
+    };
+
+    let message = message.into();
+    IdlError::Diagnostic(ParseDiagnostic {
+        src: miette::NamedSource::new(src.name, src.source.to_string()),
+        span: miette::SourceSpan::new(offset.into(), length),
+        message,
+    })
+}
 
 // ==========================================================================
 // Schema Properties Helper
@@ -141,32 +229,37 @@ impl SchemaProperties {
 fn walk_schema_properties<'input>(
     props: &[Rc<SchemaPropertyContextAll<'input>>],
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
 ) -> Result<SchemaProperties> {
     let mut result = SchemaProperties::new();
 
     for prop in props {
         let name_ctx = prop
             .identifier()
-            .ok_or_else(|| IdlError::Other("missing property name".into()))?;
+            .ok_or_else(|| make_diagnostic(src, &**prop, "missing property name"))?;
         let name = identifier_text(&name_ctx);
 
         let value_ctx = prop
             .jsonValue()
-            .ok_or_else(|| IdlError::Other("missing property value".into()))?;
-        let value = walk_json_value(&value_ctx, token_stream)?;
+            .ok_or_else(|| make_diagnostic(src, &**prop, "missing property value"))?;
+        let value = walk_json_value(&value_ctx, token_stream, src)?;
 
         match name.as_str() {
             "namespace" => {
                 if let Value::String(s) = &value {
                     if result.namespace.is_some() {
-                        return Err(IdlError::Other(
-                            "duplicate @namespace annotation".into(),
+                        return Err(make_diagnostic(
+                            src,
+                            &**prop,
+                            "duplicate @namespace annotation",
                         ));
                     }
                     result.namespace = Some(s.clone());
                 } else {
-                    return Err(IdlError::Other(
-                        "@namespace must contain a string value".into(),
+                    return Err(make_diagnostic(
+                        src,
+                        &**prop,
+                        "@namespace must contain a string value",
                     ));
                 }
             }
@@ -177,15 +270,19 @@ fn walk_schema_properties<'input>(
                         if let Value::String(s) = elem {
                             aliases.push(s.clone());
                         } else {
-                            return Err(IdlError::Other(
-                                "@aliases must contain an array of strings".into(),
+                            return Err(make_diagnostic(
+                                src,
+                                &**prop,
+                                "@aliases must contain an array of strings",
                             ));
                         }
                     }
                     result.aliases = aliases;
                 } else {
-                    return Err(IdlError::Other(
-                        "@aliases must contain an array of strings".into(),
+                    return Err(make_diagnostic(
+                        src,
+                        &**prop,
+                        "@aliases must contain an array of strings",
                     ));
                 }
             }
@@ -196,14 +293,20 @@ fn walk_schema_properties<'input>(
                         "DESCENDING" => result.order = Some(FieldOrder::Descending),
                         "IGNORE" => result.order = Some(FieldOrder::Ignore),
                         _ => {
-                            return Err(IdlError::Other(format!(
-                                "@order must be ASCENDING, DESCENDING, or IGNORE, got: {s}"
-                            )));
+                            return Err(make_diagnostic(
+                                src,
+                                &**prop,
+                                format!(
+                                    "@order must be ASCENDING, DESCENDING, or IGNORE, got: {s}"
+                                ),
+                            ));
                         }
                     }
                 } else {
-                    return Err(IdlError::Other(
-                        "@order must contain a string value".into(),
+                    return Err(make_diagnostic(
+                        src,
+                        &**prop,
+                        "@order must contain a string value",
                     ));
                 }
             }
@@ -224,13 +327,15 @@ fn walk_schema_properties<'input>(
 fn walk_idl_file<'input>(
     ctx: &IdlFileContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     registry: &mut SchemaRegistry,
     namespace: &mut Option<String>,
     imports: &mut Vec<ImportEntry>,
 ) -> Result<IdlFile> {
     // Protocol mode: the IDL contains `protocol Name { ... }`.
     if let Some(protocol_ctx) = ctx.protocolDeclaration() {
-        let protocol = walk_protocol(&protocol_ctx, token_stream, registry, namespace, imports)?;
+        let protocol =
+            walk_protocol(&protocol_ctx, token_stream, src, registry, namespace, imports)?;
         return Ok(IdlFile::ProtocolFile(protocol));
     }
 
@@ -251,13 +356,13 @@ fn walk_idl_file<'input>(
     // Walk named schemas. In schema mode, we register them in the registry
     // but don't collect them into a types list (there's no protocol).
     for ns_ctx in ctx.namedSchemaDeclaration_all() {
-        let _schema = walk_named_schema(&ns_ctx, token_stream, registry, namespace)?;
+        let _schema = walk_named_schema(&ns_ctx, token_stream, src, registry, namespace)?;
     }
 
     // The main schema declaration uses `schema <fullType>;`.
     if let Some(main_ctx) = ctx.mainSchemaDeclaration() {
         if let Some(ft_ctx) = main_ctx.fullType() {
-            let schema = walk_full_type(&ft_ctx, token_stream, namespace)?;
+            let schema = walk_full_type(&ft_ctx, token_stream, src, namespace)?;
             return Ok(IdlFile::SchemaFile(schema));
         }
     }
@@ -271,8 +376,10 @@ fn walk_idl_file<'input>(
         return Ok(IdlFile::SchemaFile(last_schema.clone()));
     }
 
-    Err(IdlError::Other(
-        "IDL file contains neither a protocol nor a schema declaration".into(),
+    Err(make_diagnostic(
+        src,
+        ctx,
+        "IDL file contains neither a protocol nor a schema declaration",
     ))
 }
 
@@ -280,6 +387,7 @@ fn walk_idl_file<'input>(
 fn walk_protocol<'input>(
     ctx: &ProtocolDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     registry: &mut SchemaRegistry,
     namespace: &mut Option<String>,
     imports: &mut Vec<ImportEntry>,
@@ -288,12 +396,12 @@ fn walk_protocol<'input>(
     let doc = extract_doc_from_context(ctx, token_stream);
 
     // Process `@namespace(...)` and other schema properties on the protocol.
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
 
     // Get the protocol name from the identifier.
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| IdlError::Other("missing protocol name".into()))?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing protocol name"))?;
     let raw_identifier = identifier_text(&name_ctx);
 
     // Determine namespace: explicit `@namespace` overrides, otherwise if the
@@ -307,7 +415,7 @@ fn walk_protocol<'input>(
     // Walk the protocol body.
     let body = ctx
         .protocolDeclarationBody()
-        .ok_or_else(|| IdlError::Other("missing protocol body".into()))?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing protocol body"))?;
 
     // Collect imports from the body.
     collect_imports(&body.importStatement_all(), imports);
@@ -319,14 +427,14 @@ fn walk_protocol<'input>(
     // point; only top-level declarations appear in the `types` array.
     let mut types = Vec::new();
     for ns_ctx in body.namedSchemaDeclaration_all() {
-        let schema = walk_named_schema(&ns_ctx, token_stream, registry, namespace)?;
+        let schema = walk_named_schema(&ns_ctx, token_stream, src, registry, namespace)?;
         types.push(schema);
     }
 
     // Walk messages in the body.
     let mut messages = IndexMap::new();
     for msg_ctx in body.messageDeclaration_all() {
-        let (msg_name, message) = walk_message(&msg_ctx, token_stream, namespace)?;
+        let (msg_name, message) = walk_message(&msg_ctx, token_stream, src, namespace)?;
         messages.insert(msg_name, message);
     }
 
@@ -344,23 +452,26 @@ fn walk_protocol<'input>(
 fn walk_named_schema<'input>(
     ctx: &NamedSchemaDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     registry: &mut SchemaRegistry,
     namespace: &mut Option<String>,
 ) -> Result<AvroSchema> {
     let schema = if let Some(fixed_ctx) = ctx.fixedDeclaration() {
-        walk_fixed(&fixed_ctx, token_stream, namespace)?
+        walk_fixed(&fixed_ctx, token_stream, src, namespace)?
     } else if let Some(enum_ctx) = ctx.enumDeclaration() {
-        walk_enum(&enum_ctx, token_stream, namespace)?
+        walk_enum(&enum_ctx, token_stream, src, namespace)?
     } else if let Some(record_ctx) = ctx.recordDeclaration() {
-        walk_record(&record_ctx, token_stream, registry, namespace)?
+        walk_record(&record_ctx, token_stream, src, registry, namespace)?
     } else {
-        return Err(IdlError::Other(
-            "unknown named schema declaration".into(),
+        return Err(make_diagnostic(
+            src,
+            ctx,
+            "unknown named schema declaration",
         ));
     };
     registry
         .register(schema.clone())
-        .map_err(|e| IdlError::Other(e))?;
+        .map_err(IdlError::Other)?;
     Ok(schema)
 }
 
@@ -371,15 +482,16 @@ fn walk_named_schema<'input>(
 fn walk_record<'input>(
     ctx: &RecordDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     _registry: &mut SchemaRegistry,
     namespace: &mut Option<String>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
 
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| IdlError::Other("missing record name".into()))?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing record name"))?;
     let raw_identifier = identifier_text(&name_ctx);
 
     // Determine if this is a record or an error type.
@@ -403,11 +515,12 @@ fn walk_record<'input>(
     // Walk the record body to get fields.
     let body = ctx
         .recordBody()
-        .ok_or_else(|| IdlError::Other("missing record body".into()))?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing record body"))?;
 
     let mut fields = Vec::new();
     for field_ctx in body.fieldDeclaration_all() {
-        let mut field_fields = walk_field_declaration(&field_ctx, token_stream, namespace)?;
+        let mut field_fields =
+            walk_field_declaration(&field_ctx, token_stream, src, namespace)?;
         fields.append(&mut field_fields);
     }
 
@@ -434,6 +547,7 @@ fn walk_record<'input>(
 fn walk_field_declaration<'input>(
     ctx: &FieldDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<Vec<Field>> {
     // The doc comment on the field declaration acts as a default for variables
@@ -443,13 +557,14 @@ fn walk_field_declaration<'input>(
     // Walk the field type.
     let full_type_ctx = ctx
         .fullType()
-        .ok_or_else(|| IdlError::Other("missing field type".into()))?;
-    let field_type = walk_full_type(&full_type_ctx, token_stream, namespace)?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing field type"))?;
+    let field_type = walk_full_type(&full_type_ctx, token_stream, src, namespace)?;
 
     // Walk each variable declaration.
     let mut fields = Vec::new();
     for var_ctx in ctx.variableDeclaration_all() {
-        let field = walk_variable(&var_ctx, &field_type, &default_doc, token_stream, namespace)?;
+        let field =
+            walk_variable(&var_ctx, &field_type, &default_doc, token_stream, src, namespace)?;
         fields.push(field);
     }
 
@@ -462,6 +577,7 @@ fn walk_variable<'input>(
     field_type: &AvroSchema,
     default_doc: &Option<String>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     _namespace: &Option<String>,
 ) -> Result<Field> {
     // Variable-specific doc comment overrides the field-level default.
@@ -470,16 +586,16 @@ fn walk_variable<'input>(
 
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| IdlError::Other("missing variable name".into()))?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing variable name"))?;
     let field_name = identifier_text(&name_ctx);
 
     // Walk the variable-level schema properties (e.g. @order, @aliases on a
     // specific variable rather than on the field type).
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
 
     // Parse the default value if present.
     let default_value = if let Some(json_ctx) = ctx.jsonValue() {
-        Some(walk_json_value(&json_ctx, token_stream)?)
+        Some(walk_json_value(&json_ctx, token_stream, src)?)
     } else {
         None
     };
@@ -506,14 +622,15 @@ fn walk_variable<'input>(
 fn walk_enum<'input>(
     ctx: &EnumDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     enclosing_namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
 
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| IdlError::Other("missing enum name".into()))?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing enum name"))?;
     let raw_identifier = identifier_text(&name_ctx);
 
     // If compute_namespace returns None (no explicit @namespace and no dots
@@ -555,14 +672,15 @@ fn walk_enum<'input>(
 fn walk_fixed<'input>(
     ctx: &FixedDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     enclosing_namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
 
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| IdlError::Other("missing fixed name".into()))?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing fixed name"))?;
     let raw_identifier = identifier_text(&name_ctx);
 
     // Fall back to enclosing namespace if no explicit namespace is given.
@@ -572,7 +690,7 @@ fn walk_fixed<'input>(
 
     // Parse the size from the IntegerLiteral token.
     let size_tok = ctx.size.as_ref().ok_or_else(|| {
-        IdlError::Other("missing fixed size".into())
+        make_diagnostic(src, ctx, "missing fixed size")
     })?;
     let size = parse_integer_as_u32(size_tok.get_text())?;
 
@@ -595,15 +713,16 @@ fn walk_fixed<'input>(
 fn walk_full_type<'input>(
     ctx: &FullTypeContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<AvroSchema> {
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
 
     let plain_ctx = ctx
         .plainType()
-        .ok_or_else(|| IdlError::Other("missing plain type in fullType".into()))?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing plain type in fullType"))?;
 
-    let mut schema = walk_plain_type(&plain_ctx, token_stream, namespace)?;
+    let mut schema = walk_plain_type(&plain_ctx, token_stream, src, namespace)?;
 
     // Apply custom properties to the schema. For nullable unions we apply
     // properties to the non-null branch (matching the Java behavior).
@@ -618,21 +737,22 @@ fn walk_full_type<'input>(
 fn walk_plain_type<'input>(
     ctx: &PlainTypeContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     if let Some(array_ctx) = ctx.arrayType() {
-        return walk_array_type(&array_ctx, token_stream, namespace);
+        return walk_array_type(&array_ctx, token_stream, src, namespace);
     }
     if let Some(map_ctx) = ctx.mapType() {
-        return walk_map_type(&map_ctx, token_stream, namespace);
+        return walk_map_type(&map_ctx, token_stream, src, namespace);
     }
     if let Some(union_ctx) = ctx.unionType() {
-        return walk_union_type(&union_ctx, token_stream, namespace);
+        return walk_union_type(&union_ctx, token_stream, src, namespace);
     }
     if let Some(nullable_ctx) = ctx.nullableType() {
-        return walk_nullable_type(&nullable_ctx, token_stream, namespace);
+        return walk_nullable_type(&nullable_ctx, token_stream, src, namespace);
     }
-    Err(IdlError::Other("unrecognized plain type".into()))
+    Err(make_diagnostic(src, ctx, "unrecognized plain type"))
 }
 
 /// Walk a nullable type: either a primitive type or a named reference,
@@ -640,10 +760,11 @@ fn walk_plain_type<'input>(
 fn walk_nullable_type<'input>(
     ctx: &NullableTypeContextAll<'input>,
     _token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     let base_type = if let Some(prim_ctx) = ctx.primitiveType() {
-        walk_primitive_type(&prim_ctx)?
+        walk_primitive_type(&prim_ctx, src)?
     } else if let Some(ref_ctx) = ctx.identifier() {
         // Named type reference. Split the identifier into name and namespace
         // so the Reference carries them separately, enabling correct namespace
@@ -664,7 +785,7 @@ fn walk_nullable_type<'input>(
             }
         }
     } else {
-        return Err(IdlError::Other("nullable type has no inner type".into()));
+        return Err(make_diagnostic(src, ctx, "nullable type has no inner type"));
     };
 
     // If the `?` token is present, wrap in a nullable union `[null, T]`.
@@ -681,9 +802,10 @@ fn walk_nullable_type<'input>(
 /// Walk a primitive type keyword and return the corresponding `AvroSchema`.
 fn walk_primitive_type<'input>(
     ctx: &PrimitiveTypeContextAll<'input>,
+    src: &SourceInfo<'_>,
 ) -> Result<AvroSchema> {
     let type_tok = ctx.typeName.as_ref().ok_or_else(|| {
-        IdlError::Other("missing primitive type name".into())
+        make_diagnostic(src, ctx, "missing primitive type name")
     })?;
     let token_type = type_tok.get_token_type();
 
@@ -719,7 +841,7 @@ fn walk_primitive_type<'input>(
         Idl_Decimal => {
             // decimal(precision [, scale])
             let precision_tok = ctx.precision.as_ref().ok_or_else(|| {
-                IdlError::Other("decimal type missing precision".into())
+                make_diagnostic(src, ctx, "decimal type missing precision")
             })?;
             let precision = parse_integer_as_u32(precision_tok.get_text())?;
 
@@ -735,9 +857,11 @@ fn walk_primitive_type<'input>(
             }
         }
         _ => {
-            return Err(IdlError::Other(format!(
-                "unexpected primitive type token: {token_type}"
-            )));
+            return Err(make_diagnostic_from_token(
+                src,
+                type_tok.as_ref(),
+                format!("unexpected primitive type token: {token_type}"),
+            ));
         }
     };
 
@@ -748,12 +872,13 @@ fn walk_primitive_type<'input>(
 fn walk_array_type<'input>(
     ctx: &ArrayTypeContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     let element_ctx = ctx
         .fullType()
-        .ok_or_else(|| IdlError::Other("array type missing element type".into()))?;
-    let items = walk_full_type(&element_ctx, token_stream, namespace)?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "array type missing element type"))?;
+    let items = walk_full_type(&element_ctx, token_stream, src, namespace)?;
     Ok(AvroSchema::Array {
         items: Box::new(items),
         properties: IndexMap::new(),
@@ -764,12 +889,13 @@ fn walk_array_type<'input>(
 fn walk_map_type<'input>(
     ctx: &MapTypeContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     let value_ctx = ctx
         .fullType()
-        .ok_or_else(|| IdlError::Other("map type missing value type".into()))?;
-    let values = walk_full_type(&value_ctx, token_stream, namespace)?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "map type missing value type"))?;
+    let values = walk_full_type(&value_ctx, token_stream, src, namespace)?;
     Ok(AvroSchema::Map {
         values: Box::new(values),
         properties: IndexMap::new(),
@@ -780,11 +906,12 @@ fn walk_map_type<'input>(
 fn walk_union_type<'input>(
     ctx: &UnionTypeContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     let mut types = Vec::new();
     for ft_ctx in ctx.fullType_all() {
-        types.push(walk_full_type(&ft_ctx, token_stream, namespace)?);
+        types.push(walk_full_type(&ft_ctx, token_stream, src, namespace)?);
     }
     Ok(AvroSchema::Union {
         types,
@@ -799,22 +926,23 @@ fn walk_union_type<'input>(
 fn walk_message<'input>(
     ctx: &MessageDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<(String, Message)> {
     let doc = extract_doc_from_context(ctx, token_stream);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
 
     // Walk the result type. `void` maps to Null.
     let result_ctx = ctx
         .resultType()
-        .ok_or_else(|| IdlError::Other("missing message return type".into()))?;
-    let response = walk_result_type(&result_ctx, token_stream, namespace)?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing message return type"))?;
+    let response = walk_result_type(&result_ctx, token_stream, src, namespace)?;
 
     // The message name is stored in the `name` field of the context ext.
     let name_ctx = ctx
         .name
         .as_ref()
-        .ok_or_else(|| IdlError::Other("missing message name".into()))?;
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing message name"))?;
     let message_name = identifier_text(name_ctx);
 
     // Walk formal parameters.
@@ -824,13 +952,14 @@ fn walk_message<'input>(
 
         let ft_ctx = param_ctx
             .fullType()
-            .ok_or_else(|| IdlError::Other("missing parameter type".into()))?;
-        let param_type = walk_full_type(&ft_ctx, token_stream, namespace)?;
+            .ok_or_else(|| make_diagnostic(src, &*param_ctx, "missing parameter type"))?;
+        let param_type = walk_full_type(&ft_ctx, token_stream, src, namespace)?;
 
         let var_ctx = param_ctx
             .variableDeclaration()
-            .ok_or_else(|| IdlError::Other("missing parameter variable".into()))?;
-        let field = walk_variable(&var_ctx, &param_type, &param_doc, token_stream, namespace)?;
+            .ok_or_else(|| make_diagnostic(src, &*param_ctx, "missing parameter variable"))?;
+        let field =
+            walk_variable(&var_ctx, &param_type, &param_doc, token_stream, src, namespace)?;
         request_fields.push(field);
     }
 
@@ -886,6 +1015,7 @@ fn walk_message<'input>(
 fn walk_result_type<'input>(
     ctx: &ResultTypeContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     // If there's a Void token, return Null.
@@ -894,7 +1024,7 @@ fn walk_result_type<'input>(
     }
     // Otherwise walk the plainType child.
     if let Some(plain_ctx) = ctx.plainType() {
-        return walk_plain_type(&plain_ctx, token_stream, namespace);
+        return walk_plain_type(&plain_ctx, token_stream, src, namespace);
     }
     // Fallback: void.
     Ok(AvroSchema::Null)
@@ -907,22 +1037,26 @@ fn walk_result_type<'input>(
 fn walk_json_value<'input>(
     ctx: &JsonValueContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
 ) -> Result<Value> {
     if let Some(obj_ctx) = ctx.jsonObject() {
-        return walk_json_object(&obj_ctx, token_stream);
+        return walk_json_object(&obj_ctx, token_stream, src);
     }
     if let Some(arr_ctx) = ctx.jsonArray() {
-        return walk_json_array(&arr_ctx, token_stream);
+        return walk_json_array(&arr_ctx, token_stream, src);
     }
     if let Some(lit_ctx) = ctx.jsonLiteral() {
-        return walk_json_literal(&lit_ctx);
+        return walk_json_literal(&lit_ctx, src);
     }
-    Err(IdlError::Other("empty JSON value".into()))
+    Err(make_diagnostic(src, ctx, "empty JSON value"))
 }
 
-fn walk_json_literal<'input>(ctx: &JsonLiteralContextAll<'input>) -> Result<Value> {
+fn walk_json_literal<'input>(
+    ctx: &JsonLiteralContextAll<'input>,
+    src: &SourceInfo<'_>,
+) -> Result<Value> {
     let tok = ctx.literal.as_ref().ok_or_else(|| {
-        IdlError::Other("missing JSON literal token".into())
+        make_diagnostic(src, ctx, "missing JSON literal token")
     })?;
     let token_type = tok.get_token_type();
     let text = tok.get_text();
@@ -937,27 +1071,30 @@ fn walk_json_literal<'input>(ctx: &JsonLiteralContextAll<'input>) -> Result<Valu
         }
         Idl_IntegerLiteral => parse_integer_literal(text),
         Idl_FloatingPointLiteral => parse_floating_point_literal(text),
-        _ => Err(IdlError::Other(format!(
-            "unexpected JSON literal token type: {token_type}"
-        ))),
+        _ => Err(make_diagnostic_from_token(
+            src,
+            tok.as_ref(),
+            format!("unexpected JSON literal token type: {token_type}"),
+        )),
     }
 }
 
 fn walk_json_object<'input>(
     ctx: &JsonObjectContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
 ) -> Result<Value> {
     let mut map = serde_json::Map::new();
     for pair_ctx in ctx.jsonPair_all() {
         let key_tok = pair_ctx.name.as_ref().ok_or_else(|| {
-            IdlError::Other("missing JSON object key".into())
+            make_diagnostic(src, &*pair_ctx, "missing JSON object key")
         })?;
         let key = get_string_from_literal(key_tok.get_text());
 
         let value_ctx = pair_ctx
             .jsonValue()
-            .ok_or_else(|| IdlError::Other("missing JSON object value".into()))?;
-        let value = walk_json_value(&value_ctx, token_stream)?;
+            .ok_or_else(|| make_diagnostic(src, &*pair_ctx, "missing JSON object value"))?;
+        let value = walk_json_value(&value_ctx, token_stream, src)?;
 
         map.insert(key, value);
     }
@@ -967,10 +1104,11 @@ fn walk_json_object<'input>(
 fn walk_json_array<'input>(
     ctx: &JsonArrayContextAll<'input>,
     token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
 ) -> Result<Value> {
     let mut elements = Vec::new();
     for val_ctx in ctx.jsonValue_all() {
-        elements.push(walk_json_value(&val_ctx, token_stream)?);
+        elements.push(walk_json_value(&val_ctx, token_stream, src)?);
     }
     Ok(Value::Array(elements))
 }
