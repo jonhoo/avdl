@@ -1,58 +1,96 @@
-We're aiming to set up a self-correcting loop of development. Do the
-following phases in order. Then, when the last phase is completed,
-return to the first phase again. Only exit this loop when the first
-phase finds no new issues.
+# Self-Correcting Development Loop for avdl
 
-Note that _all_ agents must be run in blocking mode so that they can ask
-for permissions. Also, agents should use `tmp/`, not `/tmp` as a
-temporary folder.
+## Context
 
-Agents should debug issues using Rust example files in examples/ that
-are run with `cargo run --example`.
+The `avdl` project is a Rust port of Apache Avro's IDL compiler (`idl` and `idl2schemata` subcommands). The goal is an iterative discover-fix-verify loop that converges toward full compatibility with the Java reference implementation.
 
-For the first iteration of phase 1, use the issues in issues/, plus
-theses two:
+**Key paths:**
+- Main repo: `/home/jon/dev/stream/avdl/main/`
+- Worktrees: `/home/jon/dev/stream/avdl/avdl-worktrees/wt-{a..k}`
+- Java tool: `/home/jon/dev/stream/avdl/avro-tools-1.12.1.jar`
+- Test inputs: `avro/lang/java/idl/src/test/idl/input/` (18 .avdl files)
+- Expected outputs: `avro/lang/java/idl/src/test/idl/output/` (18 .avpr/.avsc)
+- Classpath imports: `avro/lang/java/idl/src/test/idl/putOnClassPath/`
+- Extra tests: `avro/lang/java/idl/src/test/idl/extra/`
+- Java test classes: `avro/lang/java/idl/src/test/java/org/apache/avro/idl/`
 
-- how can we improve the Rust test suite for the crate to have a more robust test suite natively?
-- the one outlined in TODOs.md
+---
 
-For subsequent issues, we should use sub-agents to do more open-ended
-exploration/discovery of new issues.
+## The General Loop
 
-Phase 1:
+### Phase 1: Issue Discovery (Open-Ended Exploration)
 
-Start many sub-agents in `main/`, each of which should attempt to
-identify issues with the `idl` and `idl2schemata` subcommands. They can
-do so by investigating the tests that exist for the Java implementation
-in `avro/lang/java/idl/src/test/`, including running on known .avdl
-files, the Java unit tests, etc., and compare the output to the expected
-output when running the java tool. if discrepancies are found, the agent
-shoudl do first-level triage of the observed bug and then file an issue
-under issues/ (filename: `uuidgen` + short description). the agents
-should _not_ attempt to fix the issues. they should avoid changing the
-source files in src/ as much as possible to avoid stepping on each
-others' toes. If agents need to compare json outputs, use `jq -S .` to
-get sorted, formatted JSON that can then be compared for equality.
+Launch many sub-agents (blocking, in `main/`) for **open-ended exploration** of issues with the `idl` and `idl2schemata` subcommands. The goal is broad, creative discovery — agents should actively look for discrepancies, edge cases, and missing behaviors by:
 
-Commit all the new entries in issues/ using the commit-writer skill.
+- Investigating the Java test suite in `avro/lang/java/idl/src/test/` — reading unit tests, running .avdl files, studying what behaviors are tested
+- Running `.avdl` files through both the Rust `idl` subcommand and the Java `idl` tool, comparing protocol/schema JSON outputs
+- Running `idl2schemata` on representative inputs and comparing per-schema `.avsc` output against Java tool
+- Exploring edge cases, error paths, unusual inputs, and uncommon IDL features for both subcommands
+- Reading the Java source (`IdlReader.java`, `IdlToSchemataTool.java`) to spot behaviors not yet ported
+- Auditing code quality, error handling, and test coverage
 
-If there are no new entries, **do not** go to phase 2.
+Each agent should pursue its own line of investigation autonomously. If it finds a discrepancy, it does first-level triage (identify root cause, affected files) and files an issue under `issues/`.
 
-Phase 2:
+**Agent rules:**
+- Use `mktemp -d tmp/XXXXXX` for temp files (NOT `/tmp`)
+- Avoid modifying `src/` to prevent agents stepping on each others' toes — prefer filing issues and using `tmp/` + `examples/`
+- Use `jq -S .` for JSON comparison
+- File new issues under `issues/` with filename `$(uuidgen)-short-description.md`
+- Do first-level triage: symptom, root cause, affected files, reproduction, suggested fix
+- Check existing `issues/` first to avoid duplicates
+- Use Rust example files in `examples/` for debugging
 
-Analyze issues/ and check which are semantically related and which
-likely require changing the same files. Also, triage them to understand
-which likely need to be fixed _first_, because they will impact many of
-the others. Based on this analysis, come up with the order and grouping
-of issues to have sub-agents address.
+**Comparison commands:**
+```bash
+INPUT_DIR=avro/lang/java/idl/src/test/idl/input
+OUTPUT_DIR=avro/lang/java/idl/src/test/idl/output
+CLASSPATH_DIR=avro/lang/java/idl/src/test/idl/putOnClassPath
 
-For each such grouping, run a sub-agent to debug and fix that issue in
-one of the pre-existing worktrees in ./avdl-worktrees/ (check out a new
-branch that branches from `main`). each agent should commit its work at
-the end of fixing the issue using the commit-writer skill. you should
-then merge all the fixes back into `main` after each wave of agents has
-finished.
+# Rust tool:
+cargo run -- idl [--import-dir $INPUT_DIR] [--import-dir $CLASSPATH_DIR] $INPUT_DIR/foo.avdl tmp/foo.avpr
+# Java tool:
+java -jar ../avro-tools-1.12.1.jar idl $INPUT_DIR/foo.avdl tmp/foo-java.avpr
+# Compare:
+diff <(jq -S . tmp/foo.avpr) <(jq -S . $OUTPUT_DIR/foo.avpr)
+```
 
-Phase 3:
+**After agents complete:**
+1. Review new files in `issues/` — deduplicate against existing issues
+2. Commit all new issue entries using `commit-writer` skill
+3. **If no new issues were filed → STOP the loop entirely**
 
-Go to phase 1.
+### Phase 2: Issue Resolution
+
+1. **Analyze** all open issues for:
+   - Semantic relationships (which are related?)
+   - File overlap (which touch the same code?)
+   - Dependencies (which must be fixed first because they impact others?)
+
+2. **Group into waves** of non-conflicting fixes that can run in parallel. Issues touching the same files go in the same wave or sequential waves. Foundation issues (those that block validation of others) come first.
+
+3. **For each wave:**
+   a. Prepare worktrees: `cd wt-X && git checkout main && git checkout -b fix/issue-description`
+   b. Launch one sub-agent per worktree (blocking). Each agent:
+      - Reads the issue file for full context
+      - Implements the fix
+      - Creates debug example in `examples/` to verify (`cargo run --example`)
+      - Runs `cargo test` to check for regressions
+      - Cleans up debug examples
+      - Commits with `commit-writer` skill
+   c. Merge each branch into `main`: `cd main && git merge fix/issue-description`
+   d. Verify: `cargo test` in main
+   e. If merge conflicts occur, resolve before proceeding
+
+4. Repeat for each wave until all grouped issues are resolved.
+
+### Phase 3: Return to Phase 1
+
+---
+
+## Verification
+
+After each wave merge:
+- `cargo test` — all tests pass
+- `cargo run -- idl <input> tmp/out && diff <(jq -S . tmp/out) <(jq -S . <expected>)`
+- For `idl2schemata`: compare per-schema output against `java -jar avro-tools idl2schemata`
+- For test suite changes: verify new tests pass and cover the intended behavior
