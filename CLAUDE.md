@@ -24,12 +24,14 @@ The integration tests parse `.avdl` files from the Avro test suite and
 compare the serialized JSON output against golden `.avpr`/`.avsc` files.
 Known issues are tracked in `issues/`.
 
-When comparing our JSON output against the Java tool's golden files,
-note that key ordering now matches the Avro-specified order (matching
-Java's output). The remaining formatting difference is whitespace:
-Java uses spaces before colons and a different array/object
-line-breaking style, so compare semantically (parse both as JSON and
-compare values) rather than as raw strings.
+**Non-goal: byte-identical output.** Producing output that is
+byte-for-byte identical to the Java tool is explicitly a non-goal.
+Whitespace differences (spaces before colons, array/object
+line-breaking style, indentation) are expected and acceptable. The
+goal is **semantic correctness**: the JSON output should parse to the
+same logical structure as the Java tool's output. Always compare
+semantically (parse both as JSON and compare values) rather than as
+raw strings.
 
 ### Comparing against the Java tool
 
