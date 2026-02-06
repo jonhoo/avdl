@@ -55,6 +55,23 @@ Use `tmp/` (project-local) for intermediate files and comparison
 artifacts, not `/tmp`. This keeps outputs discoverable and
 project-scoped. The `tmp/` directory is gitignored.
 
+### Helper scripts
+
+`scripts/compare-golden.sh` compares Rust `idl` and `idl2schemata`
+output against the golden test files. It handles import-dir flags,
+golden file name mapping, and concurrent-safe temp directories.
+
+```sh
+scripts/compare-golden.sh idl              # all 18 .avdl files
+scripts/compare-golden.sh idl simple       # single file
+scripts/compare-golden.sh idl2schemata     # key idl2schemata files
+scripts/compare-golden.sh types import     # show type names in order
+```
+
+Sub-agents should use this script instead of writing ad-hoc comparison
+scripts. If the script is insufficient, they should file an issue in
+`issues/` about the shortcoming before writing an ad-hoc script.
+
 ## CLI usage
 
 ```sh
