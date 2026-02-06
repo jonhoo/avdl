@@ -150,7 +150,7 @@ fn run_idl2schemata(
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
     let (source, input_dir) = read_input(&input)?;
-    let (idl_file, registry) = parse_and_resolve(&source, &input_dir, import_dirs)?;
+    let (_idl_file, registry) = parse_and_resolve(&source, &input_dir, import_dirs)?;
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
     fs::create_dir_all(&output_dir)
