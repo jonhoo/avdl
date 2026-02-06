@@ -16,7 +16,7 @@ use miette::Context;
 
 use avdl::error::IdlError;
 use avdl::import::{import_protocol, import_schema, ImportContext};
-use avdl::model::json::{protocol_to_json, schema_to_json, SchemaLookup};
+use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json};
 use avdl::model::protocol::Message;
 use avdl::reader::{parse_idl, IdlFile, ImportEntry, ImportKind};
 use avdl::resolve::SchemaRegistry;
@@ -98,8 +98,13 @@ fn run_idl(
     let json_value = match &idl_file {
         IdlFile::ProtocolFile(protocol) => protocol_to_json(protocol),
         IdlFile::SchemaFile(schema) => {
-            let empty_lookup = SchemaLookup::new();
-            schema_to_json(schema, &mut IndexSet::new(), None, &empty_lookup)
+            // In schema mode, we need to build a lookup table from the registry
+            // so that Reference nodes (forward references, imported types) can
+            // be resolved and inlined. Protocol mode does this inside
+            // `protocol_to_json`, but schema mode must do it explicitly.
+            let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
+            let lookup = build_lookup(&registry_schemas, None);
+            schema_to_json(schema, &mut IndexSet::new(), None, &lookup)
         }
     };
 
@@ -141,6 +146,11 @@ fn run_idl2schemata(
         .map_err(miette::Report::new)
         .wrap_err("create output directory")?;
 
+    // Build a lookup table from all registered schemas so that references
+    // within each schema can be resolved and inlined.
+    let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
+    let all_lookup = build_lookup(&registry_schemas, None);
+
     // Write each named schema as an individual .avsc file.
     for schema in registry.schemas() {
         let type_name = match schema.full_name() {
@@ -156,8 +166,7 @@ fn run_idl2schemata(
             None => continue,
         };
 
-        let empty_lookup = SchemaLookup::new();
-        let json_value = schema_to_json(schema, &mut IndexSet::new(), None, &empty_lookup);
+        let json_value = schema_to_json(schema, &mut IndexSet::new(), None, &all_lookup);
         let json_str = serde_json::to_string_pretty(&json_value)
             .map_err(|e| IdlError::Other(format!("serialize JSON for {type_name}: {e}")))
             .map_err(miette::Report::new)?;

@@ -239,9 +239,11 @@ fn walk_idl_file<'input>(
     if let Some(ns_ctx) = ctx.namespaceDeclaration() {
         if let Some(id_ctx) = ns_ctx.identifier() {
             let id = identifier_text(&id_ctx);
-            // In schema mode the namespace declaration sets the namespace
-            // directly (there is no identifier-with-dots logic like for protocols).
-            *namespace = compute_namespace(&id, &None);
+            // In schema mode, `namespace foo.bar;` sets the enclosing namespace
+            // directly. Unlike protocol/record identifiers (where dots in the
+            // name imply a namespace prefix), here the entire identifier IS the
+            // namespace value.
+            *namespace = if id.is_empty() { None } else { Some(id) };
         }
     }
 

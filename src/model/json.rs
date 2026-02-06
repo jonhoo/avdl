@@ -79,7 +79,10 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
 /// The `default_namespace` is used for types that have no explicit namespace
 /// (they inherit the protocol's namespace). This ensures the lookup key matches
 /// the fully-qualified names used in `Reference` nodes.
-fn build_lookup(types: &[AvroSchema], default_namespace: Option<&str>) -> SchemaLookup {
+///
+/// This is public so that schema-mode callers (which don't go through
+/// `protocol_to_json`) can build a lookup from registry schemas.
+pub fn build_lookup(types: &[AvroSchema], default_namespace: Option<&str>) -> SchemaLookup {
     let mut lookup = IndexMap::new();
     for schema in types {
         collect_named_types(schema, default_namespace, &mut lookup);

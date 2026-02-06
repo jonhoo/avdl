@@ -17,7 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use avdl::import::{import_protocol, import_schema, ImportContext};
-use avdl::model::json::{protocol_to_json, schema_to_json, SchemaLookup};
+use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json};
 use avdl::reader::{parse_idl, IdlFile, ImportKind};
 use indexmap::IndexSet;
 use pretty_assertions::assert_eq;
@@ -105,8 +105,11 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
             protocol_to_json(&protocol)
         }
         IdlFile::SchemaFile(schema) => {
-            let empty_lookup = SchemaLookup::new();
-            schema_to_json(&schema, &mut IndexSet::new(), None, &empty_lookup)
+            // Build a lookup from registry schemas so that references can be
+            // resolved and inlined, matching the protocol-mode behavior.
+            let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
+            let lookup = build_lookup(&registry_schemas, None);
+            schema_to_json(&schema, &mut IndexSet::new(), None, &lookup)
         }
     }
 }
@@ -202,8 +205,11 @@ fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path])
             protocol_to_json(&protocol)
         }
         IdlFile::SchemaFile(schema) => {
-            let empty_lookup = SchemaLookup::new();
-            schema_to_json(&schema, &mut IndexSet::new(), None, &empty_lookup)
+            // Build a lookup from registry schemas so that references can be
+            // resolved and inlined, matching the protocol-mode behavior.
+            let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
+            let lookup = build_lookup(&registry_schemas, None);
+            schema_to_json(&schema, &mut IndexSet::new(), None, &lookup)
         }
     }
 }
@@ -379,10 +385,14 @@ fn test_status_schema() {
     // If it fails, we mark this as a known limitation.
     match result {
         Ok((idl_file, registry, _imports)) => {
+            // Build a lookup from registry schemas so that references can be
+            // resolved and inlined.
+            let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
+            let lookup = build_lookup(&registry_schemas, None);
+
             let actual = match idl_file {
                 IdlFile::SchemaFile(schema) => {
-                    let empty_lookup = SchemaLookup::new();
-                    schema_to_json(&schema, &mut IndexSet::new(), None, &empty_lookup)
+                    schema_to_json(&schema, &mut IndexSet::new(), None, &lookup)
                 }
                 IdlFile::ProtocolFile(protocol) => {
                     protocol_to_json(&protocol)
@@ -400,8 +410,7 @@ fn test_status_schema() {
                 let schemas: Vec<Value> = registry
                     .schemas()
                     .map(|s| {
-                        let empty_lookup = SchemaLookup::new();
-                        schema_to_json(s, &mut IndexSet::new(), None, &empty_lookup)
+                        schema_to_json(s, &mut IndexSet::new(), None, &lookup)
                     })
                     .collect();
                 assert_eq!(Value::Array(schemas), expected);
