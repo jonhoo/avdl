@@ -714,6 +714,24 @@ fn test_nested_union_rejected() {
     );
 }
 
+/// Type names that collide with Avro built-in types (e.g., `int`, `string`,
+/// `null`) must be rejected. The Java implementation enforces this via
+/// `INVALID_TYPE_NAMES` in `IdlReader.java`.
+#[test]
+fn test_reserved_type_name_rejected() {
+    let input = r#"record `int` { string value; }"#;
+    let result = parse_idl(input);
+    assert!(
+        result.is_err(),
+        "expected error for record named `int` (reserved type name)"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("Illegal name"),
+        "error should mention 'Illegal name', got: {err_msg}"
+    );
+}
+
 // ==============================================================================
 // Extra Directory Tests
 // ==============================================================================
