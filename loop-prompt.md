@@ -51,7 +51,7 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
 
 ### Phase 2: Issue Resolution
 
-1. **Analyze** all open issues for:
+1. **Analyze** all open issues (in `issues/`) for:
    - Semantic relationships (which are related?)
    - File overlap (which touch the same code?)
    - Dependencies (which must be fixed first because they impact others?)

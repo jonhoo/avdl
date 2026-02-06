@@ -45,16 +45,16 @@ This file exercises every import kind in a single protocol:
 A correct test requires passing both the `input/` directory and the
 `putOnClassPath/` directory as import search paths. It validates:
 
-- Type ordering (imported types before local types, see issue #21)
-- Qualified name splitting in `.avsc` imports (see issue #19)
+- Type ordering (imported types before local types; issue #21, now resolved)
+- Qualified name splitting in `.avsc` imports (issue #19, now resolved)
 - Message merging from imported protocols (the expected output includes
   messages `error`, `void`, `idl`, `import`, `oneway`, `null`,
   `local_timestamp_ms`, `bar` from `reservedwords.avdl` via transitive
   IDL import)
 - Cross-protocol type references (`ns.other.schema.Baz`, `Foo`)
 
-This single test would exercise three existing known issues (#19, #21,
-and partially #22), making it a high-value regression target.
+Issues #19 and #21 are now resolved; this test remains a high-value
+regression target to prevent those fixes from regressing.
 
 ### 1b. `nestedimport.avdl` (expected output: `nestedimport.avpr`)
 
@@ -83,17 +83,9 @@ The current `test_status_schema` implementation:
 2. If parsing succeeds, it manually wraps the single schema in an array
    to match the expected `status.avsc` output (lines 409-416).
 
-Both behaviors mask real bugs. Issue #20 tracks the root cause (schema
-mode without `schema` keyword should output an array of all named
-schemas), but the test should either:
-
-- Assert the correct output format (a JSON array) and fail if it does
-  not match, or
-- Be marked `#[ignore]` with a comment referencing issue #20, so the
-  failure is visible in `cargo test -- --ignored`.
-
-The current approach means this test will continue to "pass" even if the
-underlying bug regresses further.
+Issue #20 (schema mode array output) is now resolved. The test should
+be updated to remove the workarounds and assert the correct output
+format directly (a JSON array), since the underlying bug is fixed.
 
 ---
 
@@ -341,6 +333,39 @@ binary and assert on stdout, stderr, and exit code.
 
 ---
 
+## 11. Java test behaviors not yet mirrored
+
+**Priority: Medium** -- The Java test classes exercise behaviors our
+tests don't yet cover.
+
+### 11a. Stderr warning assertions
+
+Java's `TestIdlTool` and `TestIdlToSchemataTool` both capture stderr
+and assert specific warning messages, including a warning for
+license-header doc comments:
+
+    Warning: Line 1, char 1: Ignoring out-of-place documentation comment.
+    Did you mean to use a multiline comment ( /* ... */ ) instead?
+
+Our CLI tests (section 10) should verify stderr warning output too.
+
+### 11b. `idl2schemata` output file count
+
+Java's `TestIdlToSchemataTool.splitIdlIntoSchemata` asserts exactly 4
+output files (`assertEquals(4, files.length)`). Our `idl2schemata`
+tests (section 3) should include a similar file-count assertion as a
+sanity check.
+
+### 11c. Additional test inputs in `tools/src/test/idl/`
+
+The `avro/lang/java/tools/src/test/idl/` directory contains
+`protocol.avdl`/`.avpr` and `schema.avdl`/`.avsc` golden-file pairs
+that are NOT in the standard `input/` directory. These are exercised by
+`TestIdlTool` and `TestIdlToSchemataTool` and should be added to our
+test suite.
+
+---
+
 ## Priority summary
 
 | # | Gap                                            | Priority |
@@ -355,3 +380,4 @@ binary and assert on stdout, stderr, and exit code.
 | 8 | Logical type field tests                       | Low      |
 | 9 | Second `cycle.avdl` variant                    | Low      |
 | 10| CLI-level integration tests                    | Low      |
+| 11| Java test behaviors (stderr, file count, extra inputs) | Medium |

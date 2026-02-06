@@ -90,7 +90,7 @@ carry location information. However, several call sites lose the
 | 1055 | `walk_json_literal(&lit_ctx, src)?` in `walk_json_value` | Low priority. |
 | 1103 | `walk_json_value(&value_ctx, ...)?` in `walk_json_object` | Low priority. |
 | 1117 | `walk_json_value(&val_ctx, ...)?` in `walk_json_array` | Low priority. |
-| 1255 | `i64::from_str_radix(hex, 16).map_err(...)?` | Already includes context in the error string. Acceptable. |
+| 1255 | `i64::from_str_radix(hex, 16).map_err(...)?` | Currently uses `IdlError::Other` with a text message. Can be upgraded to `make_diagnostic_from_token` (see note below). |
 | 1259 | `i64::from_str_radix(hex, 16).map_err(...)?` | Same. |
 | 1264 | `i64::from_str_radix(&number, 8).map_err(...)?` | Same. |
 | 1268 | `i64::from_str_radix(oct, 8).map_err(...)?` | Same. |
@@ -101,6 +101,22 @@ carry location information. However, several call sites lose the
 | 1314 | `u32::from_str_radix(&number[2..], 16).map_err(...)?` | Same. |
 | 1317 | `u32::from_str_radix(&number, 8).map_err(...)?` | Same. |
 | 1321 | `number.parse().map_err(...)?` | Same. |
+
+**Note on numeric literal functions:** `parse_integer_literal`,
+`parse_floating_point_literal`, and `parse_integer_as_u32` currently
+accept only `text: &str` and return `IdlError::Other` for parse
+failures. However, all call sites already have both the token and
+`SourceInfo` available:
+
+- `walk_json_literal` (line ~1135): has `tok` and `src`
+- `walk_fixed` (line ~729): has `size_tok` and `src`
+- `walk_primitive_type` (lines ~897, ~900): has `precision_tok` /
+  `scale_tok` and `src`
+
+These functions should be refactored to accept `src: &SourceInfo` and
+`tok: &dyn Token` parameters so they can use
+`make_diagnostic_from_token` instead of `IdlError::Other`. This is a
+straightforward signature change, not an architectural constraint.
 
 ### Priority 3: `src/main.rs` -- CLI entry point
 
@@ -168,3 +184,15 @@ The library functions in `import.rs` and `reader.rs` return
 
 Option 3 is the simplest approach for the library code; option 1 is
 already the pattern used at the `main.rs` boundary.
+
+## Action item: document error propagation practice in CLAUDE.md
+
+Once the `.context()` work is done, the project's `CLAUDE.md` should
+document the error propagation practice so that future code follows the
+same guidance. Specifically:
+
+- Use `.context()` / `.wrap_err()` on `?` operators where the error
+  would otherwise lose information about what was being attempted
+- Prefer `make_diagnostic` / `make_diagnostic_from_token` in
+  `reader.rs` over `IdlError::Other` for parse-related errors
+- Include the file path or type name being processed in error context
