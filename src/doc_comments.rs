@@ -148,8 +148,8 @@ fn try_strip_star_indent(doc_comment: &str) -> Option<String> {
         if i == 0 {
             // First line: strip leading stars and optional following space.
             let after_stars = &first_line[star_count..];
-            let stripped = if after_stars.starts_with(' ') {
-                &after_stars[1..]
+            let stripped = if let Some(s) = after_stars.strip_prefix(' ') {
+                s
             } else {
                 after_stars
             };
@@ -160,8 +160,8 @@ fn try_strip_star_indent(doc_comment: &str) -> Option<String> {
                 result_lines.push("");
             } else {
                 let after_stars = &trimmed[star_count..];
-                let stripped = if after_stars.starts_with(' ') {
-                    &after_stars[1..]
+                let stripped = if let Some(s) = after_stars.strip_prefix(' ') {
+                    s
                 } else {
                     after_stars
                 };

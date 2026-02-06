@@ -341,15 +341,15 @@ fn walk_idl_file<'input>(
 
     // Schema mode: optional `namespace`, optional `schema` declaration, plus
     // named type declarations.
-    if let Some(ns_ctx) = ctx.namespaceDeclaration() {
-        if let Some(id_ctx) = ns_ctx.identifier() {
-            let id = identifier_text(&id_ctx);
-            // In schema mode, `namespace foo.bar;` sets the enclosing namespace
-            // directly. Unlike protocol/record identifiers (where dots in the
-            // name imply a namespace prefix), here the entire identifier IS the
-            // namespace value.
-            *namespace = if id.is_empty() { None } else { Some(id) };
-        }
+    if let Some(ns_ctx) = ctx.namespaceDeclaration()
+        && let Some(id_ctx) = ns_ctx.identifier()
+    {
+        let id = identifier_text(&id_ctx);
+        // In schema mode, `namespace foo.bar;` sets the enclosing namespace
+        // directly. Unlike protocol/record identifiers (where dots in the
+        // name imply a namespace prefix), here the entire identifier IS the
+        // namespace value.
+        *namespace = if id.is_empty() { None } else { Some(id) };
     }
 
     // Collect imports (schema mode can also have them).
@@ -362,11 +362,11 @@ fn walk_idl_file<'input>(
     }
 
     // The main schema declaration uses `schema <fullType>;`.
-    if let Some(main_ctx) = ctx.mainSchemaDeclaration() {
-        if let Some(ft_ctx) = main_ctx.fullType() {
-            let schema = walk_full_type(&ft_ctx, token_stream, src, namespace)?;
-            return Ok(IdlFile::SchemaFile(schema));
-        }
+    if let Some(main_ctx) = ctx.mainSchemaDeclaration()
+        && let Some(ft_ctx) = main_ctx.fullType()
+    {
+        let schema = walk_full_type(&ft_ctx, token_stream, src, namespace)?;
+        return Ok(IdlFile::SchemaFile(schema));
     }
 
     // If there are named schemas but no explicit `schema <type>;` declaration,
@@ -501,7 +501,7 @@ fn walk_record<'input>(
     let raw_identifier = identifier_text(&name_ctx);
 
     // Determine if this is a record or an error type.
-    let is_error = ctx.recordType.as_ref().map_or(false, |tok| {
+    let is_error = ctx.recordType.as_ref().is_some_and(|tok| {
         tok.get_token_type() == Idl_Error
     });
 
@@ -1179,7 +1179,7 @@ fn unescape_java(s: &str) -> String {
                         result.push_str(&hex);
                     }
                 }
-                Some(c2) if c2 >= '0' && c2 <= '7' => {
+                Some(c2) if ('0'..='7').contains(&c2) => {
                     // Octal escape: 1-3 octal digits. The grammar allows:
                     //   OctDigit OctDigit?          (1-2 digits, any octal)
                     //   [0-3] OctDigit OctDigit     (3 digits, first must be 0-3)
@@ -1187,19 +1187,18 @@ fn unescape_java(s: &str) -> String {
                     // digit is 0-3 (keeping the value <= \377 = 255).
                     let mut octal = String::new();
                     octal.push(c2);
-                    if let Some(&next) = chars.peek() {
-                        if next >= '0' && next <= '7' {
-                            octal.push(next);
+                    if let Some(&next) = chars.peek()
+                        && ('0'..='7').contains(&next)
+                    {
+                        octal.push(next);
+                        chars.next();
+                        // Only consume a third digit if the first was 0-3.
+                        if c2 <= '3'
+                            && let Some(&next2) = chars.peek()
+                            && ('0'..='7').contains(&next2)
+                        {
+                            octal.push(next2);
                             chars.next();
-                            // Only consume a third digit if the first was 0-3.
-                            if c2 <= '3' {
-                                if let Some(&next2) = chars.peek() {
-                                    if next2 >= '0' && next2 <= '7' {
-                                        octal.push(next2);
-                                        chars.next();
-                                    }
-                                }
-                            }
                         }
                     }
                     if let Ok(val) = u32::from_str_radix(&octal, 8) {

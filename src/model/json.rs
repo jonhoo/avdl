@@ -22,7 +22,7 @@ use indexmap::IndexSet;
 use serde_json::{Map, Value};
 
 use super::protocol::{Message, Protocol};
-use super::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType};
+use super::schema::{AvroSchema, Field, FieldOrder, LogicalType};
 
 /// A lookup table from full type name to the actual schema definition. This
 /// allows `Reference` nodes to be resolved and inlined at their first use.
@@ -213,10 +213,10 @@ pub fn schema_to_json(
                 Value::String(if *is_error { "error" } else { "record" }.to_string()),
             );
             obj.insert("name".to_string(), Value::String(name.clone()));
-            if namespace.as_deref() != enclosing_namespace {
-                if let Some(ns) = namespace {
-                    obj.insert("namespace".to_string(), Value::String(ns.clone()));
-                }
+            if namespace.as_deref() != enclosing_namespace
+                && let Some(ns) = namespace
+            {
+                obj.insert("namespace".to_string(), Value::String(ns.clone()));
             }
             if let Some(doc) = doc {
                 obj.insert("doc".to_string(), Value::String(doc.clone()));
@@ -276,10 +276,10 @@ pub fn schema_to_json(
                 Value::String("enum".to_string()),
             );
             obj.insert("name".to_string(), Value::String(name.clone()));
-            if namespace.as_deref() != enclosing_namespace {
-                if let Some(ns) = namespace {
-                    obj.insert("namespace".to_string(), Value::String(ns.clone()));
-                }
+            if namespace.as_deref() != enclosing_namespace
+                && let Some(ns) = namespace
+            {
+                obj.insert("namespace".to_string(), Value::String(ns.clone()));
             }
             if let Some(doc) = doc {
                 obj.insert("doc".to_string(), Value::String(doc.clone()));
@@ -332,10 +332,10 @@ pub fn schema_to_json(
                 Value::String("fixed".to_string()),
             );
             obj.insert("name".to_string(), Value::String(name.clone()));
-            if namespace.as_deref() != enclosing_namespace {
-                if let Some(ns) = namespace {
-                    obj.insert("namespace".to_string(), Value::String(ns.clone()));
-                }
+            if namespace.as_deref() != enclosing_namespace
+                && let Some(ns) = namespace
+            {
+                obj.insert("namespace".to_string(), Value::String(ns.clone()));
             }
             if let Some(doc) = doc {
                 obj.insert("doc".to_string(), Value::String(doc.clone()));

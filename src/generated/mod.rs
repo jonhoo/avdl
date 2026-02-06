@@ -42,6 +42,7 @@ pub mod idllistener;
     unused_imports,
     unused_mut,
     unused_braces,
+    unused_parens,
     unused_variables,
     clippy::all
 )]
