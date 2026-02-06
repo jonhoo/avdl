@@ -29,7 +29,7 @@ use serde_json::Value;
 
 use crate::error::{IdlError, Result};
 use crate::model::protocol::Message;
-use crate::model::schema::{AvroSchema, FieldOrder, LogicalType};
+use crate::model::schema::{AvroSchema, FieldOrder, LogicalType, PrimitiveType};
 use crate::resolve::SchemaRegistry;
 
 // ==============================================================================
@@ -470,11 +470,12 @@ fn parse_annotated_primitive(
                 LogicalType::Decimal { precision, scale }
             }
             _ => {
-                // Unknown logical type -- treat the whole object as extra
-                // properties on the bare primitive type.
-                // TODO: Handle unknown logical types more gracefully, possibly
-                // preserving them as properties on a Logical variant.
-                return Ok(primitive_from_str(prim));
+                // Unknown logical type -- preserve as properties on AnnotatedPrimitive.
+                let properties = collect_extra_properties(obj, &["type"]);
+                return Ok(AvroSchema::AnnotatedPrimitive {
+                    kind: str_to_primitive_type(prim),
+                    properties,
+                });
             }
         };
 
@@ -488,25 +489,50 @@ fn parse_annotated_primitive(
         });
     }
 
-    // Primitive with no logical type. Any extra keys beyond "type" are custom
-    // properties that we cannot currently represent on bare primitives.
-    // TODO: Handle primitive types with custom properties but no logical type.
-    Ok(primitive_from_str(prim))
+    // Primitive with no logical type. If there are extra properties beyond
+    // "type", wrap in AnnotatedPrimitive to preserve them.
+    let properties = collect_extra_properties(obj, &["type"]);
+    if properties.is_empty() {
+        primitive_from_str(prim)
+    } else {
+        Ok(AvroSchema::AnnotatedPrimitive {
+            kind: str_to_primitive_type(prim),
+            properties,
+        })
+    }
 }
 
 /// Map a primitive type name string to its `AvroSchema` variant.
-fn primitive_from_str(name: &str) -> AvroSchema {
+fn primitive_from_str(name: &str) -> Result<AvroSchema> {
     match name {
-        "null" => AvroSchema::Null,
-        "boolean" => AvroSchema::Boolean,
-        "int" => AvroSchema::Int,
-        "long" => AvroSchema::Long,
-        "float" => AvroSchema::Float,
-        "double" => AvroSchema::Double,
-        "bytes" => AvroSchema::Bytes,
-        "string" => AvroSchema::String,
-        // This is only called with values we've already matched as primitives.
-        _ => unreachable!("not a primitive type: {name}"),
+        "null" => Ok(AvroSchema::Null),
+        "boolean" => Ok(AvroSchema::Boolean),
+        "int" => Ok(AvroSchema::Int),
+        "long" => Ok(AvroSchema::Long),
+        "float" => Ok(AvroSchema::Float),
+        "double" => Ok(AvroSchema::Double),
+        "bytes" => Ok(AvroSchema::Bytes),
+        "string" => Ok(AvroSchema::String),
+        other => Err(IdlError::Parse(format!("unknown primitive type: {other}"))),
+    }
+}
+
+/// Map a primitive type name string to its `PrimitiveType` variant.
+///
+/// Only called from `parse_annotated_primitive` where the type name has
+/// already been matched as a primitive in `object_to_schema`.
+fn str_to_primitive_type(name: &str) -> PrimitiveType {
+    match name {
+        "null" => PrimitiveType::Null,
+        "boolean" => PrimitiveType::Boolean,
+        "int" => PrimitiveType::Int,
+        "long" => PrimitiveType::Long,
+        "float" => PrimitiveType::Float,
+        "double" => PrimitiveType::Double,
+        "bytes" => PrimitiveType::Bytes,
+        "string" => PrimitiveType::String,
+        // Only called from parse_annotated_primitive where type was already matched as primitive
+        _ => unreachable!("str_to_primitive_type called with non-primitive: {name}"),
     }
 }
 
@@ -980,5 +1006,74 @@ mod tests {
         .expect("parse field with default");
 
         assert_eq!(field.default, Some(json!(42)));
+    }
+
+    // =========================================================================
+    // primitive_from_str tests
+    // =========================================================================
+
+    #[test]
+    fn primitive_from_str_returns_error_on_unknown_type() {
+        let result = primitive_from_str("timestamp");
+        assert!(result.is_err(), "unknown type should produce an error");
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown primitive type: timestamp"),
+            "error message should mention the unknown type, got: {msg}"
+        );
+    }
+
+    // =========================================================================
+    // Annotated primitive tests (issues #3 and #4)
+    // =========================================================================
+
+    #[test]
+    fn unknown_logical_type_preserved_as_annotated_primitive() {
+        let schema = json_to_schema(
+            &json!({"type": "string", "logicalType": "my-custom-type", "extra": 42}),
+            None,
+        )
+        .expect("parse unknown logical type");
+
+        match schema {
+            AvroSchema::AnnotatedPrimitive { kind, properties } => {
+                assert_eq!(kind, PrimitiveType::String);
+                assert_eq!(
+                    properties.get("logicalType"),
+                    Some(&json!("my-custom-type"))
+                );
+                assert_eq!(properties.get("extra"), Some(&json!(42)));
+            }
+            other => panic!("expected AnnotatedPrimitive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_properties_on_primitive_without_logical_type_preserved() {
+        let schema = json_to_schema(
+            &json!({"type": "int", "foo.bar": "baz"}),
+            None,
+        )
+        .expect("parse primitive with custom property");
+
+        match schema {
+            AvroSchema::AnnotatedPrimitive { kind, properties } => {
+                assert_eq!(kind, PrimitiveType::Int);
+                assert_eq!(properties.get("foo.bar"), Some(&json!("baz")));
+            }
+            other => panic!("expected AnnotatedPrimitive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_primitive_object_without_extra_properties_stays_primitive() {
+        let schema = json_to_schema(
+            &json!({"type": "long"}),
+            None,
+        )
+        .expect("parse bare primitive object");
+
+        assert_eq!(schema, AvroSchema::Long);
     }
 }
