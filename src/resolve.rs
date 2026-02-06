@@ -69,6 +69,11 @@ impl SchemaRegistry {
         self.schemas.values()
     }
 
+    /// Return the last registered schema, if any.
+    pub fn last(&self) -> Option<&AvroSchema> {
+        self.schemas.values().last()
+    }
+
     /// Merge schemas from another registry (used for imports).
     /// Schemas already present (by full name) are skipped, preserving the
     /// original definition.

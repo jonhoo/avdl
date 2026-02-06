@@ -10,16 +10,31 @@
 // - Primitives serialize as plain strings: "null", "int", etc.
 // - Unions serialize as JSON arrays: ["null", "string"].
 // - JSON object key order is carefully controlled to match Java output.
+//
+// References (`AvroSchema::Reference`) are resolved against a lookup table so
+// they can be inlined at their first use, just as the Java tools do. This is
+// critical for test cases like `forward_ref.avdl` where an enum is defined
+// after the record that uses it -- the expected JSON inlines the enum inside
+// the record's field.
 
 use indexmap::IndexMap;
 use indexmap::IndexSet;
 use serde_json::{Map, Value};
 
 use super::protocol::{Message, Protocol};
-use super::schema::{AvroSchema, Field, FieldOrder, LogicalType};
+use super::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType};
+
+/// A lookup table from full type name to the actual schema definition. This
+/// allows `Reference` nodes to be resolved and inlined at their first use.
+pub type SchemaLookup = IndexMap<String, AvroSchema>;
 
 /// Serialize a `Protocol` to a `serde_json::Value` matching the Java Avro tools output.
 pub fn protocol_to_json(protocol: &Protocol) -> Value {
+    // Build a lookup table from all named types in the protocol's type list.
+    // This includes nested types inside records/fields that were registered
+    // in the schema registry.
+    let lookup = build_lookup(&protocol.types, protocol.namespace.as_deref());
+
     let mut known_names = IndexSet::new();
     let mut obj = IndexMap::new();
 
@@ -34,10 +49,15 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
         obj.insert(k.clone(), v.clone());
     }
 
+    // Serialize each top-level type. If a named type was already inlined via
+    // Reference resolution (e.g., a forward reference inside a record field),
+    // `schema_to_json` returns a bare string. The Java tools omit such
+    // already-inlined types from the top-level array, so we filter them out.
     let types: Vec<Value> = protocol
         .types
         .iter()
-        .map(|s| schema_to_json(s, &mut known_names, protocol.namespace.as_deref()))
+        .map(|s| schema_to_json(s, &mut known_names, protocol.namespace.as_deref(), &lookup))
+        .filter(|v| !v.is_string())
         .collect();
     obj.insert("types".to_string(), Value::Array(types));
 
@@ -45,7 +65,7 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
     for (name, msg) in &protocol.messages {
         messages_obj.insert(
             name.clone(),
-            message_to_json(msg, &mut known_names, protocol.namespace.as_deref()),
+            message_to_json(msg, &mut known_names, protocol.namespace.as_deref(), &lookup),
         );
     }
     obj.insert("messages".to_string(), indexmap_to_value(messages_obj));
@@ -53,12 +73,81 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
     indexmap_to_value(obj)
 }
 
+/// Build a lookup table of full_name -> AvroSchema for all named types,
+/// recursively collecting types nested inside records, unions, arrays, etc.
+///
+/// The `default_namespace` is used for types that have no explicit namespace
+/// (they inherit the protocol's namespace). This ensures the lookup key matches
+/// the fully-qualified names used in `Reference` nodes.
+fn build_lookup(types: &[AvroSchema], default_namespace: Option<&str>) -> SchemaLookup {
+    let mut lookup = IndexMap::new();
+    for schema in types {
+        collect_named_types(schema, default_namespace, &mut lookup);
+    }
+    lookup
+}
+
+/// Recursively collect named types from a schema tree into the lookup.
+fn collect_named_types(
+    schema: &AvroSchema,
+    default_namespace: Option<&str>,
+    lookup: &mut SchemaLookup,
+) {
+    match schema {
+        AvroSchema::Record {
+            name,
+            namespace,
+            fields,
+            ..
+        } => {
+            let effective_ns = namespace.as_deref().or(default_namespace);
+            let full_name = match effective_ns {
+                Some(ns) => format!("{ns}.{name}"),
+                None => name.clone(),
+            };
+            lookup.insert(full_name, schema.clone());
+            for field in fields {
+                collect_named_types(&field.schema, default_namespace, lookup);
+            }
+        }
+        AvroSchema::Enum {
+            name, namespace, ..
+        }
+        | AvroSchema::Fixed {
+            name, namespace, ..
+        } => {
+            let effective_ns = namespace.as_deref().or(default_namespace);
+            let full_name = match effective_ns {
+                Some(ns) => format!("{ns}.{name}"),
+                None => name.clone(),
+            };
+            lookup.insert(full_name, schema.clone());
+        }
+        AvroSchema::Array { items, .. } => {
+            collect_named_types(items, default_namespace, lookup);
+        }
+        AvroSchema::Map { values, .. } => {
+            collect_named_types(values, default_namespace, lookup);
+        }
+        AvroSchema::Union { types, .. } => {
+            for t in types {
+                collect_named_types(t, default_namespace, lookup);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Serialize an `AvroSchema` to JSON. For named types, the first occurrence
 /// is serialized inline; subsequent occurrences are bare name strings.
+///
+/// The `lookup` parameter allows `Reference` nodes to be resolved and inlined
+/// at their first use.
 pub fn schema_to_json(
     schema: &AvroSchema,
     known_names: &mut IndexSet<String>,
     enclosing_namespace: Option<&str>,
+    lookup: &SchemaLookup,
 ) -> Value {
     match schema {
         // =====================================================================
@@ -72,6 +161,22 @@ pub fn schema_to_json(
         AvroSchema::Double => Value::String("double".to_string()),
         AvroSchema::Bytes => Value::String("bytes".to_string()),
         AvroSchema::String => Value::String("string".to_string()),
+
+        // =====================================================================
+        // Annotated primitive: a primitive with custom properties, serialized
+        // as {"type": "int", ...properties} instead of bare "int".
+        // =====================================================================
+        AvroSchema::AnnotatedPrimitive { kind, properties } => {
+            let mut obj = IndexMap::new();
+            obj.insert(
+                "type".to_string(),
+                Value::String(kind.as_str().to_string()),
+            );
+            for (k, v) in properties {
+                obj.insert(k.clone(), v.clone());
+            }
+            indexmap_to_value(obj)
+        }
 
         // =====================================================================
         // Record: key order is type, name, namespace (if different), doc,
@@ -120,6 +225,7 @@ pub fn schema_to_json(
                         f,
                         known_names,
                         namespace.as_deref().or(enclosing_namespace),
+                        lookup,
                     )
                 })
                 .collect();
@@ -254,7 +360,7 @@ pub fn schema_to_json(
             );
             obj.insert(
                 "items".to_string(),
-                schema_to_json(items, known_names, enclosing_namespace),
+                schema_to_json(items, known_names, enclosing_namespace, lookup),
             );
             for (k, v) in properties {
                 obj.insert(k.clone(), v.clone());
@@ -273,7 +379,7 @@ pub fn schema_to_json(
             );
             obj.insert(
                 "values".to_string(),
-                schema_to_json(values, known_names, enclosing_namespace),
+                schema_to_json(values, known_names, enclosing_namespace, lookup),
             );
             for (k, v) in properties {
                 obj.insert(k.clone(), v.clone());
@@ -288,7 +394,7 @@ pub fn schema_to_json(
         AvroSchema::Union { types, .. } => {
             let types_json: Vec<Value> = types
                 .iter()
-                .map(|t| schema_to_json(t, known_names, enclosing_namespace))
+                .map(|t| schema_to_json(t, known_names, enclosing_namespace, lookup))
                 .collect();
             Value::Array(types_json)
         }
@@ -360,10 +466,40 @@ pub fn schema_to_json(
         }
 
         // =====================================================================
-        // Reference: a forward reference that should have been resolved by now,
-        // but we serialize as a bare name string regardless.
+        // Reference: resolve against the lookup to inline at first use, or
+        // output a bare name for subsequent uses.
         // =====================================================================
-        AvroSchema::Reference(name) => Value::String(name.clone()),
+        AvroSchema::Reference(full_name) => {
+            // If already serialized, output a bare name (possibly shortened).
+            if known_names.contains(full_name) {
+                if let Some(dot_pos) = full_name.rfind('.') {
+                    let ns = &full_name[..dot_pos];
+                    let simple = &full_name[dot_pos + 1..];
+                    return Value::String(schema_ref_name(
+                        simple,
+                        Some(ns),
+                        enclosing_namespace,
+                    ));
+                } else {
+                    return Value::String(full_name.clone());
+                }
+            }
+
+            // Try to resolve from the lookup and inline the full definition.
+            if let Some(resolved) = lookup.get(full_name) {
+                return schema_to_json(resolved, known_names, enclosing_namespace, lookup);
+            }
+
+            // Unresolvable reference -- output as a bare name string, applying
+            // namespace shortening when possible.
+            if let Some(dot_pos) = full_name.rfind('.') {
+                let ns = &full_name[..dot_pos];
+                let simple = &full_name[dot_pos + 1..];
+                Value::String(schema_ref_name(simple, Some(ns), enclosing_namespace))
+            } else {
+                Value::String(full_name.clone())
+            }
+        }
     }
 }
 
@@ -376,12 +512,13 @@ fn field_to_json(
     field: &Field,
     known_names: &mut IndexSet<String>,
     enclosing_namespace: Option<&str>,
+    lookup: &SchemaLookup,
 ) -> Value {
     let mut obj = IndexMap::new();
     obj.insert("name".to_string(), Value::String(field.name.clone()));
     obj.insert(
         "type".to_string(),
-        schema_to_json(&field.schema, known_names, enclosing_namespace),
+        schema_to_json(&field.schema, known_names, enclosing_namespace, lookup),
     );
     if let Some(doc) = &field.doc {
         obj.insert("doc".to_string(), Value::String(doc.clone()));
@@ -425,6 +562,7 @@ fn message_to_json(
     msg: &Message,
     known_names: &mut IndexSet<String>,
     enclosing_namespace: Option<&str>,
+    lookup: &SchemaLookup,
 ) -> Value {
     let mut obj = IndexMap::new();
     if let Some(doc) = &msg.doc {
@@ -436,17 +574,17 @@ fn message_to_json(
     let request: Vec<Value> = msg
         .request
         .iter()
-        .map(|f| field_to_json(f, known_names, enclosing_namespace))
+        .map(|f| field_to_json(f, known_names, enclosing_namespace, lookup))
         .collect();
     obj.insert("request".to_string(), Value::Array(request));
     obj.insert(
         "response".to_string(),
-        schema_to_json(&msg.response, known_names, enclosing_namespace),
+        schema_to_json(&msg.response, known_names, enclosing_namespace, lookup),
     );
     if let Some(errors) = &msg.errors {
         let errors_json: Vec<Value> = errors
             .iter()
-            .map(|e| schema_to_json(e, known_names, enclosing_namespace))
+            .map(|e| schema_to_json(e, known_names, enclosing_namespace, lookup))
             .collect();
         obj.insert("errors".to_string(), Value::Array(errors_json));
     }

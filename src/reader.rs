@@ -31,7 +31,7 @@ use crate::error::{IdlError, Result};
 use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
-use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType};
+use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType};
 use crate::resolve::SchemaRegistry;
 
 // ==========================================================================
@@ -243,9 +243,10 @@ fn walk_idl_file<'input>(
     // Collect imports (schema mode can also have them).
     collect_imports(&ctx.importStatement_all(), imports);
 
-    // Walk named schemas.
+    // Walk named schemas. In schema mode, we register them in the registry
+    // but don't collect them into a types list (there's no protocol).
     for ns_ctx in ctx.namedSchemaDeclaration_all() {
-        walk_named_schema(&ns_ctx, token_stream, registry, namespace)?;
+        let _schema = walk_named_schema(&ns_ctx, token_stream, registry, namespace)?;
     }
 
     // The main schema declaration uses `schema <fullType>;`.
@@ -256,10 +257,15 @@ fn walk_idl_file<'input>(
         }
     }
 
-    // If there are named schemas but no main schema declaration, return the
-    // first one as the "main" schema. This matches the Java behavior where
-    // the mainSchema is the fullType from `schema <fullType>`.
-    // If nothing matched, return an error.
+    // If there are named schemas but no explicit `schema <type>;` declaration,
+    // return the last registered schema as the "main" schema. This handles IDL
+    // files like `status_schema.avdl` that define named types without an explicit
+    // schema declaration — the Java parser treats these as valid schema-mode files
+    // where the named types are the schema output.
+    if let Some(last_schema) = registry.last() {
+        return Ok(IdlFile::SchemaFile(last_schema.clone()));
+    }
+
     Err(IdlError::Other(
         "IDL file contains neither a protocol nor a schema declaration".into(),
     ))
@@ -301,9 +307,15 @@ fn walk_protocol<'input>(
     // Collect imports from the body.
     collect_imports(&body.importStatement_all(), imports);
 
-    // Walk named schemas in the body.
+    // Walk named schemas in the body. We collect the top-level schemas
+    // directly into `types` rather than pulling them from the registry, because
+    // the registry flattens all named types (including those nested inside
+    // records). The Java tools inline nested types at their first reference
+    // point; only top-level declarations appear in the `types` array.
+    let mut types = Vec::new();
     for ns_ctx in body.namedSchemaDeclaration_all() {
-        walk_named_schema(&ns_ctx, token_stream, registry, namespace)?;
+        let schema = walk_named_schema(&ns_ctx, token_stream, registry, namespace)?;
+        types.push(schema);
     }
 
     // Walk messages in the body.
@@ -312,10 +324,6 @@ fn walk_protocol<'input>(
         let (msg_name, message) = walk_message(&msg_ctx, token_stream, namespace)?;
         messages.insert(msg_name, message);
     }
-
-    // Build the types list from everything registered in the schema registry.
-    // We clone because the registry is also returned to the caller.
-    let types: Vec<AvroSchema> = registry.schemas().cloned().collect();
 
     Ok(Protocol {
         name: protocol_name,
@@ -333,24 +341,22 @@ fn walk_named_schema<'input>(
     token_stream: &TS<'input>,
     registry: &mut SchemaRegistry,
     namespace: &mut Option<String>,
-) -> Result<()> {
-    if let Some(fixed_ctx) = ctx.fixedDeclaration() {
-        let schema = walk_fixed(&fixed_ctx, token_stream, namespace)?;
-        registry
-            .register(schema)
-            .map_err(|e| IdlError::Other(e))?;
+) -> Result<AvroSchema> {
+    let schema = if let Some(fixed_ctx) = ctx.fixedDeclaration() {
+        walk_fixed(&fixed_ctx, token_stream, namespace)?
     } else if let Some(enum_ctx) = ctx.enumDeclaration() {
-        let schema = walk_enum(&enum_ctx, token_stream, namespace)?;
-        registry
-            .register(schema)
-            .map_err(|e| IdlError::Other(e))?;
+        walk_enum(&enum_ctx, token_stream, namespace)?
     } else if let Some(record_ctx) = ctx.recordDeclaration() {
-        let schema = walk_record(&record_ctx, token_stream, registry, namespace)?;
-        registry
-            .register(schema)
-            .map_err(|e| IdlError::Other(e))?;
-    }
-    Ok(())
+        walk_record(&record_ctx, token_stream, registry, namespace)?
+    } else {
+        return Err(IdlError::Other(
+            "unknown named schema declaration".into(),
+        ));
+    };
+    registry
+        .register(schema.clone())
+        .map_err(|e| IdlError::Other(e))?;
+    Ok(schema)
 }
 
 // ==========================================================================
@@ -815,8 +821,6 @@ fn walk_message<'input>(
     // contains only the error type identifiers (not the message name).
     let errors = if !ctx.errors.is_empty() {
         let mut error_schemas = Vec::new();
-        // The Java code starts with Protocol.SYSTEM_ERROR which is "string".
-        error_schemas.push(AvroSchema::String);
         for error_id_ctx in &ctx.errors {
             let error_name = identifier_text(error_id_ctx);
             let full_name = compute_full_name(namespace, &error_name);
@@ -827,9 +831,10 @@ fn walk_message<'input>(
         // One-way messages have no error declarations.
         None
     } else {
-        // Non-oneway messages without explicit throws still get the default
-        // error list containing just the system error.
-        Some(vec![AvroSchema::String])
+        // Non-throwing messages omit the errors key entirely in the JSON
+        // output. The Java Avro tools only emit `"errors"` when the message
+        // explicitly declares `throws`.
+        None
     };
 
     Ok((
@@ -1318,8 +1323,50 @@ fn apply_properties_to_schema(schema: AvroSchema, properties: IndexMap<String, V
                 properties: existing,
             }
         }
-        // Primitive types and references don't carry properties in our model.
-        // TODO: consider wrapping primitives in a struct that can carry properties.
+        AvroSchema::AnnotatedPrimitive {
+            kind,
+            properties: mut existing,
+        } => {
+            existing.extend(properties);
+            AvroSchema::AnnotatedPrimitive {
+                kind,
+                properties: existing,
+            }
+        }
+        // Wrap bare primitives in AnnotatedPrimitive when properties are present.
+        AvroSchema::Null => AvroSchema::AnnotatedPrimitive {
+            kind: PrimitiveType::Null,
+            properties,
+        },
+        AvroSchema::Boolean => AvroSchema::AnnotatedPrimitive {
+            kind: PrimitiveType::Boolean,
+            properties,
+        },
+        AvroSchema::Int => AvroSchema::AnnotatedPrimitive {
+            kind: PrimitiveType::Int,
+            properties,
+        },
+        AvroSchema::Long => AvroSchema::AnnotatedPrimitive {
+            kind: PrimitiveType::Long,
+            properties,
+        },
+        AvroSchema::Float => AvroSchema::AnnotatedPrimitive {
+            kind: PrimitiveType::Float,
+            properties,
+        },
+        AvroSchema::Double => AvroSchema::AnnotatedPrimitive {
+            kind: PrimitiveType::Double,
+            properties,
+        },
+        AvroSchema::Bytes => AvroSchema::AnnotatedPrimitive {
+            kind: PrimitiveType::Bytes,
+            properties,
+        },
+        AvroSchema::String => AvroSchema::AnnotatedPrimitive {
+            kind: PrimitiveType::String,
+            properties,
+        },
+        // References cannot carry properties in the Avro model.
         other => other,
     }
 }

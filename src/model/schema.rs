@@ -9,6 +9,36 @@ pub enum FieldOrder {
     Ignore,
 }
 
+/// The primitive Avro type names, used with `AnnotatedPrimitive` to carry
+/// properties on a primitive type that would otherwise be a bare string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrimitiveType {
+    Null,
+    Boolean,
+    Int,
+    Long,
+    Float,
+    Double,
+    Bytes,
+    String,
+}
+
+impl PrimitiveType {
+    /// Return the Avro type name string for this primitive.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PrimitiveType::Null => "null",
+            PrimitiveType::Boolean => "boolean",
+            PrimitiveType::Int => "int",
+            PrimitiveType::Long => "long",
+            PrimitiveType::Float => "float",
+            PrimitiveType::Double => "double",
+            PrimitiveType::Bytes => "bytes",
+            PrimitiveType::String => "string",
+        }
+    }
+}
+
 /// Avro logical types that overlay primitive types.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogicalType {
@@ -91,6 +121,17 @@ pub enum AvroSchema {
         /// Internal flag: when true, this union was created by the `type?`
         /// nullable syntax and may need reordering based on the field default.
         is_nullable_type: bool,
+    },
+
+    // =========================================================================
+    // Primitive with custom properties (e.g., `@foo.bar("baz") long`)
+    // =========================================================================
+    /// A primitive type annotated with custom properties. When serialized to
+    /// JSON, this produces an object like `{"type": "long", "foo.bar": "baz"}`
+    /// instead of the bare string `"long"`.
+    AnnotatedPrimitive {
+        kind: PrimitiveType,
+        properties: IndexMap<std::string::String, Value>,
     },
 
     // =========================================================================

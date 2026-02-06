@@ -80,6 +80,22 @@ pub fn strip_indents(doc_comment: &str) -> String {
         return result;
     }
 
+    // Handle single-line comments that start with a star prefix (e.g. `* text`
+    // from `/** * text */`). The multi-line star stripper requires >= 2 lines,
+    // so we handle this case separately.
+    if let Some(stripped) = doc_comment.strip_prefix("** ") {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = doc_comment.strip_prefix("**") {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = doc_comment.strip_prefix("* ") {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = doc_comment.strip_prefix('*') {
+        return stripped.to_string();
+    }
+
     doc_comment.to_string()
 }
 
