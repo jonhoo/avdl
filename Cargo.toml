@@ -8,6 +8,7 @@ antlr4rust = "0.5.2"
 clap = { version = "4", features = ["derive"] }
 indexmap = { version = "2", features = ["serde"] }
 miette = { version = "7", features = ["fancy"] }
+ryu = "1.0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
