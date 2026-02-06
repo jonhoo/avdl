@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo add:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo test:*)",
+      "Bash(git worktree add:*)",
+      "Bash(git worktree:*)",
+      "Bash(grep:*)",
+      "Bash(java -version:*)",
+      "Bash(ls:*)",
+      "Bash(scripts/compare-golden.sh:*)",
+      "Bash(shellcheck:*)",
+      "Bash(wc:*)",
+      "WebFetch(domain:avro.apache.org)"
+    ]
+  }
+}
