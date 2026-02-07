@@ -8,6 +8,8 @@ after Wave 1 and Wave 2 fixes.
 
 ### What's been addressed
 
+- **Gap 1** (`import.avdl` and `nestedimport.avdl`): Fixed. Added
+  `test_import` and `test_nestedimport` integration tests.
 - **Gap 2** (`test_status_schema` workarounds): Fixed. The test now
   uses direct assertion with no manual array wrapping or error
   swallowing.
@@ -21,24 +23,23 @@ after Wave 1 and Wave 2 fixes.
   `oneway_nonvoid_return_is_rejected`, and `oneway_void_return_is_accepted`.
 - **Gap 6** (`extra/` directory tests): Addressed. Added
   `test_extra_protocol_syntax` and `test_extra_schema_syntax`.
+- **Gap 6b** (logical type tests): Fixed. Added
+  `test_builtin_logical_types_propagate_to_json`,
+  `test_custom_logical_type_annotation_propagates_to_json`,
+  `test_custom_logical_type_with_additional_annotations`, and
+  `test_builtin_logical_type_with_custom_annotation`.
+- **Gap 9b** (tools golden files): Fixed. Added `test_tools_schema`
+  and `test_tools_protocol` covering `tools/src/test/idl/`.
+- **Workspace path**: Fixed. Added `test_workspace_path` covering
+  the AVRO-3706 edge case from `compiler/src/test/idl/work space/`.
 
 ### Remaining gaps
 
 ---
 
-## 1. Missing input files: `import.avdl` and `nestedimport.avdl`
+## ~~1. Missing input files: `import.avdl` and `nestedimport.avdl`~~
 
-**Priority: High** -- These are the only two `.avdl` files in `input/`
-with no corresponding integration test. Both exercise the import
-pipeline, which is the most complex and bug-prone part of the system.
-
-`import.avdl` exercises every import kind (IDL, protocol, schema) in
-a single protocol, including classpath-resolved imports. A correct
-test requires passing both the `input/` and `putOnClassPath/`
-directories as import search paths.
-
-`nestedimport.avdl` exercises nested import chains with mixed import
-kinds.
+**RESOLVED.** Added `test_import` and `test_nestedimport`.
 
 ---
 
@@ -56,19 +57,12 @@ kinds.
 
 ---
 
-## 3. No tests for `putOnClassPath/` import resolution
+## ~~3. No tests for `putOnClassPath/` import resolution~~
 
-**Priority: Medium** -- The `putOnClassPath/` directory contains files
-that the Java test suite resolves via classpath. Our tool resolves them
-via `--import-dir`. These files are exercised transitively by
-`import.avdl` (gap #1), but there is no targeted test.
-
-Key behaviors to test:
-- Relative path resolution within imported IDL files (`../`
-  traversal in `relativePath.avdl`)
-- Import search path resolution (finding `OnTheClasspath.avdl` in a
-  non-relative directory)
-- Mixing relative and search-path resolution in the same import chain
+**RESOLVED** — covered transitively by `test_import`, which passes
+both `input/` and `putOnClassPath/` as import directories and
+exercises relative path resolution, search-path resolution, and
+mixed resolution in the same import chain.
 
 ---
 
@@ -91,12 +85,11 @@ is added, tests should be added here.
 
 ---
 
-## 6. Logical type field tests
+## ~~6. Logical type field tests~~
 
-**Priority: Low** -- `logicalTypes.avdl` is the dedicated stress test
-for logical type handling but has no golden `.avpr` file. A unit-level
-test that parses it and checks field-level logical type metadata
-would be useful.
+**RESOLVED.** Added 4 logical type propagation tests covering
+built-in keywords, custom `@logicalType` annotations, combined
+annotations, and built-ins with custom annotations.
 
 ---
 
@@ -132,12 +125,12 @@ formatting, or exit codes.
 
 | # | Gap                                            | Priority |
 |---|------------------------------------------------|----------|
-| 1 | `import.avdl` and `nestedimport.avdl` tests   | High     |
+| 1 | ~~`import.avdl` and `nestedimport.avdl` tests~~ | ~~High~~ DONE |
 | 2 | More `idl2schemata` tests                      | Medium   |
-| 3 | `putOnClassPath/` import resolution tests      | Medium   |
+| 3 | ~~`putOnClassPath/` import resolution tests~~  | ~~Medium~~ (covered by #1) |
 | 4 | Import cycle detection test                    | Medium   |
 | 5 | Doc comment and warning tests                  | Medium   |
-| 6 | Logical type field tests                       | Low      |
+| 6 | ~~Logical type field tests~~                   | ~~Low~~ DONE |
 | 7 | Second `cycle.avdl` variant                    | Low      |
 | 8 | CLI-level integration tests                    | Low      |
-| 9 | Java test behaviors (stderr, file count)       | Medium   |
+| 9 | Java test behaviors (stderr, file count)       | Medium (tools golden DONE) |

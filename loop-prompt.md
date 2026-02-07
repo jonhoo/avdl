@@ -108,12 +108,15 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
       do these things since permission prompts are forwarded to the
       user. However, the parent agent must still prepare the worktree
       (git checkout) before launching either kind of sub-agent.
-   c. After each sub-agent completes, the **parent agent** merges into
-     `main`:
-      ```bash
-      cd /home/jon/dev/stream/avdl/main
-      git merge fix/issue-UUID-description
-      ```
+   c. After each sub-agent completes, the **parent agent**:
+      - Checks the worktree's `SESSION.md` for observations the
+        sub-agent recorded. Incorporate relevant findings into `main`'s
+        `SESSION.md`, then clear the worktree's `SESSION.md`.
+      - Merges into `main`:
+        ```bash
+        cd /home/jon/dev/stream/avdl/main
+        git merge fix/issue-UUID-description
+        ```
    d. Verify: `cargo test` in main
    e. If merge conflicts occur (common when multiple agents in a wave
       modify the same file), resolve them before proceeding. Prefer
@@ -191,3 +194,13 @@ After each wave merge:
   git submodule Java source may be a different version than the
   avro-tools JAR. Always validate behavior against the JAR, not
   just the source code.
+- **Worktree SESSION.md files**: Sub-agents may record observations in
+  their worktree's `SESSION.md`. The parent agent must check each
+  worktree's `SESSION.md` after the sub-agent completes and
+  incorporate findings into `main`'s `SESSION.md` before clearing the
+  worktree copy. Forgetting this loses information.
+- **`cargo` needs unsandboxed execution**: `CARGO_TARGET_DIR` points
+  outside the sandbox write allowlist, so `cargo build`/`test`/`run`
+  commands require `dangerouslyDisableSandbox: true`. The
+  `compare-golden.sh` script invokes `cargo run`, which is why it
+  also needs unsandboxed execution.
