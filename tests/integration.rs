@@ -1015,6 +1015,45 @@ fn test_nestedimport() {
 }
 
 // ==============================================================================
+// Tools Test Suite (tools/src/test/idl/)
+// ==============================================================================
+//
+// These tests exercise golden files from the Java `TestIdlTool` and
+// `TestIdlToSchemataTool` test suites, which live in a separate directory from
+// the main IDL test suite.
+
+const TOOLS_IDL_DIR: &str = "avro/lang/java/tools/src/test/idl";
+
+/// Test `tools/src/test/idl/schema.avdl` in schema mode.
+///
+/// This exercises a pattern not covered by other schema-mode tests: `schema
+/// TestRecord;` where the named type itself contains forward references to
+/// types (`Kind`, `MD5`) defined later in the file. The expected output is
+/// `schema.avsc`, a single record JSON object with forward-referenced types
+/// inlined at first use.
+#[test]
+fn test_tools_schema() {
+    let avdl_path = PathBuf::from(TOOLS_IDL_DIR).join("schema.avdl");
+    let actual = parse_and_serialize(&avdl_path, &[]);
+    let expected = load_expected(&PathBuf::from(TOOLS_IDL_DIR).join("schema.avsc"));
+    assert_eq!(actual, expected);
+}
+
+/// Test `tools/src/test/idl/protocol.avdl` in protocol mode.
+///
+/// Similar to `simple.avdl` but exercises `@aliases(["hash"])` on a nullable
+/// field declared as `MD5?` (which produces `["null", "MD5"]` union ordering)
+/// rather than the explicit `union { MD5, null }` in `simple.avdl` (which
+/// produces `["MD5", "null"]` ordering).
+#[test]
+fn test_tools_protocol() {
+    let avdl_path = PathBuf::from(TOOLS_IDL_DIR).join("protocol.avdl");
+    let actual = parse_and_serialize(&avdl_path, &[]);
+    let expected = load_expected(&PathBuf::from(TOOLS_IDL_DIR).join("protocol.avpr"));
+    assert_eq!(actual, expected);
+}
+
+// ==============================================================================
 // Extra Directory Tests
 // ==============================================================================
 //
