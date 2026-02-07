@@ -1091,3 +1091,220 @@ fn test_extra_schema_syntax() {
         "the named type should be communication.Message"
     );
 }
+
+// ==============================================================================
+// Logical Type Propagation Tests
+// ==============================================================================
+//
+// These tests verify that logical types -- both built-in keywords and custom
+// `@logicalType("...")` annotations -- are correctly propagated through the
+// parse -> serialize pipeline and appear in the JSON output.
+
+/// Helper: parse an inline `.avdl` string and serialize to JSON.
+///
+/// This mirrors `parse_and_serialize` but accepts a string instead of a file
+/// path, making it convenient for inline test inputs.
+fn parse_inline_to_json(avdl_input: &str) -> Value {
+    let (idl_file, decl_items) =
+        parse_idl(avdl_input).unwrap_or_else(|e| panic!("failed to parse inline avdl: {e}"));
+
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+    for item in &decl_items {
+        if let DeclItem::Type(schema) = item {
+            let _ = registry.register(schema.clone());
+        }
+    }
+
+    idl_file_to_json(idl_file, registry)
+}
+
+/// Verify that all built-in logical type keywords (`date`, `time_ms`,
+/// `timestamp_ms`, `local_timestamp_ms`, `uuid`) and `decimal(p, s)` produce
+/// the correct `logicalType` key in JSON output.
+#[test]
+fn test_builtin_logical_types_propagate_to_json() {
+    let input = r#"
+        @namespace("test")
+        protocol LogicalTypes {
+            record Event {
+                date created_date;
+                time_ms created_time;
+                timestamp_ms created_timestamp;
+                local_timestamp_ms local_created;
+                uuid event_id;
+                decimal(10, 2) amount;
+            }
+        }
+    "#;
+
+    let json = parse_inline_to_json(input);
+    let types = json["types"].as_array().expect("missing types array");
+    assert_eq!(types.len(), 1, "expected exactly one record type");
+
+    let fields = types[0]["fields"]
+        .as_array()
+        .expect("Event record should have fields");
+    assert_eq!(fields.len(), 6, "Event should have 6 fields");
+
+    // date -> {"type": "int", "logicalType": "date"}
+    let created_date = &fields[0];
+    assert_eq!(created_date["name"], "created_date");
+    assert_eq!(created_date["type"]["type"], "int");
+    assert_eq!(created_date["type"]["logicalType"], "date");
+
+    // time_ms -> {"type": "int", "logicalType": "time-millis"}
+    let created_time = &fields[1];
+    assert_eq!(created_time["name"], "created_time");
+    assert_eq!(created_time["type"]["type"], "int");
+    assert_eq!(created_time["type"]["logicalType"], "time-millis");
+
+    // timestamp_ms -> {"type": "long", "logicalType": "timestamp-millis"}
+    let created_timestamp = &fields[2];
+    assert_eq!(created_timestamp["name"], "created_timestamp");
+    assert_eq!(created_timestamp["type"]["type"], "long");
+    assert_eq!(created_timestamp["type"]["logicalType"], "timestamp-millis");
+
+    // local_timestamp_ms -> {"type": "long", "logicalType": "local-timestamp-millis"}
+    let local_created = &fields[3];
+    assert_eq!(local_created["name"], "local_created");
+    assert_eq!(local_created["type"]["type"], "long");
+    assert_eq!(local_created["type"]["logicalType"], "local-timestamp-millis");
+
+    // uuid -> {"type": "string", "logicalType": "uuid"}
+    let event_id = &fields[4];
+    assert_eq!(event_id["name"], "event_id");
+    assert_eq!(event_id["type"]["type"], "string");
+    assert_eq!(event_id["type"]["logicalType"], "uuid");
+
+    // decimal(10, 2) -> {"type": "bytes", "logicalType": "decimal", "precision": 10, "scale": 2}
+    let amount = &fields[5];
+    assert_eq!(amount["name"], "amount");
+    assert_eq!(amount["type"]["type"], "bytes");
+    assert_eq!(amount["type"]["logicalType"], "decimal");
+    assert_eq!(amount["type"]["precision"], 10);
+    assert_eq!(amount["type"]["scale"], 2);
+}
+
+/// Verify that custom/user-defined logical types via `@logicalType("...")`
+/// annotations are propagated as-is to JSON output. The annotation becomes a
+/// property on the base type, producing e.g.
+/// `{"type": "long", "logicalType": "timestamp-micros"}`.
+#[test]
+fn test_custom_logical_type_annotation_propagates_to_json() {
+    let input = r#"
+        @namespace("test")
+        protocol CustomLogical {
+            record Measurements {
+                @logicalType("timestamp-micros") long precise_time;
+                @logicalType("custom-type") bytes payload;
+                @logicalType("temperature-celsius") double temp;
+            }
+        }
+    "#;
+
+    let json = parse_inline_to_json(input);
+    let types = json["types"].as_array().expect("missing types array");
+    let fields = types[0]["fields"]
+        .as_array()
+        .expect("Measurements record should have fields");
+    assert_eq!(fields.len(), 3, "Measurements should have 3 fields");
+
+    // @logicalType("timestamp-micros") long -> {"type": "long", "logicalType": "timestamp-micros"}
+    let precise_time = &fields[0];
+    assert_eq!(precise_time["name"], "precise_time");
+    assert_eq!(precise_time["type"]["type"], "long");
+    assert_eq!(precise_time["type"]["logicalType"], "timestamp-micros");
+
+    // @logicalType("custom-type") bytes -> {"type": "bytes", "logicalType": "custom-type"}
+    let payload = &fields[1];
+    assert_eq!(payload["name"], "payload");
+    assert_eq!(payload["type"]["type"], "bytes");
+    assert_eq!(payload["type"]["logicalType"], "custom-type");
+
+    // @logicalType("temperature-celsius") double -> {"type": "double", "logicalType": "temperature-celsius"}
+    let temp = &fields[2];
+    assert_eq!(temp["name"], "temp");
+    assert_eq!(temp["type"]["type"], "double");
+    assert_eq!(temp["type"]["logicalType"], "temperature-celsius");
+}
+
+/// Verify that `@logicalType` combined with other custom annotations preserves
+/// all properties in JSON output. This exercises the interaction between
+/// `@logicalType` and additional annotations like `@precision`, `@scale`, etc.
+#[test]
+fn test_custom_logical_type_with_additional_annotations() {
+    let input = r#"
+        @namespace("test")
+        protocol AnnotatedLogical {
+            record Payment {
+                @logicalType("decimal") @precision(6) @scale(2) bytes allowance;
+                @logicalType("fixed-size-string") @minLength(1) @maxLength(50) string bounded;
+            }
+        }
+    "#;
+
+    let json = parse_inline_to_json(input);
+    let types = json["types"].as_array().expect("missing types array");
+    let fields = types[0]["fields"]
+        .as_array()
+        .expect("Payment record should have fields");
+    assert_eq!(fields.len(), 2, "Payment should have 2 fields");
+
+    // @logicalType("decimal") @precision(6) @scale(2) bytes
+    // -> {"type": "bytes", "logicalType": "decimal", "precision": 6, "scale": 2}
+    let allowance = &fields[0];
+    assert_eq!(allowance["name"], "allowance");
+    assert_eq!(allowance["type"]["type"], "bytes");
+    assert_eq!(allowance["type"]["logicalType"], "decimal");
+    assert_eq!(allowance["type"]["precision"], 6);
+    assert_eq!(allowance["type"]["scale"], 2);
+
+    // @logicalType("fixed-size-string") @minLength(1) @maxLength(50) string
+    // -> {"type": "string", "logicalType": "fixed-size-string", "minLength": 1, "maxLength": 50}
+    let bounded = &fields[1];
+    assert_eq!(bounded["name"], "bounded");
+    assert_eq!(bounded["type"]["type"], "string");
+    assert_eq!(bounded["type"]["logicalType"], "fixed-size-string");
+    assert_eq!(bounded["type"]["minLength"], 1);
+    assert_eq!(bounded["type"]["maxLength"], 50);
+}
+
+/// Verify that built-in logical type keywords can carry additional custom
+/// annotations from the `fullType` position. For example, `@version("2") date`
+/// should produce `{"type": "int", "logicalType": "date", "version": "2"}`.
+///
+/// Annotations in the `fullType` position (before the type keyword) become
+/// properties on the type's schema object, because `fullType` uses `BARE_PROPS`
+/// where no annotation names are intercepted as special.
+#[test]
+fn test_builtin_logical_type_with_custom_annotation() {
+    let input = r#"
+        @namespace("test")
+        protocol AnnotatedBuiltin {
+            record Annotated {
+                @version("2") date versioned_date;
+                @source("external") timestamp_ms annotated_ts;
+            }
+        }
+    "#;
+
+    let json = parse_inline_to_json(input);
+    let types = json["types"].as_array().expect("missing types array");
+    let fields = types[0]["fields"]
+        .as_array()
+        .expect("Annotated record should have fields");
+
+    // @version("2") date -> {"type": "int", "logicalType": "date", "version": "2"}
+    let versioned_date = &fields[0];
+    assert_eq!(versioned_date["name"], "versioned_date");
+    assert_eq!(versioned_date["type"]["type"], "int");
+    assert_eq!(versioned_date["type"]["logicalType"], "date");
+    assert_eq!(versioned_date["type"]["version"], "2");
+
+    // @source("external") timestamp_ms -> {"type": "long", "logicalType": "timestamp-millis", "source": "external"}
+    let annotated_ts = &fields[1];
+    assert_eq!(annotated_ts["name"], "annotated_ts");
+    assert_eq!(annotated_ts["type"]["type"], "long");
+    assert_eq!(annotated_ts["type"]["logicalType"], "timestamp-millis");
+    assert_eq!(annotated_ts["type"]["source"], "external");
+}
