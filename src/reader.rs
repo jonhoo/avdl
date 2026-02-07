@@ -17,6 +17,7 @@
 // plain recursive functions that return values. This is simpler and more
 // idiomatic Rust.
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use antlr4rust::common_token_stream::CommonTokenStream;
@@ -569,9 +570,25 @@ fn walk_record<'input>(
         .ok_or_else(|| make_diagnostic(src, ctx, "missing record body"))?;
 
     let mut fields = Vec::new();
+    let mut seen_field_names: HashSet<String> = HashSet::new();
     for field_ctx in body.fieldDeclaration_all() {
         let mut field_fields =
             walk_field_declaration(&field_ctx, token_stream, src, namespace)?;
+        for field in &field_fields {
+            if !seen_field_names.insert(field.name.clone()) {
+                // Restore namespace before returning error.
+                *namespace = saved_namespace;
+                return Err(make_diagnostic(
+                    src,
+                    &*field_ctx,
+                    format!(
+                        "duplicate field '{}' in record '{}'",
+                        field.name, record_name
+                    ),
+                )
+                .into());
+            }
+        }
         fields.append(&mut field_fields);
     }
 
@@ -699,11 +716,21 @@ fn walk_enum<'input>(
         .into());
     }
 
-    // Collect enum symbols.
+    // Collect enum symbols, rejecting duplicates.
     let mut symbols = Vec::new();
+    let mut seen_symbols: HashSet<String> = HashSet::new();
     for sym_ctx in ctx.enumSymbol_all() {
         if let Some(sym_name_ctx) = sym_ctx.identifier() {
-            symbols.push(identifier_text(&sym_name_ctx));
+            let sym_name = identifier_text(&sym_name_ctx);
+            if !seen_symbols.insert(sym_name.clone()) {
+                return Err(make_diagnostic(
+                    src,
+                    &*sym_ctx,
+                    format!("duplicate enum symbol: {sym_name}"),
+                )
+                .into());
+            }
+            symbols.push(sym_name);
         }
     }
 
@@ -1047,6 +1074,7 @@ fn walk_message<'input>(
 
     // Walk formal parameters.
     let mut request_fields = Vec::new();
+    let mut seen_param_names: HashSet<String> = HashSet::new();
     for param_ctx in ctx.formalParameter_all() {
         let param_doc = extract_doc_from_context(&*param_ctx, token_stream);
 
@@ -1060,6 +1088,17 @@ fn walk_message<'input>(
             .ok_or_else(|| make_diagnostic(src, &*param_ctx, "missing parameter variable"))?;
         let field =
             walk_variable(&var_ctx, &param_type, &param_doc, token_stream, src, namespace)?;
+        if !seen_param_names.insert(field.name.clone()) {
+            return Err(make_diagnostic(
+                src,
+                &*param_ctx,
+                format!(
+                    "duplicate parameter '{}' in message '{}'",
+                    field.name, message_name
+                ),
+            )
+            .into());
+        }
         request_fields.push(field);
     }
 
@@ -1446,24 +1485,18 @@ fn extract_name(identifier: &str) -> String {
 /// 3. The enclosing namespace (inherited from context -- not passed here,
 ///    the caller should fall back to the enclosing namespace if this returns None).
 fn compute_namespace(identifier: &str, explicit_namespace: &Option<String>) -> Option<String> {
-    if let Some(ns) = explicit_namespace {
-        if ns.is_empty() {
-            return None;
-        }
-        return Some(ns.clone());
+    // Java priority: dots in the identifier always take precedence over
+    // an explicit `@namespace` annotation. Only when the identifier has
+    // no dots do we fall back to `@namespace`.
+    if let Some(pos) = identifier.rfind('.') {
+        let ns = &identifier[..pos];
+        return if ns.is_empty() { None } else { Some(ns.to_string()) };
     }
 
-    match identifier.rfind('.') {
-        Some(pos) => {
-            let ns = &identifier[..pos];
-            if ns.is_empty() {
-                None
-            } else {
-                Some(ns.to_string())
-            }
-        }
-        None => None,
-    }
+    explicit_namespace
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .cloned()
 }
 
 /// Check whether a schema is a type reference (a bare name referring to a

@@ -732,6 +732,91 @@ fn test_reserved_type_name_rejected() {
     );
 }
 
+/// Records must not contain duplicate field names. The Java Schema constructor
+/// rejects duplicates with "Duplicate field X in record Y".
+#[test]
+fn test_duplicate_field_name_rejected() {
+    let input = r#"
+        @namespace("test")
+        protocol P {
+            record R {
+                string name;
+                int name;
+            }
+        }
+    "#;
+
+    let result = parse_idl(input);
+    assert!(
+        result.is_err(),
+        "duplicate field names should be rejected"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("duplicate field 'name'"),
+        "error should mention duplicate field, got: {err_msg}"
+    );
+}
+
+/// Enum declarations must not contain duplicate symbols. The Java Schema
+/// constructor rejects duplicates with "Duplicate enum symbol: X".
+#[test]
+fn test_duplicate_enum_symbol_rejected() {
+    let input = r#"
+        @namespace("test")
+        protocol P {
+            enum Color { RED, GREEN, BLUE, RED }
+        }
+    "#;
+
+    let result = parse_idl(input);
+    assert!(
+        result.is_err(),
+        "duplicate enum symbols should be rejected"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("duplicate enum symbol: RED"),
+        "error should mention duplicate symbol, got: {err_msg}"
+    );
+}
+
+/// When a named type's identifier contains dots (e.g., `com.example.Foo`),
+/// the dot-derived namespace takes priority over an explicit `@namespace`
+/// annotation, matching Java's `IdlReader.namespace()` behavior.
+#[test]
+fn test_dotted_identifier_namespace_priority() {
+    let input = r#"
+        @namespace("foo")
+        protocol P {
+            @namespace("bar") record com.example.MyRecord {
+                int x;
+            }
+        }
+    "#;
+
+    let (idl_file, decl_items) = parse_idl(input).expect("should parse successfully");
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+    for item in &decl_items {
+        if let DeclItem::Type(schema) = item {
+            let _ = registry.register(schema.clone());
+        }
+    }
+    let json = idl_file_to_json(idl_file, registry);
+    let types = json.get("types").expect("missing types");
+    let record = &types[0];
+    assert_eq!(
+        record.get("namespace").and_then(|v| v.as_str()),
+        Some("com.example"),
+        "dots in identifier should take priority over @namespace annotation"
+    );
+    assert_eq!(
+        record.get("name").and_then(|v| v.as_str()),
+        Some("MyRecord"),
+        "name should be extracted after the last dot"
+    );
+}
+
 // ==============================================================================
 // Extra Directory Tests
 // ==============================================================================
