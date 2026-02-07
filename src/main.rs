@@ -124,18 +124,21 @@ fn run_idl(
         .map_err(|e| IdlError::Other(format!("serialize JSON: {e}")))
         .map_err(miette::Report::new)?;
 
-    write_output(&output, &json_str)?;
-
-    // Validate that all type references resolved. This is a non-fatal warning
-    // check -- the output is still written, but unresolved references indicate
-    // missing imports or forward reference errors.
+    // Validate that all type references resolved before writing output.
+    // Unresolved references indicate missing imports, undefined types, or
+    // cross-namespace references that need fully-qualified names. Java's
+    // IdlReader treats these as fatal errors ("Undefined name/schema"),
+    // so we do the same.
     let unresolved = registry.validate_references();
     if !unresolved.is_empty() {
-        eprintln!(
-            "warning: unresolved type references: {}",
+        return Err(IdlError::Other(format!(
+            "Undefined name: {}",
             unresolved.join(", ")
-        );
+        )))
+        .map_err(miette::Report::new);
     }
+
+    write_output(&output, &json_str)?;
 
     Ok(())
 }
@@ -204,10 +207,11 @@ fn run_idl2schemata(
     // produce bare name strings in the output `.avsc` files.
     let unresolved = registry.validate_references();
     if !unresolved.is_empty() {
-        eprintln!(
-            "warning: unresolved type references: {}",
+        return Err(IdlError::Other(format!(
+            "Undefined name: {}",
             unresolved.join(", ")
-        );
+        )))
+        .map_err(miette::Report::new);
     }
 
     Ok(())
