@@ -201,3 +201,14 @@ After each wave merge:
   git submodule Java source may be a different version than the
   avro-tools JAR. Always validate behavior against the JAR, not
   just the source code.
+- **Agents may re-scope when investigation reveals the real bug is
+  elsewhere**: Agent B (Wave 1, iteration 2) was assigned
+  cross-namespace resolution but found it was already correct; it
+  instead fixed a different issue (unresolved refs as warnings instead
+  of errors). The parent should recognize and credit this correctly
+  when closing issues.
+- **`git checkout --ours` + manual apply for merge conflicts**: When
+  merging a branch that conflicts in a file heavily modified by prior
+  merges (e.g., `reader.rs` test section), take the HEAD version and
+  manually apply the branch's additions. This is faster and safer
+  than resolving inline conflict markers in large files.
