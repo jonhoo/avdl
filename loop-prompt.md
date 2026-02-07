@@ -44,6 +44,10 @@ Each agent should pursue its own line of investigation autonomously. If it finds
 - **Check existing issues before filing** — read the contents of each
   file in `issues/` to avoid filing duplicates. Also check SESSION.md
   for previously investigated items.
+- **Recommend tooling improvements**: If a helper script
+  (`scripts/compare-golden.sh`, `scripts/compare-adhoc.sh`, etc.)
+  is insufficient or could be improved, file an issue describing the
+  shortcoming rather than writing ad-hoc workarounds.
 
 **Comparison commands:** See the "Comparing against the Java tool"
 section in CLAUDE.md, or use `scripts/compare-golden.sh`.

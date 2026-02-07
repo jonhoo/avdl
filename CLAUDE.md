@@ -111,6 +111,28 @@ cargo run -- idl tmp/test-*.avdl
 echo 'protocol Test { ... }' | cargo run -- idl
 ```
 
+### Sandbox pipe workaround
+
+The Claude Code sandbox has a [known issue][cc-16305] where data is
+silently dropped in shell pipes between commands. Appending a trailing
+`;` to the command fixes this:
+
+```sh
+# Broken in sandbox (downstream receives no input):
+diff <(jq -S . a.json) <(jq -S . b.json)
+
+# Fixed — append `;`:
+diff <(jq -S . a.json) <(jq -S . b.json);
+echo "abc" | grep "abc";
+```
+
+This affects pipes (`|`), process substitution (`<(...)`), and any
+command that connects stdout of one process to stdin of another.
+Direct command invocations without piping (e.g., `cargo run`,
+`java -jar`, `scripts/compare-golden.sh`) work fine under sandbox.
+
+[cc-16305]: https://github.com/anthropics/claude-code/issues/16305
+
 ### Regenerating the ANTLR parser
 
 The generated parser/lexer in `src/generated/` is checked in so that
