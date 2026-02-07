@@ -1,3 +1,9 @@
+// Suppress false-positive `unused_assignments` warnings from miette's derive
+// macros. The `#[source_code]`, `#[label]`, and field attributes cause the
+// compiler to think struct fields are written but never read, because it
+// doesn't trace through the generated `Diagnostic` impl.
+#![allow(unused_assignments)]
+
 use miette::{Diagnostic, NamedSource, SourceSpan};
 use thiserror::Error;
 

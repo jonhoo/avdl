@@ -489,24 +489,28 @@ fn parse_idl2schemata(
         }
     }
 
-    // Extract the protocol namespace for reference shortening.
-    let namespace = match &idl_file {
+    // Protocol namespace is intentionally not used for idl2schemata output:
+    // each schema is standalone with no enclosing namespace context,
+    // matching Java's `Schema.toString(true)`.
+    let _namespace = match &idl_file {
         IdlFile::ProtocolFile(protocol) => protocol.namespace.clone(),
         _ => None,
     };
 
-    // Build a lookup table and serialize each named schema individually,
-    // sharing `known_names` across iterations to match the behavior of
-    // `run_idl2schemata` in main.rs.
+    // Build a lookup table and serialize each named schema individually.
+    // Each schema gets its own fresh `known_names` set and no enclosing
+    // namespace context, matching `run_idl2schemata` in main.rs and Java's
+    // `Schema.toString(true)` which creates a fresh `HashSet` per call.
+    // This ensures each schema is self-contained with all referenced types
+    // inlined on first occurrence.
     let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
     let all_lookup = build_lookup(&registry_schemas, None);
-    let mut known_names = IndexSet::new();
     let mut result = indexmap::IndexMap::new();
 
     for schema in &registry_schemas {
         if let Some(simple_name) = schema.name() {
-            let json_value =
-                schema_to_json(schema, &mut known_names, namespace.as_deref(), &all_lookup);
+            let mut known_names = IndexSet::new();
+            let json_value = schema_to_json(schema, &mut known_names, None, &all_lookup);
             result.insert(simple_name.to_string(), json_value);
         }
     }
@@ -538,18 +542,21 @@ fn test_idl2schemata_echo() {
     assert_eq!(ping_fields[0]["name"], "timestamp");
     assert_eq!(ping_fields[1]["name"], "text");
 
-    // Verify Pong schema structure. Since Ping was already serialized, the
-    // `ping` field's type should be the bare name "Ping", not the full record.
+    // Verify Pong schema structure. Each schema is serialized independently
+    // with fresh known_names, so Ping is inlined as a full record definition
+    // inside Pong (making each .avsc self-contained).
     let pong = &schemata["Pong"];
     assert_eq!(pong["type"], "record");
     assert_eq!(pong["name"], "Pong");
     let pong_fields = pong["fields"].as_array().expect("Pong should have fields");
     let ping_field = &pong_fields[1];
     assert_eq!(ping_field["name"], "ping");
+    let ping_type = &ping_field["type"];
     assert_eq!(
-        ping_field["type"], "Ping",
-        "second occurrence of Ping should be a bare name reference"
+        ping_type["type"], "record",
+        "Ping should be inlined as a full record in Pong's standalone schema"
     );
+    assert_eq!(ping_type["name"], "Ping");
 }
 
 /// Test `idl2schemata` for `simple.avdl`.
@@ -587,15 +594,13 @@ fn test_idl2schemata_simple() {
     let fields = test_record["fields"].as_array().expect("TestRecord should have fields");
     assert!(fields.len() > 5, "TestRecord should have many fields");
 
-    // MD5: fixed type with size 16. Since it was already inlined inside
-    // TestRecord's `hash` field, the standalone serialization should be a
-    // bare string reference.
+    // MD5: fixed type with size 16. Each schema is serialized independently
+    // with fresh known_names, so MD5 is a full inline definition even though
+    // it also appears inside TestRecord.
     let md5 = &schemata["MD5"];
-    assert_eq!(
-        *md5,
-        serde_json::Value::String("MD5".to_string()),
-        "MD5 was already inlined in TestRecord, so its standalone entry should be a bare name"
-    );
+    assert_eq!(md5["type"], "fixed");
+    assert_eq!(md5["name"], "MD5");
+    assert_eq!(md5["size"], 16);
 
     // TestError: error record.
     let test_error = &schemata["TestError"];
