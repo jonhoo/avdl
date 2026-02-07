@@ -317,6 +317,11 @@ Issues live in `issues/`, one file per issue. Filename format:
 use numeric prefixes instead. Check existing issues before filing to
 avoid duplicates.
 
+Issues caused by bugs in the upstream Apache Avro project (e.g.,
+stale golden files, Java tool crashes) live in `upstream-issues/`
+instead. These are tracked separately since they cannot be fixed in
+this project.
+
 Each issue file should include:
 - **Symptom**: what's wrong or missing
 - **Root cause**: why it happens (if known)
