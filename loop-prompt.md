@@ -39,7 +39,8 @@ Each agent should pursue its own line of investigation autonomously. If it finds
 - Avoid modifying `src/` to prevent agents stepping on each others'
   toes — prefer filing issues and using `tmp/` + `examples/`
 - Do not update `SESSION.md`, that will be done by the orchestrating
-  agent
+  agent. Instead, anything you an agent _would_ have put in `SESSION.md`
+  should be reported to the orchestrating agent.
 - **Check existing issues before filing** — read the contents of each
   file in `issues/` to avoid filing duplicates. Also check SESSION.md
   for previously investigated items.
@@ -104,10 +105,11 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
       `run_in_background` cannot perform interactive operations — `git
       commit`, writing to `/tmp`, and using skills (like
       `commit-writer`) are all auto-denied because permission prompts
-      cannot reach the user. Blocking (non-background) sub-agents CAN
-      do these things since permission prompts are forwarded to the
-      user. However, the parent agent must still prepare the worktree
-      (git checkout) before launching either kind of sub-agent.
+      cannot reach the user. Blocking (non-background) sub-agents should
+      be preferred as they CAN do these things since permission prompts
+      are forwarded to the user. However, the parent agent must still
+      prepare the worktree (git checkout) before launching either kind
+      of sub-agent.
    c. After each sub-agent completes, the **parent agent**:
       - Checks the worktree's `SESSION.md` for observations the
         sub-agent recorded. Incorporate relevant findings into `main`'s
@@ -194,13 +196,3 @@ After each wave merge:
   git submodule Java source may be a different version than the
   avro-tools JAR. Always validate behavior against the JAR, not
   just the source code.
-- **Worktree SESSION.md files**: Sub-agents may record observations in
-  their worktree's `SESSION.md`. The parent agent must check each
-  worktree's `SESSION.md` after the sub-agent completes and
-  incorporate findings into `main`'s `SESSION.md` before clearing the
-  worktree copy. Forgetting this loses information.
-- **`cargo` needs unsandboxed execution**: `CARGO_TARGET_DIR` points
-  outside the sandbox write allowlist, so `cargo build`/`test`/`run`
-  commands require `dangerouslyDisableSandbox: true`. The
-  `compare-golden.sh` script invokes `cargo run`, which is why it
-  also needs unsandboxed execution.
