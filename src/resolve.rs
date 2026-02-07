@@ -18,6 +18,65 @@ use indexmap::IndexMap;
 
 use crate::model::schema::AvroSchema;
 
+// ==============================================================================
+// Avro Name Validation
+// ==============================================================================
+//
+// The Avro specification requires that names match `[A-Za-z_][A-Za-z0-9_]*`.
+// The ANTLR grammar's `IdentifierToken` is more permissive -- it allows dashes
+// and dots between identifier parts. Java's `IdlReader.validateName` enforces
+// the pattern `[_\p{L}][_\p{LD}]*` (Unicode-aware), rejecting dashed
+// identifiers like `my-record` while accepting Unicode letters/digits.
+// We replicate that validation here using Rust's Unicode-aware `char` methods
+// rather than the `regex` crate.
+
+/// Check whether a single name segment is a valid Avro name.
+///
+/// The Avro specification defines names as `[A-Za-z_][A-Za-z0-9_]*`, but the
+/// Java reference implementation (`IdlReader.VALID_NAME`) uses the Unicode-aware
+/// pattern `[_\p{L}][_\p{LD}]*`, which accepts Unicode letters and digits.
+/// We match Java's behavior so that IDL files with Unicode identifiers (like
+/// Cyrillic or CJK names) work correctly.
+fn is_valid_avro_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        // First character must be a Unicode letter or underscore.
+        Some(c) if c.is_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    // Remaining characters must be Unicode letters, digits, or underscores.
+    chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Validate that a schema's name and namespace segments are valid Avro names.
+///
+/// For namespaces, each dot-separated segment must independently satisfy the
+/// name pattern. Returns `Ok(())` if valid, or an error message describing
+/// which part is invalid.
+fn validate_schema_name(name: &str, namespace: &Option<String>) -> Result<(), String> {
+    if !is_valid_avro_name(name) {
+        return Err(format!(
+            "invalid Avro name: `{name}` \
+             (names must start with a letter or underscore, \
+             followed by letters, digits, or underscores)"
+        ));
+    }
+    if let Some(ns) = namespace {
+        if !ns.is_empty() {
+            for segment in ns.split('.') {
+                if !is_valid_avro_name(segment) {
+                    return Err(format!(
+                        "invalid Avro namespace segment: `{segment}` in `{ns}` \
+                         (each segment must start with a letter or underscore, \
+                         followed by letters, digits, or underscores)"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Registry of named Avro types, tracking definition order for output.
 ///
 /// Named types (record, enum, fixed) are registered as they're parsed.
@@ -36,11 +95,30 @@ impl SchemaRegistry {
 
     /// Register a named schema. The schema must have a full name (i.e., be a
     /// record, enum, or fixed type). Returns an error if the name is already
-    /// registered or if the schema is not a named type.
+    /// registered, if the schema is not a named type, or if the name/namespace
+    /// contains characters invalid per the Avro specification.
     pub fn register(&mut self, schema: AvroSchema) -> Result<(), String> {
         let full_name = schema
             .full_name()
             .ok_or_else(|| "cannot register non-named schema".to_string())?;
+
+        // Validate that the name and namespace segments conform to the Avro
+        // spec's name pattern before accepting the schema. This catches names
+        // like `my-record` that the ANTLR grammar permits but the spec forbids.
+        let (name, namespace) = match &schema {
+            AvroSchema::Record {
+                name, namespace, ..
+            }
+            | AvroSchema::Enum {
+                name, namespace, ..
+            }
+            | AvroSchema::Fixed {
+                name, namespace, ..
+            } => (name.as_str(), namespace),
+            _ => unreachable!("full_name() returned Some for a non-named type"),
+        };
+        validate_schema_name(name, namespace)?;
+
         if self.schemas.contains_key(&full_name) {
             return Err(format!("duplicate schema name: {full_name}"));
         }
@@ -409,5 +487,115 @@ mod tests {
         let result = reg.register(AvroSchema::Int);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("non-named"));
+    }
+
+    // =========================================================================
+    // Name validation tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_valid_avro_name_accepts_valid_names() {
+        assert!(is_valid_avro_name("Foo"));
+        assert!(is_valid_avro_name("_private"));
+        assert!(is_valid_avro_name("MyRecord123"));
+        assert!(is_valid_avro_name("A"));
+        assert!(is_valid_avro_name("_"));
+        assert!(is_valid_avro_name("__double_underscore__"));
+    }
+
+    #[test]
+    fn test_is_valid_avro_name_rejects_dashes() {
+        assert!(!is_valid_avro_name("my-record"));
+        assert!(!is_valid_avro_name("foo-bar-baz"));
+    }
+
+    #[test]
+    fn test_is_valid_avro_name_rejects_leading_digit() {
+        assert!(!is_valid_avro_name("1BadName"));
+        assert!(!is_valid_avro_name("0x00"));
+    }
+
+    #[test]
+    fn test_is_valid_avro_name_rejects_empty_and_special_chars() {
+        assert!(!is_valid_avro_name(""));
+        assert!(!is_valid_avro_name("has space"));
+        assert!(!is_valid_avro_name("has.dot"));
+        assert!(!is_valid_avro_name("has@at"));
+    }
+
+    #[test]
+    fn test_is_valid_avro_name_accepts_unicode_letters() {
+        // Java's VALID_NAME uses `\p{L}` and `\p{LD}`, which accepts Unicode
+        // letters and digits. The golden test suite includes Cyrillic and CJK names.
+        assert!(is_valid_avro_name("Структура"));
+        assert!(is_valid_avro_name("文字列"));
+        assert!(is_valid_avro_name("Протоколы"));
+    }
+
+    #[test]
+    fn test_register_rejects_dashed_record_name() {
+        let mut reg = SchemaRegistry::new();
+        let result = reg.register(AvroSchema::Record {
+            name: "my-record".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        });
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("invalid Avro name"), "error was: {err}");
+        assert!(err.contains("my-record"), "error was: {err}");
+    }
+
+    #[test]
+    fn test_register_rejects_dashed_enum_name() {
+        let mut reg = SchemaRegistry::new();
+        let result = reg.register(AvroSchema::Enum {
+            name: "my-enum".to_string(),
+            namespace: None,
+            doc: None,
+            symbols: vec!["A".to_string()],
+            default: None,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        });
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid Avro name"));
+    }
+
+    #[test]
+    fn test_register_rejects_invalid_namespace_segment() {
+        let mut reg = SchemaRegistry::new();
+        let result = reg.register(AvroSchema::Record {
+            name: "ValidName".to_string(),
+            namespace: Some("org.bad-segment.example".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        });
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("invalid Avro namespace segment"), "error was: {err}");
+        assert!(err.contains("bad-segment"), "error was: {err}");
+    }
+
+    #[test]
+    fn test_register_accepts_valid_namespaced_name() {
+        let mut reg = SchemaRegistry::new();
+        let result = reg.register(AvroSchema::Record {
+            name: "MyRecord".to_string(),
+            namespace: Some("org.apache.avro".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        });
+        assert!(result.is_ok());
     }
 }
