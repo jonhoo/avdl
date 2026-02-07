@@ -1581,10 +1581,13 @@ fn parse_integer_literal(text: &str) -> Result<Value> {
 
 /// Parse a floating point literal. NaN and Infinity become `Value::String`
 /// because they are not valid JSON numbers.
+///
+/// The ANTLR grammar's `FloatingPointLiteral` rule allows Java-style type
+/// suffixes (`f`, `F`, `d`, `D`) and hexadecimal floating-point literals
+/// (`0x1.0p10`). Rust's `f64::from_str` handles neither, so we strip suffixes
+/// and parse hex floats manually before falling through to the standard path.
 fn parse_floating_point_literal(text: &str) -> Result<Value> {
-    let val: f64 = text.parse().map_err(|e| {
-        IdlError::Other(format!("invalid floating point literal '{text}': {e}"))
-    })?;
+    let val: f64 = parse_float_text(text)?;
 
     if val.is_nan() {
         Ok(Value::String("NaN".to_string()))
@@ -1599,6 +1602,127 @@ fn parse_floating_point_literal(text: &str) -> Result<Value> {
             .map(Value::Number)
             .unwrap_or_else(|| Value::String(text.to_string())))
     }
+}
+
+/// Inner parsing logic for floating-point literal text. Handles:
+/// - Optional leading sign (`+`/`-`)
+/// - NaN and Infinity literals
+/// - Java-style type suffixes (`f`/`F`/`d`/`D`), stripped before parsing
+/// - Hex floating-point literals (`0x1.8p10` = 1.5 * 2^10 = 1536.0)
+/// - Standard decimal floats and scientific notation
+fn parse_float_text(text: &str) -> Result<f64> {
+    // NaN and Infinity are handled directly — they never carry suffixes
+    // in the grammar.
+    if text == "NaN" || text == "+NaN" {
+        return Ok(f64::NAN);
+    }
+    if text == "-NaN" {
+        return Ok(-f64::NAN);
+    }
+    if text == "Infinity" || text == "+Infinity" {
+        return Ok(f64::INFINITY);
+    }
+    if text == "-Infinity" {
+        return Ok(f64::NEG_INFINITY);
+    }
+
+    // Strip trailing Java type suffix (f/F/d/D). These are permitted by
+    // the ANTLR grammar but have no semantic effect — all values are
+    // treated as f64, matching Java's `Double.parseDouble` behavior.
+    let number = if text.ends_with(|c: char| matches!(c, 'f' | 'F' | 'd' | 'D')) {
+        &text[..text.len() - 1]
+    } else {
+        text
+    };
+
+    // Detect hex floating-point literals by looking for 0x/0X prefix
+    // (after an optional sign). The format from the grammar is:
+    //   [+-]? '0' [xX] <hex-mantissa> [pP] [+-]? <decimal-exponent>
+    let (sign, unsigned) = match number.strip_prefix('-') {
+        Some(rest) => (-1.0_f64, rest),
+        None => (1.0_f64, number.strip_prefix('+').unwrap_or(number)),
+    };
+
+    if unsigned.starts_with("0x") || unsigned.starts_with("0X") {
+        let hex_body = &unsigned[2..];
+        let mantissa = parse_hex_float_mantissa_and_exponent(hex_body, text)?;
+        return Ok(sign * mantissa);
+    }
+
+    // Standard decimal float — Rust's f64::from_str handles this directly.
+    number.parse::<f64>().map_err(|e| {
+        IdlError::Other(format!("invalid floating point literal '{text}': {e}"))
+    })
+}
+
+/// Parse the body of a hex floating-point literal (everything after the `0x`
+/// prefix). The format is `<hex-mantissa> p <signed-decimal-exponent>`, where
+/// the hex mantissa can contain a `.` separating integer and fractional hex
+/// digits. The value is `mantissa * 2^exponent`.
+///
+/// Examples:
+/// - `1.0p10`  -> 1.0 * 2^10  = 1024.0
+/// - `1.8p1`   -> 1.5 * 2^1   = 3.0
+/// - `Ap3`     -> 10.0 * 2^3  = 80.0
+/// - `.8p1`    -> 0.5 * 2^1   = 1.0
+/// - `1.p0`    -> 1.0 * 2^0   = 1.0
+fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Result<f64> {
+    // Split on the binary exponent marker (p/P). The grammar guarantees
+    // exactly one is present.
+    let (mantissa_str, exp_str) = hex_body
+        .split_once(|c: char| c == 'p' || c == 'P')
+        .ok_or_else(|| {
+            IdlError::Other(format!(
+                "invalid hex float literal '{original}': missing 'p'/'P' exponent"
+            ))
+        })?;
+
+    // Parse the binary exponent (decimal integer, possibly signed).
+    let exponent: i32 = exp_str.parse().map_err(|e| {
+        IdlError::Other(format!(
+            "invalid hex float exponent in '{original}': {e}"
+        ))
+    })?;
+
+    // Parse the hex mantissa, which may contain a '.' decimal point.
+    let mantissa = if let Some((int_part, frac_part)) = mantissa_str.split_once('.') {
+        // Integer part: each hex digit contributes its value in the
+        // corresponding hex place.
+        let int_val = if int_part.is_empty() {
+            0.0
+        } else {
+            u64::from_str_radix(int_part, 16).map_err(|e| {
+                IdlError::Other(format!(
+                    "invalid hex float mantissa in '{original}': {e}"
+                ))
+            })? as f64
+        };
+
+        // Fractional part: each hex digit after the point represents
+        // 1/16, 1/256, etc. of its value.
+        let mut frac_val = 0.0_f64;
+        let mut place = 1.0_f64 / 16.0;
+        for ch in frac_part.chars() {
+            let digit = ch.to_digit(16).ok_or_else(|| {
+                IdlError::Other(format!(
+                    "invalid hex digit '{ch}' in float literal '{original}'"
+                ))
+            })? as f64;
+            frac_val += digit * place;
+            place /= 16.0;
+        }
+
+        int_val + frac_val
+    } else {
+        // No decimal point — the mantissa is a plain hex integer.
+        u64::from_str_radix(mantissa_str, 16).map_err(|e| {
+            IdlError::Other(format!(
+                "invalid hex float mantissa in '{original}': {e}"
+            ))
+        })? as f64
+    };
+
+    Ok(mantissa * 2.0_f64.powi(exponent))
 }
 
 /// Parse an integer literal text into a u32 (for fixed size, decimal precision/scale).
@@ -2120,5 +2244,151 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_ok(), "valid protocol should be accepted, got: {:?}", result.err());
+    }
+
+    // ------------------------------------------------------------------
+    // Floating-point literal parsing (issue #d34a4c3b)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn float_decimal_no_suffix() {
+        let val = parse_float_text("3.14").expect("plain decimal");
+        assert!((val - 3.14).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_suffix_f_lowercase() {
+        // Java-style `f` suffix is stripped before parsing.
+        let val = parse_float_text("3.14f").expect("f suffix");
+        assert!((val - 3.14).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_suffix_f_uppercase() {
+        let val = parse_float_text("3.14F").expect("F suffix");
+        assert!((val - 3.14).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_suffix_d_lowercase() {
+        let val = parse_float_text("3.14d").expect("d suffix");
+        assert!((val - 3.14).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_suffix_d_uppercase() {
+        let val = parse_float_text("3.14D").expect("D suffix");
+        assert!((val - 3.14).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_scientific_with_suffix() {
+        // 1e5f = 100000.0 with float suffix stripped.
+        let val = parse_float_text("1e5f").expect("scientific with f suffix");
+        assert!((val - 1e5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_scientific_negative_exponent_with_suffix() {
+        let val = parse_float_text("1.5e-3D").expect("scientific neg exp with D suffix");
+        assert!((val - 1.5e-3).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_negative_value_with_suffix() {
+        let val = parse_float_text("-2.5f").expect("negative with f suffix");
+        assert!((val - (-2.5)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_positive_sign_with_suffix() {
+        let val = parse_float_text("+2.5d").expect("positive sign with d suffix");
+        assert!((val - 2.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_nan() {
+        assert!(parse_float_text("NaN").expect("NaN").is_nan());
+    }
+
+    #[test]
+    fn float_infinity() {
+        assert_eq!(parse_float_text("Infinity").expect("Infinity"), f64::INFINITY);
+        assert_eq!(parse_float_text("-Infinity").expect("-Infinity"), f64::NEG_INFINITY);
+    }
+
+    // ------------------------------------------------------------------
+    // Hex floating-point literals (issue #d34a4c3b)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn hex_float_basic() {
+        // 0x1.0p10 = 1.0 * 2^10 = 1024.0
+        let val = parse_float_text("0x1.0p10").expect("hex float 0x1.0p10");
+        assert!((val - 1024.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hex_float_no_fraction() {
+        // 0xAp3 = 10 * 2^3 = 80.0
+        let val = parse_float_text("0xAp3").expect("hex float 0xAp3");
+        assert!((val - 80.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hex_float_fraction_only() {
+        // 0x.8p1 = 0.5 * 2^1 = 1.0
+        let val = parse_float_text("0x.8p1").expect("hex float 0x.8p1");
+        assert!((val - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hex_float_trailing_dot() {
+        // 0x1.p0 = 1.0 * 2^0 = 1.0
+        let val = parse_float_text("0x1.p0").expect("hex float 0x1.p0");
+        assert!((val - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hex_float_negative_exponent() {
+        // 0x1.0p-3 = 1.0 * 2^-3 = 0.125
+        let val = parse_float_text("0x1.0p-3").expect("hex float 0x1.0p-3");
+        assert!((val - 0.125).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hex_float_uppercase_x_and_p() {
+        // 0X1.0P10 = 1024.0
+        let val = parse_float_text("0X1.0P10").expect("hex float 0X1.0P10");
+        assert!((val - 1024.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hex_float_with_suffix() {
+        // 0x1.0p10f — hex float with Java float suffix stripped.
+        let val = parse_float_text("0x1.0p10f").expect("hex float with f suffix");
+        assert!((val - 1024.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hex_float_negative_sign() {
+        // -0x1.0p10 = -1024.0
+        let val = parse_float_text("-0x1.0p10").expect("negative hex float");
+        assert!((val - (-1024.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hex_float_mixed_hex_digits() {
+        // 0x1.8p1 = (1 + 8/16) * 2^1 = 1.5 * 2 = 3.0
+        let val = parse_float_text("0x1.8p1").expect("hex float 0x1.8p1");
+        assert!((val - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn float_suffix_only_no_dot() {
+        // The grammar allows `Digit+ [fFdD]` (no decimal point, no exponent,
+        // just a suffix to distinguish from IntegerLiteral).
+        let val = parse_float_text("42f").expect("integer-like float with f suffix");
+        assert!((val - 42.0).abs() < f64::EPSILON);
     }
 }
