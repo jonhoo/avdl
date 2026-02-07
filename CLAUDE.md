@@ -80,6 +80,19 @@ Sub-agents should use this script instead of writing ad-hoc comparison
 scripts. If the script is insufficient, they should file an issue in
 `issues/` about the shortcoming before writing an ad-hoc script.
 
+`scripts/compare-adhoc.sh` compares Rust output against Java
+avro-tools output for arbitrary `.avdl` files written to `tmp/`.
+Use this for edge-case exploration beyond the golden test suite.
+
+```sh
+scripts/compare-adhoc.sh tmp/edge-case.avdl          # single file
+scripts/compare-adhoc.sh tmp/edge-*.avdl              # glob multiple files
+scripts/compare-adhoc.sh --idl2schemata tmp/test.avdl # idl2schemata mode
+scripts/compare-adhoc.sh --show-output tmp/test.avdl  # print JSON on diff
+scripts/compare-adhoc.sh --rust-only tmp/test.avdl    # skip Java comparison
+scripts/compare-adhoc.sh --import-dir path/ tmp/t.avdl # with import dirs
+```
+
 ### Ad-hoc testing with the CLI
 
 When testing the CLI with ad-hoc `.avdl` input, **write the input to a
