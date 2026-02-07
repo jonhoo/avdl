@@ -90,8 +90,8 @@ fn run_idl(
     output: Option<String>,
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
-    let (source, input_dir) = read_input(&input)?;
-    let (idl_file, registry) = parse_and_resolve(&source, &input_dir, import_dirs)?;
+    let (source, input_dir, input_path) = read_input(&input)?;
+    let (idl_file, registry) = parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
 
     // Serialize the parsed IDL to JSON. Protocols become .avpr, standalone
     // schemas become .avsc.
@@ -149,8 +149,8 @@ fn run_idl2schemata(
     outdir: Option<PathBuf>,
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
-    let (source, input_dir) = read_input(&input)?;
-    let (_idl_file, registry) = parse_and_resolve(&source, &input_dir, import_dirs)?;
+    let (source, input_dir, input_path) = read_input(&input)?;
+    let (_idl_file, registry) = parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
     fs::create_dir_all(&output_dir)
@@ -199,6 +199,17 @@ fn run_idl2schemata(
             .wrap_err_with(|| format!("write {}", file_path.display()))?;
     }
 
+    // Validate that all type references resolved, matching the `idl`
+    // subcommand's behavior. Without this, unresolved references silently
+    // produce bare name strings in the output `.avsc` files.
+    let unresolved = registry.validate_references();
+    if !unresolved.is_empty() {
+        eprintln!(
+            "warning: unresolved type references: {}",
+            unresolved.join(", ")
+        );
+    }
+
     Ok(())
 }
 
@@ -211,7 +222,13 @@ fn run_idl2schemata(
 /// Returns the source text and the directory containing the input file (used
 /// as the base for resolving relative imports). When reading from stdin, the
 /// current working directory is used as the import base.
-fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf)> {
+/// Read the IDL source text from a file or stdin.
+///
+/// Returns the source text, the directory containing the input file (used as
+/// the base for resolving relative imports), and the canonical path of the
+/// input file (used for import cycle detection). When reading from stdin, the
+/// canonical path is `None` since there is no file to track.
+fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf, Option<PathBuf>)> {
     let is_stdin = match input {
         None => true,
         Some(s) if s == "-" => true,
@@ -229,7 +246,7 @@ fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf)> {
             .map_err(|e| IdlError::Io { source: e })
             .map_err(miette::Report::new)
             .wrap_err("determine current directory")?;
-        Ok((source, cwd))
+        Ok((source, cwd, None))
     } else {
         let path = PathBuf::from(input.as_ref().expect("checked for None above"));
         let source = fs::read_to_string(&path)
@@ -243,7 +260,8 @@ fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf)> {
         // Canonicalize the directory so that import cycle detection works
         // correctly with canonical paths.
         let dir = dir.canonicalize().unwrap_or(dir);
-        Ok((source, dir))
+        let canonical_path = path.canonicalize().ok();
+        Ok((source, dir, canonical_path))
     }
 }
 
@@ -256,6 +274,7 @@ fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf)> {
 fn parse_and_resolve(
     source: &str,
     input_dir: &Path,
+    input_path: Option<PathBuf>,
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<(IdlFile, SchemaRegistry)> {
     let (idl_file, decl_items) =
@@ -264,6 +283,15 @@ fn parse_and_resolve(
     let mut registry = SchemaRegistry::new();
     let mut import_ctx = ImportContext::new(import_dirs);
     let mut messages = IndexMap::new();
+
+    // Mark the initial input file as "imported" before processing declaration
+    // items, so that self-imports (direct or via a chain) are detected as
+    // cycles and silently skipped. Without this, a file importing itself would
+    // cause a confusing "duplicate schema name" error. This matches Java's
+    // `IdlReader.readLocations` which includes the initial file.
+    if let Some(path) = input_path {
+        import_ctx.mark_imported(&path);
+    }
 
     // Process declaration items in source order: resolve imports when
     // encountered, register local types when encountered. This ensures the
@@ -418,7 +446,18 @@ fn write_output(output: &Option<String>, content: &str) -> miette::Result<()> {
 
     if is_stdout {
         // Write to stdout without trailing newline, matching Java behavior.
-        print!("{content}");
+        // Handle BrokenPipe gracefully: when output is piped to a command
+        // that closes early (e.g., `avdl idl file.avdl | head -1`), exit
+        // silently instead of panicking, matching Unix CLI conventions.
+        use std::io::Write;
+        if let Err(e) = write!(io::stdout(), "{content}") {
+            if e.kind() == io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(IdlError::Io { source: e })
+                .map_err(miette::Report::new)
+                .wrap_err("write to stdout");
+        }
         Ok(())
     } else {
         let path = PathBuf::from(output.as_ref().expect("checked for None above"));
