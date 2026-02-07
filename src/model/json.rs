@@ -803,8 +803,7 @@ pub fn to_string_pretty_java(value: &Value) -> serde_json::Result<String> {
     let formatter = JavaPrettyFormatter::new();
     let mut serializer = serde_json::Serializer::with_formatter(&mut writer, formatter);
     value.serialize(&mut serializer)?;
-    // Safety: serde_json only produces valid UTF-8.
-    Ok(unsafe { String::from_utf8_unchecked(writer) })
+    Ok(String::from_utf8(writer).expect("serde_json produces valid UTF-8"))
 }
 
 #[cfg(test)]

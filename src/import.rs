@@ -400,11 +400,13 @@ fn parse_fixed(
         .get("doc")
         .and_then(|d| d.as_str())
         .map(|s| s.to_string());
-    let size = obj
+    let size_u64 = obj
         .get("size")
         .and_then(|s| s.as_u64())
-        .ok_or_else(|| IdlError::Parse("fixed missing 'size'".to_string()))?
-        as u32;
+        .ok_or_else(|| IdlError::Parse("fixed missing 'size'".to_string()))?;
+    let size = u32::try_from(size_u64).map_err(|_| {
+        IdlError::Parse(format!("fixed size {size_u64} exceeds maximum ({})", u32::MAX))
+    })?;
     let aliases = extract_string_array(obj.get("aliases"));
 
     let properties = collect_extra_properties(
@@ -478,12 +480,21 @@ fn parse_annotated_primitive(
             "local-timestamp-millis" => LogicalType::LocalTimestampMillis,
             "uuid" => LogicalType::Uuid,
             "decimal" => {
-                let precision = obj
-                    .get("precision")
-                    .and_then(|p| p.as_u64())
-                    .unwrap_or(0) as u32;
-                let scale =
-                    obj.get("scale").and_then(|s| s.as_u64()).unwrap_or(0) as u32;
+                let precision_u64 =
+                    obj.get("precision").and_then(|p| p.as_u64()).unwrap_or(0);
+                if precision_u64 < 1 {
+                    return Err(IdlError::Parse(
+                        "decimal precision must be >= 1".to_string(),
+                    ));
+                }
+                let precision = u32::try_from(precision_u64).map_err(|_| {
+                    IdlError::Parse("decimal precision too large".to_string())
+                })?;
+                let scale_u64 =
+                    obj.get("scale").and_then(|s| s.as_u64()).unwrap_or(0);
+                let scale = u32::try_from(scale_u64).map_err(|_| {
+                    IdlError::Parse("decimal scale too large".to_string())
+                })?;
                 LogicalType::Decimal { precision, scale }
             }
             _ => {
