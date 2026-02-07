@@ -969,6 +969,52 @@ fn test_cross_namespace_unqualified_reference_is_unresolved() {
 }
 
 // ==============================================================================
+// Protocol Tests (with IDL imports)
+// ==============================================================================
+
+const CLASSPATH_DIR: &str = "avro/lang/java/idl/src/test/idl/putOnClassPath";
+
+/// Test `import.avdl`: exercises every import kind (IDL, protocol, schema) in a
+/// single protocol, including classpath-resolved imports.
+///
+/// The import chain is deep: `import.avdl` imports `reservedwords.avdl` (IDL),
+/// `nestedimport.avdl` (IDL, which itself imports `reservedwords.avdl` and
+/// `bar.avpr`), `OnTheClasspath.avdl` (IDL, resolved via classpath, which
+/// chains to `folder/relativePath.avdl` and then `nestedtypes.avdl`),
+/// `OnTheClasspath.avpr` (protocol), `OnTheClasspath.avsc` (schema),
+/// `baz.avsc` (schema), `foo.avsc` (schema), and `bar.avpr` (protocol).
+///
+/// Both `input/` and `putOnClassPath/` must be passed as import directories.
+#[test]
+fn test_import() {
+    let input_dir = PathBuf::from(INPUT_DIR);
+    let classpath_dir = PathBuf::from(CLASSPATH_DIR);
+    let actual = parse_and_serialize_with_idl_imports(
+        &input_path("import.avdl"),
+        &[&input_dir, &classpath_dir],
+    );
+    let expected = load_expected(&output_path("import.avpr"));
+    assert_eq!(actual, expected);
+}
+
+/// Test `nestedimport.avdl`: exercises nested import chains.
+///
+/// This protocol imports `reservedwords.avdl` (IDL), `bar.avpr` (protocol),
+/// `position.avsc` and `player.avsc` (schemas). The IDL import pulls in the
+/// reserved-word messages from `reservedwords.avdl`, and the schema imports
+/// bring in the baseball `Position` and `Player` types.
+#[test]
+fn test_nestedimport() {
+    let input_dir = PathBuf::from(INPUT_DIR);
+    let actual = parse_and_serialize_with_idl_imports(
+        &input_path("nestedimport.avdl"),
+        &[&input_dir],
+    );
+    let expected = load_expected(&output_path("nestedimport.avpr"));
+    assert_eq!(actual, expected);
+}
+
+// ==============================================================================
 // Extra Directory Tests
 // ==============================================================================
 //
