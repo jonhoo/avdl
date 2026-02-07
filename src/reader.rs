@@ -2004,44 +2004,48 @@ fn apply_properties_to_schema(schema: AvroSchema, properties: IndexMap<String, V
             properties: mut existing,
         } => {
             existing.extend(properties);
-            AvroSchema::AnnotatedPrimitive {
+            // A newly-added `logicalType` property may make this a recognized
+            // logical type — promote if so.
+            try_promote_logical_type(AvroSchema::AnnotatedPrimitive {
                 kind,
                 properties: existing,
-            }
+            })
         }
-        // Wrap bare primitives in AnnotatedPrimitive when properties are present.
-        AvroSchema::Null => AvroSchema::AnnotatedPrimitive {
+        // Wrap bare primitives in AnnotatedPrimitive when properties are
+        // present, then attempt logical type promotion in case the
+        // properties include a recognized `logicalType` annotation.
+        AvroSchema::Null => try_promote_logical_type(AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::Null,
             properties,
-        },
-        AvroSchema::Boolean => AvroSchema::AnnotatedPrimitive {
+        }),
+        AvroSchema::Boolean => try_promote_logical_type(AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::Boolean,
             properties,
-        },
-        AvroSchema::Int => AvroSchema::AnnotatedPrimitive {
+        }),
+        AvroSchema::Int => try_promote_logical_type(AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::Int,
             properties,
-        },
-        AvroSchema::Long => AvroSchema::AnnotatedPrimitive {
+        }),
+        AvroSchema::Long => try_promote_logical_type(AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::Long,
             properties,
-        },
-        AvroSchema::Float => AvroSchema::AnnotatedPrimitive {
+        }),
+        AvroSchema::Float => try_promote_logical_type(AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::Float,
             properties,
-        },
-        AvroSchema::Double => AvroSchema::AnnotatedPrimitive {
+        }),
+        AvroSchema::Double => try_promote_logical_type(AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::Double,
             properties,
-        },
-        AvroSchema::Bytes => AvroSchema::AnnotatedPrimitive {
+        }),
+        AvroSchema::Bytes => try_promote_logical_type(AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::Bytes,
             properties,
-        },
-        AvroSchema::String => AvroSchema::AnnotatedPrimitive {
+        }),
+        AvroSchema::String => try_promote_logical_type(AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::String,
             properties,
-        },
+        }),
         AvroSchema::Reference {
             name,
             namespace,
@@ -2056,6 +2060,116 @@ fn apply_properties_to_schema(schema: AvroSchema, properties: IndexMap<String, V
         }
         // Union and other types that don't carry top-level properties.
         other => other,
+    }
+}
+
+/// If the schema is an `AnnotatedPrimitive` whose properties contain a
+/// `logicalType` key matching a recognized Avro logical type with a compatible
+/// base primitive, promote it to `AvroSchema::Logical`. This mirrors Java's
+/// `LogicalTypes.fromSchemaIgnoreInvalid()` call in `SchemaProperties.copyProperties()`.
+///
+/// Known logical types and their required base types:
+/// - `date` -> int
+/// - `time-millis` -> int
+/// - `timestamp-millis` -> long
+/// - `local-timestamp-millis` -> long
+/// - `uuid` -> string
+/// - `decimal` -> bytes (also requires `precision`; `scale` defaults to 0)
+fn try_promote_logical_type(schema: AvroSchema) -> AvroSchema {
+    let AvroSchema::AnnotatedPrimitive {
+        kind,
+        mut properties,
+    } = schema
+    else {
+        return schema;
+    };
+
+    let Some(Value::String(logical_name)) = properties.get("logicalType").cloned() else {
+        return AvroSchema::AnnotatedPrimitive { kind, properties };
+    };
+
+    match (logical_name.as_str(), &kind) {
+        ("date", PrimitiveType::Int) => {
+            properties.shift_remove("logicalType");
+            AvroSchema::Logical {
+                logical_type: LogicalType::Date,
+                properties,
+            }
+        }
+        ("time-millis", PrimitiveType::Int) => {
+            properties.shift_remove("logicalType");
+            AvroSchema::Logical {
+                logical_type: LogicalType::TimeMillis,
+                properties,
+            }
+        }
+        ("timestamp-millis", PrimitiveType::Long) => {
+            properties.shift_remove("logicalType");
+            AvroSchema::Logical {
+                logical_type: LogicalType::TimestampMillis,
+                properties,
+            }
+        }
+        ("local-timestamp-millis", PrimitiveType::Long) => {
+            properties.shift_remove("logicalType");
+            AvroSchema::Logical {
+                logical_type: LogicalType::LocalTimestampMillis,
+                properties,
+            }
+        }
+        ("uuid", PrimitiveType::String) => {
+            properties.shift_remove("logicalType");
+            AvroSchema::Logical {
+                logical_type: LogicalType::Uuid,
+                properties,
+            }
+        }
+        ("decimal", PrimitiveType::Bytes) => {
+            // `decimal` requires a `precision` property. If missing or not a
+            // valid integer, the logical type is invalid and we leave the
+            // schema as-is (matching Java's "ignore invalid" behavior).
+            let Some(precision) = properties.get("precision").and_then(json_value_as_u32) else {
+                return AvroSchema::AnnotatedPrimitive { kind, properties };
+            };
+            let scale = properties
+                .get("scale")
+                .and_then(json_value_as_u32)
+                .unwrap_or(0);
+
+            properties.shift_remove("logicalType");
+            properties.shift_remove("precision");
+            properties.shift_remove("scale");
+
+            AvroSchema::Logical {
+                logical_type: LogicalType::Decimal { precision, scale },
+                properties,
+            }
+        }
+        // Unrecognized logical type or mismatched base type: leave as-is.
+        _ => AvroSchema::AnnotatedPrimitive { kind, properties },
+    }
+}
+
+/// Try to interpret a `serde_json::Value` as a `u32`. Accepts both
+/// integer and whole-number float representations, since JSON annotations
+/// may arrive as either form.
+fn json_value_as_u32(v: &Value) -> Option<u32> {
+    match v {
+        Value::Number(n) => {
+            if let Some(i) = n.as_u64() {
+                u32::try_from(i).ok()
+            } else if let Some(f) = n.as_f64() {
+                // Accept whole-number floats like 6.0.
+                if f >= 0.0 && f <= u32::MAX as f64 && f.fract() == 0.0 {
+                    Some(f as u32)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -2633,5 +2747,259 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_ok(), "custom annotation on protocol should be accepted, got: {:?}", result.err());
+    }
+
+    // ------------------------------------------------------------------
+    // Logical type promotion from @logicalType annotation (issue #ae25a66f)
+    // ------------------------------------------------------------------
+
+    /// Helper: parse an IDL protocol with a single record, return its first field's schema.
+    fn parse_first_field_schema(idl: &str) -> AvroSchema {
+        let (_idl_file, decl_items) = parse_idl(idl).expect("IDL should parse successfully");
+        // Find the record among declaration items.
+        for item in &decl_items {
+            if let DeclItem::Type(AvroSchema::Record { fields, .. }) = item {
+                return fields[0].schema.clone();
+            }
+        }
+        panic!("no record found in declaration items");
+    }
+
+    #[test]
+    fn logicaltype_annotation_date_promoted() {
+        // `@logicalType("date") int` should be promoted to `Logical { Date }`,
+        // not left as `AnnotatedPrimitive { Int, {"logicalType": "date"} }`.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { @logicalType("date") int myDate; }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        assert!(
+            matches!(
+                schema,
+                AvroSchema::Logical {
+                    logical_type: LogicalType::Date,
+                    ..
+                }
+            ),
+            "expected Logical(Date), got: {schema:?}"
+        );
+    }
+
+    #[test]
+    fn logicaltype_annotation_time_millis_promoted() {
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { @logicalType("time-millis") int myTime; }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        assert!(
+            matches!(
+                schema,
+                AvroSchema::Logical {
+                    logical_type: LogicalType::TimeMillis,
+                    ..
+                }
+            ),
+            "expected Logical(TimeMillis), got: {schema:?}"
+        );
+    }
+
+    #[test]
+    fn logicaltype_annotation_timestamp_millis_promoted() {
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { @logicalType("timestamp-millis") long myTs; }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        assert!(
+            matches!(
+                schema,
+                AvroSchema::Logical {
+                    logical_type: LogicalType::TimestampMillis,
+                    ..
+                }
+            ),
+            "expected Logical(TimestampMillis), got: {schema:?}"
+        );
+    }
+
+    #[test]
+    fn logicaltype_annotation_local_timestamp_millis_promoted() {
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { @logicalType("local-timestamp-millis") long myLts; }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        assert!(
+            matches!(
+                schema,
+                AvroSchema::Logical {
+                    logical_type: LogicalType::LocalTimestampMillis,
+                    ..
+                }
+            ),
+            "expected Logical(LocalTimestampMillis), got: {schema:?}"
+        );
+    }
+
+    #[test]
+    fn logicaltype_annotation_uuid_promoted() {
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { @logicalType("uuid") string myUuid; }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        assert!(
+            matches!(
+                schema,
+                AvroSchema::Logical {
+                    logical_type: LogicalType::Uuid,
+                    ..
+                }
+            ),
+            "expected Logical(Uuid), got: {schema:?}"
+        );
+    }
+
+    #[test]
+    fn logicaltype_annotation_decimal_promoted() {
+        // `decimal` requires `precision` and optionally `scale`. When both
+        // are provided via annotations, the schema should be promoted.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R {
+                    @logicalType("decimal") @precision(10) @scale(2) bytes myDec;
+                }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        match &schema {
+            AvroSchema::Logical {
+                logical_type: LogicalType::Decimal { precision, scale },
+                ..
+            } => {
+                assert_eq!(*precision, 10, "expected precision 10");
+                assert_eq!(*scale, 2, "expected scale 2");
+            }
+            other => panic!("expected Logical(Decimal), got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn logicaltype_annotation_decimal_default_scale() {
+        // When `@scale` is omitted, decimal should default to scale 0.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R {
+                    @logicalType("decimal") @precision(5) bytes myDec;
+                }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        match &schema {
+            AvroSchema::Logical {
+                logical_type: LogicalType::Decimal { precision, scale },
+                ..
+            } => {
+                assert_eq!(*precision, 5, "expected precision 5");
+                assert_eq!(*scale, 0, "expected scale 0 (default)");
+            }
+            other => panic!("expected Logical(Decimal) with default scale, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn logicaltype_annotation_decimal_missing_precision_not_promoted() {
+        // Without `@precision`, `decimal` is invalid and should remain as
+        // an AnnotatedPrimitive (matching Java's "ignore invalid" behavior).
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R {
+                    @logicalType("decimal") bytes myDec;
+                }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        assert!(
+            matches!(schema, AvroSchema::AnnotatedPrimitive { .. }),
+            "expected AnnotatedPrimitive (invalid decimal without precision), got: {schema:?}"
+        );
+    }
+
+    #[test]
+    fn logicaltype_annotation_wrong_base_type_not_promoted() {
+        // `@logicalType("date")` on `long` (instead of `int`) should not
+        // be promoted, since `date` requires `int` as the base type.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { @logicalType("date") long wrongBase; }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        assert!(
+            matches!(schema, AvroSchema::AnnotatedPrimitive { .. }),
+            "expected AnnotatedPrimitive (date on wrong base type), got: {schema:?}"
+        );
+    }
+
+    #[test]
+    fn logicaltype_annotation_unknown_type_not_promoted() {
+        // An unrecognized `logicalType` value should remain as AnnotatedPrimitive.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { @logicalType("custom-type") int myField; }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        assert!(
+            matches!(schema, AvroSchema::AnnotatedPrimitive { .. }),
+            "expected AnnotatedPrimitive (unknown logicalType), got: {schema:?}"
+        );
+    }
+
+    #[test]
+    fn logicaltype_annotation_preserves_extra_properties() {
+        // Extra custom properties alongside `@logicalType` should be preserved
+        // on the promoted Logical schema.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { @logicalType("date") @custom("extra") int myDate; }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        match &schema {
+            AvroSchema::Logical {
+                logical_type: LogicalType::Date,
+                properties,
+            } => {
+                assert_eq!(
+                    properties.get("custom"),
+                    Some(&Value::String("extra".to_string())),
+                    "custom property should be preserved after promotion"
+                );
+                assert!(
+                    !properties.contains_key("logicalType"),
+                    "logicalType key should be removed from properties after promotion"
+                );
+            }
+            other => panic!("expected Logical(Date) with extra properties, got: {other:?}"),
+        }
     }
 }
