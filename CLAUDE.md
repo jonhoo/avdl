@@ -80,6 +80,24 @@ Sub-agents should use this script instead of writing ad-hoc comparison
 scripts. If the script is insufficient, they should file an issue in
 `issues/` about the shortcoming before writing an ad-hoc script.
 
+### Ad-hoc testing with the CLI
+
+When testing the CLI with ad-hoc `.avdl` input, **write the input to a
+temp file in `tmp/`** and pass it by path, rather than piping via
+`echo | cargo run` or `cat <<EOF | cargo run`. This avoids interactive
+permission prompts for pipe commands in sub-agents.
+
+```sh
+# Good: write to temp file, pass by path
+cat > tmp/test-$(uuidgen).avdl <<'EOF'
+protocol Test { record Foo { string name; } }
+EOF
+cargo run -- idl tmp/test-*.avdl
+
+# Avoid: piping requires interactive permission
+echo 'protocol Test { ... }' | cargo run -- idl
+```
+
 ### Regenerating the ANTLR parser
 
 The generated parser/lexer in `src/generated/` is checked in so that
