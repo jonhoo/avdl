@@ -337,20 +337,66 @@ impl SchemaProperties {
 
 /// Controls which annotations are intercepted as special fields vs custom
 /// properties. Matches the Java `SchemaProperties(contextNamespace,
-/// withNamespace, withAliases, withOrder)` constructor flags.
+/// withNamespace, withAliases, withOrder)` constructor flags. Also carries a
+/// set of reserved property names that must be rejected if used as custom
+/// annotations, matching Java's `JsonProperties.addProp()` validation.
 #[derive(Clone, Copy)]
 struct PropertyContext {
     with_namespace: bool,
     with_aliases: bool,
     with_order: bool,
+    /// Reserved property names for this context. Annotations matching any of
+    /// these names produce an error ("Can't set reserved property: {name}").
+    /// The sets are taken from avro-tools 1.12.1 (Schema.SCHEMA_RESERVED,
+    /// Schema.ENUM_RESERVED, Schema.FIELD_RESERVED, Protocol.PROTOCOL_RESERVED,
+    /// Protocol.MESSAGE_RESERVED).
+    reserved: &'static [&'static str],
 }
 
-// TODO: Add reserved property name validation (issue ee3a2bca). Java's
-// `JsonProperties.addProp()` rejects annotations whose names collide with
-// structural JSON keys (e.g., `@doc`, `@type`, `@fields`). The reserved
-// sets vary by target type (Schema vs Field vs Protocol vs Message). This
-// was deferred because the exact reserved sets in avro-tools 1.12.1 don't
-// always match what the git submodule source shows.
+// ==========================================================================
+// Reserved Property Name Sets
+// ==========================================================================
+//
+// Java's `JsonProperties.addProp()` rejects annotations whose names collide
+// with structural JSON keys. The reserved sets are defined per context type
+// in `Schema.java` and `Protocol.java`. These must match avro-tools 1.12.1
+// behavior exactly -- not the git HEAD source, which may differ.
+
+/// Reserved property names for Schema objects (record, fixed, array, map, etc.).
+/// From `Schema.SCHEMA_RESERVED` in avro-tools 1.12.1.
+const SCHEMA_RESERVED: &[&str] = &[
+    "doc", "fields", "items", "name", "namespace", "size",
+    "symbols", "values", "type", "aliases",
+];
+
+/// Reserved property names for Enum schemas. All of `SCHEMA_RESERVED` plus
+/// `default`. From `Schema.ENUM_RESERVED` in avro-tools 1.12.1.
+const ENUM_RESERVED: &[&str] = &[
+    "doc", "fields", "items", "name", "namespace", "size",
+    "symbols", "values", "type", "aliases", "default",
+];
+
+/// Reserved property names for Field objects. From `Schema.FIELD_RESERVED`
+/// (defined alongside `Schema.Field`) in avro-tools 1.12.1.
+const FIELD_RESERVED: &[&str] = &[
+    "default", "doc", "name", "order", "type", "aliases",
+];
+
+/// Reserved property names for Protocol objects. From
+/// `Protocol.PROTOCOL_RESERVED` in avro-tools 1.12.1.
+///
+/// Note: the git submodule source may include `version` here, but
+/// avro-tools 1.12.1 does NOT -- `@version` is accepted on protocols
+/// (used in `simple.avdl` and `nestedimport.avdl`).
+const PROTOCOL_RESERVED: &[&str] = &[
+    "namespace", "protocol", "doc", "messages", "types", "errors",
+];
+
+/// Reserved property names for Message objects. From
+/// `Protocol.MESSAGE_RESERVED` in avro-tools 1.12.1.
+const MESSAGE_RESERVED: &[&str] = &[
+    "doc", "response", "request", "errors", "one-way",
+];
 
 /// Context for protocol declarations: namespace is intercepted, but aliases
 /// and order are treated as custom properties.
@@ -358,6 +404,7 @@ const PROTOCOL_PROPS: PropertyContext = PropertyContext {
     with_namespace: true,
     with_aliases: false,
     with_order: false,
+    reserved: PROTOCOL_RESERVED,
 };
 
 /// Context for record/fixed declarations: namespace and aliases are
@@ -366,13 +413,16 @@ const NAMED_TYPE_PROPS: PropertyContext = PropertyContext {
     with_namespace: true,
     with_aliases: true,
     with_order: false,
+    reserved: SCHEMA_RESERVED,
 };
 
-/// Context for enum declarations: same interception as record/fixed.
+/// Context for enum declarations: same interception as record/fixed, but
+/// with the extended enum reserved set (includes `default`).
 const ENUM_PROPS: PropertyContext = PropertyContext {
     with_namespace: true,
     with_aliases: true,
     with_order: false,
+    reserved: ENUM_RESERVED,
 };
 
 /// Context for variable declarations (field names): aliases and order are
@@ -381,14 +431,17 @@ const VARIABLE_PROPS: PropertyContext = PropertyContext {
     with_namespace: false,
     with_aliases: true,
     with_order: true,
+    reserved: FIELD_RESERVED,
 };
 
 /// Context for fullType: nothing is intercepted (all annotations become
-/// custom properties).
+/// custom properties). Uses the schema reserved set since type annotations
+/// flow into schema objects.
 const BARE_PROPS: PropertyContext = PropertyContext {
     with_namespace: false,
     with_aliases: false,
     with_order: false,
+    reserved: SCHEMA_RESERVED,
 };
 
 /// Context for message declarations: nothing is intercepted.
@@ -396,6 +449,7 @@ const MESSAGE_PROPS: PropertyContext = PropertyContext {
     with_namespace: false,
     with_aliases: false,
     with_order: false,
+    reserved: MESSAGE_RESERVED,
 };
 
 /// Walk a list of `SchemaPropertyContext` nodes and accumulate them into a
@@ -487,6 +541,18 @@ fn walk_schema_properties<'input>(
                 ));
             }
         } else {
+            // Reject reserved property names that would collide with
+            // structural JSON keys. This matches Java's
+            // `JsonProperties.addProp()` which throws
+            // "Can't set reserved property: {name}" for each context's
+            // reserved set.
+            if pctx.reserved.contains(&name.as_str()) {
+                return Err(make_diagnostic(
+                    src,
+                    &**prop,
+                    format!("Can't set reserved property: {name}"),
+                ));
+            }
             result.properties.insert(name, value);
         }
     }
@@ -2390,5 +2456,182 @@ mod tests {
         // just a suffix to distinguish from IntegerLiteral).
         let val = parse_float_text("42f").expect("integer-like float with f suffix");
         assert!((val - 42.0).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // Reserved property name validation (issue #ee3a2bca)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn doc_annotation_on_protocol_is_rejected() {
+        // `@doc("...")` is a reserved property name on protocols. Java throws
+        // "Can't set reserved property: doc". Doc comments should use `/** ... */`.
+        let idl = r#"
+            @namespace("test")
+            @doc("Protocol doc via annotation")
+            protocol P {
+                record R { string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for @doc on protocol");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Can't set reserved property: doc"),
+            "error should mention reserved property, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn doc_annotation_on_record_is_rejected() {
+        // `@doc` is reserved on schemas (records, enums, fixed).
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @doc("Record doc") record R { string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for @doc on record");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Can't set reserved property: doc"),
+            "error should mention reserved property, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn type_annotation_on_field_type_is_rejected() {
+        // `@type` is reserved on schemas. When used as a type annotation
+        // (via fullType's BARE_PROPS), it should be rejected.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { @type("custom") string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for @type on field type");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Can't set reserved property: type"),
+            "error should mention reserved property, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn doc_annotation_on_field_variable_is_rejected() {
+        // `@doc` is reserved on fields (FIELD_RESERVED).
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { string @doc("field doc") name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for @doc on field variable");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Can't set reserved property: doc"),
+            "error should mention reserved property, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn default_annotation_on_enum_is_rejected() {
+        // `@default` is reserved on enums (ENUM_RESERVED extends SCHEMA_RESERVED
+        // with `default`).
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @default("A") enum E { A, B, C }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for @default on enum");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Can't set reserved property: default"),
+            "error should mention reserved property, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn default_annotation_on_record_is_not_reserved() {
+        // `default` is NOT in SCHEMA_RESERVED (only in ENUM_RESERVED and
+        // FIELD_RESERVED). On a record, it should be accepted as a custom property.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @default("x") record R { string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_ok(), "default annotation on record should be accepted, got: {:?}", result.err());
+    }
+
+    #[test]
+    fn version_annotation_on_protocol_is_accepted() {
+        // `@version` is NOT reserved in avro-tools 1.12.1 (even though the git
+        // source may list it). The golden test file `simple.avdl` uses it.
+        let idl = r#"
+            @namespace("test")
+            @version("1.0.5")
+            protocol P {
+                record R { string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_ok(), "version annotation on protocol should be accepted, got: {:?}", result.err());
+    }
+
+    #[test]
+    fn doc_annotation_on_message_is_rejected() {
+        // `@doc` is reserved on messages (MESSAGE_RESERVED).
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @doc("message doc") void ping();
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for @doc on message");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Can't set reserved property: doc"),
+            "error should mention reserved property, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn response_annotation_on_message_is_rejected() {
+        // `@response` is reserved on messages.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @response("custom") void ping();
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for @response on message");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Can't set reserved property: response"),
+            "error should mention reserved property, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn custom_annotation_on_protocol_is_accepted() {
+        // Non-reserved names should still be accepted as custom properties.
+        let idl = r#"
+            @namespace("test")
+            @myCustomProp("hello")
+            protocol P {
+                record R { string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_ok(), "custom annotation on protocol should be accepted, got: {:?}", result.err());
     }
 }
