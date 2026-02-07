@@ -181,8 +181,8 @@ impl AvroSchema {
             | AvroSchema::Reference {
                 name, namespace, ..
             } => Some(match namespace {
-                Some(ns) => format!("{ns}.{name}"),
-                None => name.clone(),
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.clone(),
             }),
             _ => None,
         }

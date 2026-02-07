@@ -104,8 +104,8 @@ impl SchemaRegistry {
                 name, namespace, ..
             } => {
                 let full_name = match namespace {
-                    Some(ns) => format!("{ns}.{name}"),
-                    None => name.clone(),
+                    Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                    _ => name.clone(),
                 };
                 if !self.schemas.contains_key(&full_name) {
                     unresolved.push(full_name);

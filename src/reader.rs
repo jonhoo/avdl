@@ -452,7 +452,7 @@ fn walk_idl_file<'input>(
         // directly. Unlike protocol/record identifiers (where dots in the
         // name imply a namespace prefix), here the entire identifier IS the
         // namespace value.
-        *namespace = if id.is_empty() { None } else { Some(id) };
+        *namespace = Some(id);
     }
 
     // Walk the body children in source order, interleaving imports and named
@@ -1564,13 +1564,10 @@ fn compute_namespace(identifier: &str, explicit_namespace: &Option<String>) -> O
     // no dots do we fall back to `@namespace`.
     if let Some(pos) = identifier.rfind('.') {
         let ns = &identifier[..pos];
-        return if ns.is_empty() { None } else { Some(ns.to_string()) };
+        return Some(ns.to_string());
     }
 
-    explicit_namespace
-        .as_ref()
-        .filter(|s| !s.is_empty())
-        .cloned()
+    explicit_namespace.clone()
 }
 
 /// Check whether a schema is a type reference (a bare name referring to a

@@ -823,6 +823,152 @@ fn test_dotted_identifier_namespace_priority() {
 }
 
 // ==============================================================================
+// Namespace Correctness Tests
+// ==============================================================================
+
+/// `@namespace("")` should produce `"namespace": ""` in JSON output, explicitly
+/// opting the type out of the enclosing protocol namespace. Previously, empty
+/// namespace annotations were collapsed to `None` and the type silently
+/// inherited the protocol namespace.
+#[test]
+fn test_empty_namespace_annotation_emits_namespace_key() {
+    let input = r#"
+        @namespace("org.example")
+        protocol P {
+            @namespace("")
+            record NoNamespace { string name; }
+        }
+    "#;
+
+    let (idl_file, decl_items) = parse_idl(input).expect("should parse successfully");
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+    for item in &decl_items {
+        if let DeclItem::Type(schema) = item {
+            let _ = registry.register(schema.clone());
+        }
+    }
+
+    // The type should be registered under its bare name, not "org.example.NoNamespace".
+    assert!(
+        registry.contains("NoNamespace"),
+        "type with @namespace(\"\") should be registered under bare name"
+    );
+    assert!(
+        !registry.contains("org.example.NoNamespace"),
+        "type with @namespace(\"\") must not inherit the protocol namespace"
+    );
+
+    let json = idl_file_to_json(idl_file, registry);
+    let types = json.get("types").and_then(|t| t.as_array()).expect("missing types");
+    assert_eq!(types.len(), 1);
+    let record = &types[0];
+
+    // The JSON should contain "namespace": "" to explicitly indicate no namespace.
+    assert_eq!(
+        record.get("namespace").and_then(|v| v.as_str()),
+        Some(""),
+        "@namespace(\"\") should emit \"namespace\": \"\" in JSON output"
+    );
+    assert_eq!(
+        record.get("name").and_then(|v| v.as_str()),
+        Some("NoNamespace"),
+    );
+}
+
+/// When a record has a different namespace from the protocol and contains
+/// inline named types in its fields, `build_lookup` should register those
+/// nested types under the record's effective namespace, not the protocol's
+/// default namespace.
+///
+/// Avro IDL does not support inline named type definitions in field
+/// declarations, so this test constructs the schema tree directly to exercise
+/// the `collect_named_types` code path.
+#[test]
+fn test_nested_types_inherit_record_namespace_in_lookup() {
+    use avdl::model::schema::{AvroSchema, Field};
+    use indexmap::IndexMap;
+
+    let inner_enum = AvroSchema::Enum {
+        name: "InnerEnum".to_string(),
+        namespace: None, // no explicit namespace -- should inherit from Outer
+        doc: None,
+        symbols: vec!["A".to_string(), "B".to_string()],
+        default: None,
+        aliases: vec![],
+        properties: IndexMap::new(),
+    };
+
+    let outer_record = AvroSchema::Record {
+        name: "Outer".to_string(),
+        namespace: Some("com.other".to_string()),
+        doc: None,
+        fields: vec![Field {
+            name: "inner".to_string(),
+            schema: inner_enum,
+            doc: None,
+            default: None,
+            order: None,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        }],
+        is_error: false,
+        aliases: vec![],
+        properties: IndexMap::new(),
+    };
+
+    // Protocol default namespace is "org.example", but Outer overrides to
+    // "com.other". InnerEnum has no explicit namespace and should inherit
+    // from Outer, producing lookup key "com.other.InnerEnum".
+    let lookup = build_lookup(&[outer_record], Some("org.example"));
+
+    assert!(
+        lookup.contains_key("com.other.Outer"),
+        "Outer should be registered under com.other"
+    );
+    assert!(
+        lookup.contains_key("com.other.InnerEnum"),
+        "InnerEnum should inherit the record's namespace (com.other), not the protocol's (org.example)"
+    );
+    assert!(
+        !lookup.contains_key("org.example.InnerEnum"),
+        "InnerEnum must not be registered under the protocol namespace"
+    );
+}
+
+/// Cross-namespace unqualified references should be flagged as unresolved.
+/// When a type is in namespace "org.other" and is referenced by short name
+/// from namespace "org.example", the reference should NOT resolve because
+/// the full name would be "org.example.OtherRecord" (not found) rather than
+/// "org.other.OtherRecord" (the actual type).
+#[test]
+fn test_cross_namespace_unqualified_reference_is_unresolved() {
+    let input = r#"
+        @namespace("org.example")
+        protocol P {
+            @namespace("org.other")
+            record OtherRecord { string name; }
+            record MainRecord { OtherRecord other; }
+        }
+    "#;
+
+    let (_, decl_items) = parse_idl(input).expect("should parse successfully");
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+    for item in &decl_items {
+        if let DeclItem::Type(schema) = item {
+            let _ = registry.register(schema.clone());
+        }
+    }
+
+    // OtherRecord is in org.other, but the unqualified reference from
+    // MainRecord resolves as org.example.OtherRecord, which does not exist.
+    let unresolved = registry.validate_references();
+    assert!(
+        unresolved.contains(&"org.example.OtherRecord".to_string()),
+        "unqualified cross-namespace reference should be flagged as unresolved, got: {unresolved:?}"
+    );
+}
+
+// ==============================================================================
 // Extra Directory Tests
 // ==============================================================================
 //

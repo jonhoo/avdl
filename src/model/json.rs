@@ -108,12 +108,15 @@ fn collect_named_types(
         } => {
             let effective_ns = namespace.as_deref().or(default_namespace);
             let full_name = match effective_ns {
-                Some(ns) => format!("{ns}.{name}"),
-                None => name.clone(),
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.clone(),
             };
             lookup.insert(full_name, schema.clone());
+            // Nested types inside a record's fields inherit the record's
+            // effective namespace (not the protocol-level default), per the
+            // Avro specification.
             for field in fields {
-                collect_named_types(&field.schema, default_namespace, lookup);
+                collect_named_types(&field.schema, effective_ns, lookup);
             }
         }
         AvroSchema::Enum {
@@ -124,8 +127,8 @@ fn collect_named_types(
         } => {
             let effective_ns = namespace.as_deref().or(default_namespace);
             let full_name = match effective_ns {
-                Some(ns) => format!("{ns}.{name}"),
-                None => name.clone(),
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.clone(),
             };
             lookup.insert(full_name, schema.clone());
         }
@@ -198,8 +201,8 @@ pub fn schema_to_json(
             properties,
         } => {
             let full_name = match namespace {
-                Some(ns) => format!("{ns}.{name}"),
-                None => name.clone(),
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.clone(),
             };
             if known_names.contains(&full_name) {
                 return Value::String(schema_ref_name(
@@ -261,8 +264,8 @@ pub fn schema_to_json(
             properties,
         } => {
             let full_name = match namespace {
-                Some(ns) => format!("{ns}.{name}"),
-                None => name.clone(),
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.clone(),
             };
             if known_names.contains(&full_name) {
                 return Value::String(schema_ref_name(
@@ -317,8 +320,8 @@ pub fn schema_to_json(
             properties,
         } => {
             let full_name = match namespace {
-                Some(ns) => format!("{ns}.{name}"),
-                None => name.clone(),
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.clone(),
             };
             if known_names.contains(&full_name) {
                 return Value::String(schema_ref_name(
@@ -481,8 +484,8 @@ pub fn schema_to_json(
             ..
         } => {
             let full_name = match namespace {
-                Some(ns) => format!("{ns}.{name}"),
-                None => name.clone(),
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.clone(),
             };
 
             // If already serialized, output a bare name (possibly shortened).
@@ -612,8 +615,8 @@ fn schema_ref_name(
         name.to_string()
     } else {
         match namespace {
-            Some(ns) => format!("{ns}.{name}"),
-            None => name.to_string(),
+            Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+            _ => name.to_string(),
         }
     }
 }
