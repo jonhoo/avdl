@@ -98,6 +98,7 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
       - Runs `cargo test` to check for regressions
       - Cleans up debug examples
       - Stages changes with `git add <specific-files>`
+      - Commits using the `commit-writer` skill
 
       **Sub-agent permission limitations:** Sub-agents launched with
       `run_in_background` cannot perform interactive operations — `git
@@ -107,12 +108,9 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
       do these things since permission prompts are forwarded to the
       user. However, the parent agent must still prepare the worktree
       (git checkout) before launching either kind of sub-agent.
-   c. After each sub-agent completes, the **parent agent** reviews the
-      staged changes, commits in the worktree, then merges into `main`:
+   c. After each sub-agent completes, the **parent agent** merges into
+     `main`:
       ```bash
-      cd /home/jon/dev/stream/avdl/avdl-worktrees/wt-X
-      git diff --cached --stat  # review
-      git commit -m "..."       # parent commits
       cd /home/jon/dev/stream/avdl/main
       git merge fix/issue-UUID-description
       ```
