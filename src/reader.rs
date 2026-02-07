@@ -248,13 +248,89 @@ impl SchemaProperties {
     }
 }
 
+// ==========================================================================
+// Context-Sensitive Property Handling
+// ==========================================================================
+//
+// Java's `SchemaProperties` class controls which annotation names are
+// intercepted as special (`@namespace`, `@aliases`, `@order`) vs treated
+// as custom properties, using boolean flags that vary per parse context.
+// When a flag is false, that annotation name falls through to the custom
+// properties map instead of being intercepted. This struct mirrors those
+// flags.
+
+/// Controls which annotations are intercepted as special fields vs custom
+/// properties. Matches the Java `SchemaProperties(contextNamespace,
+/// withNamespace, withAliases, withOrder)` constructor flags.
+#[derive(Clone, Copy)]
+struct PropertyContext {
+    with_namespace: bool,
+    with_aliases: bool,
+    with_order: bool,
+}
+
+// TODO: Add reserved property name validation (issue ee3a2bca). Java's
+// `JsonProperties.addProp()` rejects annotations whose names collide with
+// structural JSON keys (e.g., `@doc`, `@type`, `@fields`). The reserved
+// sets vary by target type (Schema vs Field vs Protocol vs Message). This
+// was deferred because the exact reserved sets in avro-tools 1.12.1 don't
+// always match what the git submodule source shows.
+
+/// Context for protocol declarations: namespace is intercepted, but aliases
+/// and order are treated as custom properties.
+const PROTOCOL_PROPS: PropertyContext = PropertyContext {
+    with_namespace: true,
+    with_aliases: false,
+    with_order: false,
+};
+
+/// Context for record/fixed declarations: namespace and aliases are
+/// intercepted, order is a custom property.
+const NAMED_TYPE_PROPS: PropertyContext = PropertyContext {
+    with_namespace: true,
+    with_aliases: true,
+    with_order: false,
+};
+
+/// Context for enum declarations: same interception as record/fixed.
+const ENUM_PROPS: PropertyContext = PropertyContext {
+    with_namespace: true,
+    with_aliases: true,
+    with_order: false,
+};
+
+/// Context for variable declarations (field names): aliases and order are
+/// intercepted, namespace is a custom property.
+const VARIABLE_PROPS: PropertyContext = PropertyContext {
+    with_namespace: false,
+    with_aliases: true,
+    with_order: true,
+};
+
+/// Context for fullType: nothing is intercepted (all annotations become
+/// custom properties).
+const BARE_PROPS: PropertyContext = PropertyContext {
+    with_namespace: false,
+    with_aliases: false,
+    with_order: false,
+};
+
+/// Context for message declarations: nothing is intercepted.
+const MESSAGE_PROPS: PropertyContext = PropertyContext {
+    with_namespace: false,
+    with_aliases: false,
+    with_order: false,
+};
+
 /// Walk a list of `SchemaPropertyContext` nodes and accumulate them into a
-/// `SchemaProperties` struct, interpreting well-known annotations like
-/// `@namespace`, `@aliases`, and `@order` specially.
+/// `SchemaProperties` struct. Which annotations are intercepted as special
+/// fields (`namespace`, `aliases`, `order`) depends on the `pctx` flags,
+/// matching Java's context-sensitive `SchemaProperties` behavior.
 fn walk_schema_properties<'input>(
     props: &[Rc<SchemaPropertyContextAll<'input>>],
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
+    pctx: PropertyContext,
 ) -> Result<SchemaProperties> {
     let mut result = SchemaProperties::new();
 
@@ -269,75 +345,73 @@ fn walk_schema_properties<'input>(
             .ok_or_else(|| make_diagnostic(src, &**prop, "missing property value"))?;
         let value = walk_json_value(&value_ctx, token_stream, src)?;
 
-        match name.as_str() {
-            "namespace" => {
-                if let Value::String(s) = &value {
-                    if result.namespace.is_some() {
+        // Intercept well-known annotations only when the context flags allow it.
+        // When a flag is false, that name falls through to the custom properties
+        // path (and may be rejected as reserved there).
+        if pctx.with_namespace && name == "namespace" {
+            if let Value::String(s) = &value {
+                if result.namespace.is_some() {
+                    return Err(make_diagnostic(
+                        src,
+                        &**prop,
+                        "duplicate @namespace annotation",
+                    ));
+                }
+                result.namespace = Some(s.clone());
+            } else {
+                return Err(make_diagnostic(
+                    src,
+                    &**prop,
+                    "@namespace must contain a string value",
+                ));
+            }
+        } else if pctx.with_aliases && name == "aliases" {
+            if let Value::Array(arr) = &value {
+                let mut aliases = Vec::new();
+                for elem in arr {
+                    if let Value::String(s) = elem {
+                        aliases.push(s.clone());
+                    } else {
                         return Err(make_diagnostic(
                             src,
                             &**prop,
-                            "duplicate @namespace annotation",
+                            "@aliases must contain an array of strings",
                         ));
                     }
-                    result.namespace = Some(s.clone());
-                } else {
-                    return Err(make_diagnostic(
-                        src,
-                        &**prop,
-                        "@namespace must contain a string value",
-                    ));
                 }
+                result.aliases = aliases;
+            } else {
+                return Err(make_diagnostic(
+                    src,
+                    &**prop,
+                    "@aliases must contain an array of strings",
+                ));
             }
-            "aliases" => {
-                if let Value::Array(arr) = &value {
-                    let mut aliases = Vec::new();
-                    for elem in arr {
-                        if let Value::String(s) = elem {
-                            aliases.push(s.clone());
-                        } else {
-                            return Err(make_diagnostic(
-                                src,
-                                &**prop,
-                                "@aliases must contain an array of strings",
-                            ));
-                        }
+        } else if pctx.with_order && name == "order" {
+            if let Value::String(s) = &value {
+                match s.to_uppercase().as_str() {
+                    "ASCENDING" => result.order = Some(FieldOrder::Ascending),
+                    "DESCENDING" => result.order = Some(FieldOrder::Descending),
+                    "IGNORE" => result.order = Some(FieldOrder::Ignore),
+                    _ => {
+                        return Err(make_diagnostic(
+                            src,
+                            &**prop,
+                            format!(
+                                "@order must be ASCENDING, DESCENDING, or IGNORE, got: {s}"
+                            ),
+                        ));
                     }
-                    result.aliases = aliases;
-                } else {
-                    return Err(make_diagnostic(
-                        src,
-                        &**prop,
-                        "@aliases must contain an array of strings",
-                    ));
                 }
+            } else {
+                return Err(make_diagnostic(
+                    src,
+                    &**prop,
+                    "@order must contain a string value",
+                ));
             }
-            "order" => {
-                if let Value::String(s) = &value {
-                    match s.to_uppercase().as_str() {
-                        "ASCENDING" => result.order = Some(FieldOrder::Ascending),
-                        "DESCENDING" => result.order = Some(FieldOrder::Descending),
-                        "IGNORE" => result.order = Some(FieldOrder::Ignore),
-                        _ => {
-                            return Err(make_diagnostic(
-                                src,
-                                &**prop,
-                                format!(
-                                    "@order must be ASCENDING, DESCENDING, or IGNORE, got: {s}"
-                                ),
-                            ));
-                        }
-                    }
-                } else {
-                    return Err(make_diagnostic(
-                        src,
-                        &**prop,
-                        "@order must contain a string value",
-                    ));
-                }
-            }
-            _ => {
-                result.properties.insert(name, value);
-            }
+        } else {
+            result.properties.insert(name, value);
         }
     }
 
@@ -437,7 +511,7 @@ fn walk_protocol<'input>(
     let doc = extract_doc_from_context(ctx, token_stream);
 
     // Process `@namespace(...)` and other schema properties on the protocol.
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, PROTOCOL_PROPS)?;
 
     // Get the protocol name from the identifier.
     let name_ctx = ctx
@@ -530,7 +604,7 @@ fn walk_record<'input>(
     namespace: &mut Option<String>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, NAMED_TYPE_PROPS)?;
 
     let name_ctx = ctx
         .identifier()
@@ -659,7 +733,7 @@ fn walk_variable<'input>(
 
     // Walk the variable-level schema properties (e.g. @order, @aliases on a
     // specific variable rather than on the field type).
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, VARIABLE_PROPS)?;
 
     // Parse the default value if present.
     let default_value = if let Some(json_ctx) = ctx.jsonValue() {
@@ -694,7 +768,7 @@ fn walk_enum<'input>(
     enclosing_namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, ENUM_PROPS)?;
 
     let name_ctx = ctx
         .identifier()
@@ -763,7 +837,7 @@ fn walk_fixed<'input>(
     enclosing_namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, NAMED_TYPE_PROPS)?;
 
     let name_ctx = ctx
         .identifier()
@@ -812,7 +886,7 @@ fn walk_full_type<'input>(
     src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<AvroSchema> {
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, BARE_PROPS)?;
 
     let plain_ctx = ctx
         .plainType()
@@ -1057,7 +1131,7 @@ fn walk_message<'input>(
     namespace: &Option<String>,
 ) -> Result<(String, Message)> {
     let doc = extract_doc_from_context(ctx, token_stream);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src)?;
+    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, MESSAGE_PROPS)?;
 
     // Walk the result type. `void` maps to Null.
     let result_ctx = ctx
