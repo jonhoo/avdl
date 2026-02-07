@@ -17,11 +17,16 @@
 // plain recursive functions that return values. This is simpler and more
 // idiomatic Rust.
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
 use antlr4rust::common_token_stream::CommonTokenStream;
+use antlr4rust::error_listener::ErrorListener;
+use antlr4rust::parser::Parser;
+use antlr4rust::recognizer::Recognizer;
 use antlr4rust::token::Token;
+use antlr4rust::token_factory::TokenFactory;
 use antlr4rust::tree::{ParseTree, Tree};
 use antlr4rust::{InputStream, TidExt};
 use indexmap::IndexMap;
@@ -33,6 +38,42 @@ use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType};
+
+// ==============================================================================
+// ANTLR Error Collection
+// ==============================================================================
+//
+// Java's IdlReader installs a custom `BaseErrorListener` that throws
+// `SchemaParseException` on any syntax error, causing the tool to fail
+// immediately. ANTLR's default `ConsoleErrorListener` only prints to stderr
+// and lets error recovery continue, which silently produces incorrect output.
+//
+// We replace the default listener with `CollectingErrorListener`, which records
+// each syntax error's line/column/message. After parsing, we check the
+// collected errors and return an `IdlError` if any were found.
+
+/// An ANTLR error listener that collects syntax errors into a shared `Vec`
+/// instead of printing them to stderr. This lets us detect parse errors after
+/// `parser.idlFile()` returns and fail with a proper error.
+struct CollectingErrorListener {
+    errors: Rc<RefCell<Vec<String>>>,
+}
+
+impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
+    fn syntax_error(
+        &self,
+        _recognizer: &T,
+        _offending_symbol: Option<&<T::TF as TokenFactory<'a>>::Inner>,
+        line: isize,
+        column: isize,
+        msg: &str,
+        _error: Option<&antlr4rust::errors::ANTLRError>,
+    ) {
+        self.errors
+            .borrow_mut()
+            .push(format!("line {line}:{column} {msg}"));
+    }
+}
 
 /// Type names that collide with Avro built-in types. Matches Java's
 /// `IdlReader.INVALID_TYPE_NAMES`.
@@ -112,9 +153,44 @@ pub fn parse_idl_named(
     // field is on `BaseParser`, accessible through `Deref`.
     parser.build_parse_trees = true;
 
+    // Replace the default ConsoleErrorListener with a CollectingErrorListener
+    // that records syntax errors. Java's IdlReader does the same thing -- it
+    // removes the default listener and installs one that throws on any error.
+    // We collect instead of throwing because ANTLR's error recovery may still
+    // produce a usable parse tree, but we'll fail after parsing completes.
+    let syntax_errors: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    parser.remove_error_listeners();
+    parser.add_error_listener(Box::new(CollectingErrorListener {
+        errors: Rc::clone(&syntax_errors),
+    }));
+
     let tree = parser
         .idlFile()
         .map_err(|e| IdlError::Parse(format!("{e:?}")))?;
+
+    // Check for ANTLR syntax errors collected during parsing. Any syntax error
+    // means the input is malformed, even if ANTLR's error recovery produced a
+    // parse tree. This matches Java's behavior of throwing on the first error.
+    let collected_errors = syntax_errors.borrow();
+    if !collected_errors.is_empty() {
+        let error_msg = if collected_errors.len() == 1 {
+            format!("{}: {}", source_name, collected_errors[0])
+        } else {
+            let mut msg = format!(
+                "{}: {} syntax errors:\n",
+                source_name,
+                collected_errors.len()
+            );
+            for err in collected_errors.iter() {
+                msg.push_str("  ");
+                msg.push_str(err);
+                msg.push('\n');
+            }
+            msg
+        };
+        return Err(IdlError::Parse(error_msg));
+    }
+    drop(collected_errors);
 
     // The parser's `input` field (on `BaseParser`, accessible through `Deref`)
     // holds the token stream. We need it for doc comment extraction (scanning
@@ -2009,5 +2085,40 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_ok(), "annotation on primitive type should be accepted");
+    }
+
+    // ------------------------------------------------------------------
+    // ANTLR parse errors must be fatal (issue #1b49abf1)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn missing_semicolon_is_rejected() {
+        // A missing semicolon after a field declaration is a syntax error.
+        // ANTLR can recover and produce output, but we must detect the error
+        // and fail. Java exits 1 with SchemaParseException.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { string name }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(
+            result.is_err(),
+            "expected error for missing semicolon in record field"
+        );
+    }
+
+    #[test]
+    fn valid_protocol_still_accepted() {
+        // Sanity check: valid IDL with correct syntax must still parse.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record R { string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_ok(), "valid protocol should be accepted, got: {:?}", result.err());
     }
 }
