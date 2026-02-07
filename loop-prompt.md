@@ -55,8 +55,9 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
 **After agents complete:**
 1. Review new files in `issues/` — deduplicate against existing issues
 2. Review SESSION.md for observations that warrant new issues
-3. Commit all new issue entries using `commit-writer` skill
-4. **If no new issues were filed → STOP the loop entirely**
+3. Clear SESSION.md of anything that's now covered by issues
+4. Commit all new issue entries using `commit-writer` skill
+5. **If no new issues were filed → STOP the loop entirely**
 
 ### Phase 2: Issue Resolution
 
