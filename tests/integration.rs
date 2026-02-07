@@ -19,9 +19,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use avdl::import::{import_protocol, import_schema, ImportContext};
+use avdl::import::{ImportContext, import_protocol, import_schema};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json};
-use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportKind};
+use avdl::reader::{DeclItem, IdlFile, ImportKind, parse_idl};
 use indexmap::IndexSet;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -45,8 +45,8 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Process declaration items in source order to build a correctly ordered
     // registry. This resolves non-IDL imports and registers local types.
@@ -72,12 +72,13 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
 
                 match import.kind {
                     ImportKind::Schema => {
-                        import_schema(&resolved, &mut registry)
-                            .unwrap_or_else(|e| panic!("failed to import schema {}: {e}", resolved.display()));
+                        import_schema(&resolved, &mut registry).unwrap_or_else(|e| {
+                            panic!("failed to import schema {}: {e}", resolved.display())
+                        });
                     }
                     ImportKind::Protocol => {
-                        let _messages = import_protocol(&resolved, &mut registry)
-                            .unwrap_or_else(|e| {
+                        let _messages =
+                            import_protocol(&resolved, &mut registry).unwrap_or_else(|e| {
                                 panic!("failed to import protocol {}: {e}", resolved.display())
                             });
                     }
@@ -142,8 +143,8 @@ fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path])
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     let current_dir = avdl_path
         .parent()
@@ -199,12 +200,7 @@ fn process_decl_items_test(
             DeclItem::Import(import) => {
                 let resolved = import_ctx
                     .resolve_import(&import.path, current_dir)
-                    .unwrap_or_else(|e| {
-                        panic!(
-                            "failed to resolve import '{}': {e}",
-                            import.path,
-                        )
-                    });
+                    .unwrap_or_else(|e| panic!("failed to resolve import '{}': {e}", import.path,));
 
                 // Skip already-imported files (cycle prevention).
                 if import_ctx.mark_imported(&resolved) {
@@ -223,9 +219,10 @@ fn process_decl_items_test(
                         });
                     }
                     ImportKind::Protocol => {
-                        let imported_messages = import_protocol(&resolved, registry).unwrap_or_else(|e| {
-                            panic!("failed to import protocol {}: {e}", resolved.display())
-                        });
+                        let imported_messages = import_protocol(&resolved, registry)
+                            .unwrap_or_else(|e| {
+                                panic!("failed to import protocol {}: {e}", resolved.display())
+                            });
                         messages.extend(imported_messages);
                     }
                     ImportKind::Idl => {
@@ -233,8 +230,8 @@ fn process_decl_items_test(
                         let imported_input = fs::read_to_string(&resolved).unwrap_or_else(|e| {
                             panic!("failed to read imported IDL {}: {e}", resolved.display())
                         });
-                        let (imported_idl, nested_decl_items) =
-                            parse_idl(&imported_input).unwrap_or_else(|e| {
+                        let (imported_idl, nested_decl_items) = parse_idl(&imported_input)
+                            .unwrap_or_else(|e| {
                                 panic!("failed to parse imported IDL {}: {e}", resolved.display())
                             });
 
@@ -441,8 +438,8 @@ fn parse_idl2schemata(
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     let mut registry = avdl::resolve::SchemaRegistry::new();
     let current_dir = avdl_path
@@ -466,12 +463,13 @@ fn parse_idl2schemata(
 
                 match import.kind {
                     ImportKind::Schema => {
-                        import_schema(&resolved, &mut registry)
-                            .unwrap_or_else(|e| panic!("failed to import schema {}: {e}", resolved.display()));
+                        import_schema(&resolved, &mut registry).unwrap_or_else(|e| {
+                            panic!("failed to import schema {}: {e}", resolved.display())
+                        });
                     }
                     ImportKind::Protocol => {
-                        let _messages = import_protocol(&resolved, &mut registry)
-                            .unwrap_or_else(|e| {
+                        let _messages =
+                            import_protocol(&resolved, &mut registry).unwrap_or_else(|e| {
                                 panic!("failed to import protocol {}: {e}", resolved.display())
                             });
                     }
@@ -584,7 +582,9 @@ fn test_idl2schemata_simple() {
     assert_eq!(test_record["type"], "record");
     assert_eq!(test_record["doc"], "A TestRecord.");
     assert!(test_record.get("my-property").is_some());
-    let fields = test_record["fields"].as_array().expect("TestRecord should have fields");
+    let fields = test_record["fields"]
+        .as_array()
+        .expect("TestRecord should have fields");
     assert!(fields.len() > 5, "TestRecord should have many fields");
 
     // MD5: fixed type with size 16. Since it was already inlined inside
@@ -630,10 +630,10 @@ fn test_duplicate_type_definition() {
             let mut registry = avdl::resolve::SchemaRegistry::new();
             let mut saw_error = false;
             for item in &decl_items {
-                if let DeclItem::Type(schema) = item {
-                    if registry.register(schema.clone()).is_err() {
-                        saw_error = true;
-                    }
+                if let DeclItem::Type(schema) = item
+                    && registry.register(schema.clone()).is_err()
+                {
+                    saw_error = true;
                 }
             }
             assert!(
@@ -661,8 +661,7 @@ fn test_import_nonexistent_file() {
         }
     "#;
 
-    let (_, decl_items) =
-        parse_idl(input).expect("parsing the IDL text itself should succeed");
+    let (_, decl_items) = parse_idl(input).expect("parsing the IDL text itself should succeed");
 
     let mut registry = avdl::resolve::SchemaRegistry::new();
     let import_ctx = ImportContext::new(vec![]);
@@ -672,14 +671,13 @@ fn test_import_nonexistent_file() {
     for item in &decl_items {
         if let DeclItem::Import(import) = item {
             let result = import_ctx.resolve_import(&import.path, Path::new("."));
-            if result.is_err() {
-                saw_resolve_error = true;
-            } else {
+            if let Ok(resolved) = result {
                 // The path resolved, but the file shouldn't exist on disk.
-                let resolved = result.unwrap();
                 if import_schema(&resolved, &mut registry).is_err() {
                     saw_resolve_error = true;
                 }
+            } else {
+                saw_resolve_error = true;
             }
         }
     }
@@ -753,13 +751,16 @@ fn test_extra_protocol_syntax() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Verify it's a protocol file.
     let protocol = match idl_file {
         IdlFile::ProtocolFile(p) => p,
-        other => panic!("expected ProtocolFile, got {:?}", std::mem::discriminant(&other)),
+        other => panic!(
+            "expected ProtocolFile, got {:?}",
+            std::mem::discriminant(&other)
+        ),
     };
 
     assert_eq!(protocol.name, "Parrot");
@@ -773,7 +774,11 @@ fn test_extra_protocol_syntax() {
             _ => None,
         })
         .collect();
-    assert_eq!(type_items.len(), 1, "protocolSyntax.avdl should define exactly one named type");
+    assert_eq!(
+        type_items.len(),
+        1,
+        "protocolSyntax.avdl should define exactly one named type"
+    );
     assert_eq!(
         type_items[0].full_name(),
         Some("communication.Message".to_string()),
@@ -799,13 +804,16 @@ fn test_extra_schema_syntax() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Verify it's a schema file (not a protocol).
     let schema = match idl_file {
         IdlFile::SchemaFile(s) => s,
-        other => panic!("expected SchemaFile, got {:?}", std::mem::discriminant(&other)),
+        other => panic!(
+            "expected SchemaFile, got {:?}",
+            std::mem::discriminant(&other)
+        ),
     };
 
     // The main schema should be an array type.
@@ -814,7 +822,9 @@ fn test_extra_schema_syntax() {
             // The items should reference the Message record. It might be
             // a Reference or an inline Record depending on parse order.
             match items.as_ref() {
-                avdl::model::schema::AvroSchema::Reference { name, namespace, .. } => {
+                avdl::model::schema::AvroSchema::Reference {
+                    name, namespace, ..
+                } => {
                     assert_eq!(name, "Message");
                     // Namespace could be Some("communication") or resolved later.
                     if let Some(ns) = namespace {
