@@ -100,9 +100,11 @@ if SCHEMA_RESERVED.contains(&name.as_str()) {
 result.properties.insert(name, value);
 ```
 
-However, the reserved set varies by context, so a more nuanced
-approach using the context flags from issue `98a5d266` would be
-better.
+The `PropertyContext` infrastructure from issue `98a5d266` (now
+resolved) already supports adding a `reserved` field. The main
+blocker is determining the exact reserved sets for avro-tools 1.12.1,
+since the git submodule source lists `version` in `PROTOCOL_RESERVED`
+but the JAR accepts `@version` on protocols (see `simple.avdl`).
 
 ## Priority
 
