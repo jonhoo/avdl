@@ -135,11 +135,15 @@ After all waves complete:
    addressed gaps, updated priorities).
 3. **Review SESSION.md**: File issues for any observations that
    warrant them. Clean up entries that have been addressed.
-4. **Attempt to improve this prompt**: Review what went well and what
+4. **Review permission friction**: Look at which bash commands agents
+   commonly needed manual approval for during this iteration. Consider
+   whether wrapper scripts, allowlist entries, or other tooling could
+   reduce the permission prompts for future iterations.
+5. **Attempt to improve this prompt**: Review what went well and what
    was friction during this iteration. Update this file with any
    improvements — better instructions, new tips, corrected
    assumptions. Commit the change.
-5. **Return to Phase 1** for the next iteration.
+6. **Return to Phase 1** for the next iteration.
 
 ---
 
@@ -175,3 +179,17 @@ After each wave merge:
 - **Byte-identical output is a non-goal**: See CLAUDE.md. Don't file
   issues about whitespace differences from the Java tool. Only
   semantic (structural JSON) correctness matters.
+- **Close stale issues aggressively in Phase 3**: Issues filed by
+  discovery agents can become stale quickly as fixes land. Always
+  re-verify open issues against the current code before starting a
+  new Phase 2. For example, issue #27 (no json.rs unit tests) was
+  stale because 58 unit tests had been added in a previous session.
+- **Test helper vs production divergence**: When fixing a bug in
+  `main.rs`, check whether test helpers (`parse_idl2schemata`,
+  `process_decl_items_test`) have the same bug. The `known_names`
+  shared-vs-fresh divergence (Wave 4) was caused by updating
+  `main.rs` without updating the test helper.
+- **Reserved property sets differ between Java source and JAR**: The
+  git submodule Java source may be a different version than the
+  avro-tools JAR. Always validate behavior against the JAR, not
+  just the source code.
