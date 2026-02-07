@@ -219,8 +219,13 @@ pub fn schema_to_json(
                 Value::String(if *is_error { "error" } else { "record" }.to_string()),
             );
             obj.insert("name".to_string(), Value::String(name.clone()));
+            // Emit the namespace key when it differs from the enclosing context.
+            // Special case: when there's no enclosing namespace (standalone .avsc),
+            // treat an empty-string namespace the same as None — Java normalizes
+            // empty namespace to null, so `writeName()` omits it.
             if namespace.as_deref() != enclosing_namespace
                 && let Some(ns) = namespace
+                && !(ns.is_empty() && enclosing_namespace.is_none())
             {
                 obj.insert("namespace".to_string(), Value::String(ns.clone()));
             }
@@ -282,8 +287,13 @@ pub fn schema_to_json(
                 Value::String("enum".to_string()),
             );
             obj.insert("name".to_string(), Value::String(name.clone()));
+            // Emit the namespace key when it differs from the enclosing context.
+            // Special case: when there's no enclosing namespace (standalone .avsc),
+            // treat an empty-string namespace the same as None — Java normalizes
+            // empty namespace to null, so `writeName()` omits it.
             if namespace.as_deref() != enclosing_namespace
                 && let Some(ns) = namespace
+                && !(ns.is_empty() && enclosing_namespace.is_none())
             {
                 obj.insert("namespace".to_string(), Value::String(ns.clone()));
             }
@@ -338,8 +348,13 @@ pub fn schema_to_json(
                 Value::String("fixed".to_string()),
             );
             obj.insert("name".to_string(), Value::String(name.clone()));
+            // Emit the namespace key when it differs from the enclosing context.
+            // Special case: when there's no enclosing namespace (standalone .avsc),
+            // treat an empty-string namespace the same as None — Java normalizes
+            // empty namespace to null, so `writeName()` omits it.
             if namespace.as_deref() != enclosing_namespace
                 && let Some(ns) = namespace
+                && !(ns.is_empty() && enclosing_namespace.is_none())
             {
                 obj.insert("namespace".to_string(), Value::String(ns.clone()));
             }

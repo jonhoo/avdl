@@ -46,8 +46,8 @@ enum Command {
     },
     /// Extract individual .avsc schema files from an Avro IDL protocol.
     Idl2schemata {
-        /// Input .avdl file (reads from stdin if omitted or `-`).
-        input: Option<String>,
+        /// Input .avdl file (required; unlike `idl`, stdin is not supported).
+        input: String,
         /// Output directory for .avsc files (defaults to current directory).
         outdir: Option<PathBuf>,
         /// Additional directories to search for imports. May be repeated.
@@ -145,11 +145,11 @@ fn run_idl(
 // ==============================================================================
 
 fn run_idl2schemata(
-    input: Option<String>,
+    input: String,
     outdir: Option<PathBuf>,
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
-    let (source, input_dir, input_path) = read_input(&input)?;
+    let (source, input_dir, input_path) = read_input(&Some(input))?;
     let (_idl_file, registry) = parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
