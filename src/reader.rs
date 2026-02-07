@@ -1256,6 +1256,22 @@ fn walk_union_type<'input>(
         }
     }
 
+    // Reject duplicate types (Avro spec: "Unions may not contain more than
+    // one schema with the same type, except for the named types record, enum
+    // and fixed"). For anonymous types the key is the type name; for named
+    // types the key is the fully qualified name.
+    let mut seen_keys: HashSet<String> = HashSet::new();
+    for (i, t) in types.iter().enumerate() {
+        let key = t.union_type_key();
+        if !seen_keys.insert(key.clone()) {
+            return Err(make_diagnostic(
+                src,
+                &*ft_ctxs[i],
+                format!("Duplicate in union: {key}"),
+            ));
+        }
+    }
+
     Ok(AvroSchema::Union {
         types,
         is_nullable_type: false,
@@ -2633,5 +2649,104 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_ok(), "custom annotation on protocol should be accepted, got: {:?}", result.err());
+    }
+
+    // ------------------------------------------------------------------
+    // Duplicate types in union (issue #1c65fa55)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn duplicate_null_in_union_is_rejected() {
+        let idl = r#"
+            protocol Test {
+                record Foo {
+                    union { null, string, null } field1;
+                }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for duplicate null in union");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Duplicate in union: null"),
+            "error should mention 'Duplicate in union: null', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn duplicate_string_in_union_is_rejected() {
+        let idl = r#"
+            protocol Test {
+                record Foo {
+                    union { string, int, string } field1;
+                }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for duplicate string in union");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Duplicate in union: string"),
+            "error should mention 'Duplicate in union: string', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn duplicate_named_type_in_union_is_rejected() {
+        let idl = r#"
+            protocol Test {
+                record Bar { string name; }
+                record Foo {
+                    union { null, Bar, Bar } field1;
+                }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for duplicate named type in union");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Duplicate in union:"),
+            "error should mention 'Duplicate in union:', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn valid_union_no_duplicates_is_accepted() {
+        // A union with distinct types must still be accepted.
+        let idl = r#"
+            protocol Test {
+                record Foo {
+                    union { null, string, int, long } field1;
+                }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(
+            result.is_ok(),
+            "union without duplicates should be accepted, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn different_named_types_in_union_is_accepted() {
+        // Different named types (even if they're the same kind, e.g., two
+        // different records) are allowed in a union because they have
+        // different fully-qualified names.
+        let idl = r#"
+            protocol Test {
+                record Bar { string name; }
+                record Baz { int value; }
+                record Foo {
+                    union { null, Bar, Baz } field1;
+                }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(
+            result.is_ok(),
+            "union with different named types should be accepted, got: {:?}",
+            result.err()
+        );
     }
 }

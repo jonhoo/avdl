@@ -205,4 +205,56 @@ impl AvroSchema {
             AvroSchema::Record { .. } | AvroSchema::Enum { .. } | AvroSchema::Fixed { .. }
         )
     }
+
+    /// Returns the key used for duplicate detection within a union.
+    ///
+    /// The Avro specification requires that unions not contain more than one
+    /// schema with the same type. For anonymous types (primitives, arrays,
+    /// maps), the key is the type name (e.g., `"null"`, `"array"`). For named
+    /// types (record, enum, fixed) and references, the key is the fully
+    /// qualified name.
+    ///
+    /// This mirrors Java's `Schema.getFullName()` behavior used in
+    /// `UnionSchema`'s constructor for duplicate checking.
+    pub fn union_type_key(&self) -> String {
+        match self {
+            // Primitives: keyed by their type name.
+            AvroSchema::Null => "null".to_string(),
+            AvroSchema::Boolean => "boolean".to_string(),
+            AvroSchema::Int => "int".to_string(),
+            AvroSchema::Long => "long".to_string(),
+            AvroSchema::Float => "float".to_string(),
+            AvroSchema::Double => "double".to_string(),
+            AvroSchema::Bytes => "bytes".to_string(),
+            AvroSchema::String => "string".to_string(),
+
+            // Named types and references: keyed by fully qualified name.
+            AvroSchema::Record { .. }
+            | AvroSchema::Enum { .. }
+            | AvroSchema::Fixed { .. }
+            | AvroSchema::Reference { .. } => {
+                self.full_name().expect("named type always has full_name")
+            }
+
+            // Complex anonymous types: keyed by their structural type name.
+            AvroSchema::Array { .. } => "array".to_string(),
+            AvroSchema::Map { .. } => "map".to_string(),
+            AvroSchema::Union { .. } => "union".to_string(),
+
+            // Annotated primitives: keyed by the underlying primitive type.
+            AvroSchema::AnnotatedPrimitive { kind, .. } => kind.as_str().to_string(),
+
+            // Logical types: keyed by the underlying primitive type name.
+            // Java treats logical types as their underlying type for union
+            // duplicate checking (e.g., `date` is `int`, `uuid` is `string`).
+            AvroSchema::Logical { logical_type, .. } => match logical_type {
+                LogicalType::Date => "int".to_string(),
+                LogicalType::TimeMillis => "int".to_string(),
+                LogicalType::TimestampMillis => "long".to_string(),
+                LogicalType::LocalTimestampMillis => "long".to_string(),
+                LogicalType::Uuid => "string".to_string(),
+                LogicalType::Decimal { .. } => "bytes".to_string(),
+            },
+        }
+    }
 }
