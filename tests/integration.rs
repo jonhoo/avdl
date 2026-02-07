@@ -1054,6 +1054,31 @@ fn test_tools_protocol() {
 }
 
 // ==============================================================================
+// Compiler Module Tests
+// ==============================================================================
+//
+// Test inputs from the `avro/lang/java/compiler/` module's test directory, which
+// exercises edge cases not covered by the IDL module's standard test suite.
+
+const COMPILER_TEST_DIR: &str = "avro/lang/java/compiler/src/test/idl";
+
+/// AVRO-3706: Parse an `.avdl` file from a directory whose path contains spaces.
+///
+/// This exercises file path resolution with spaces and chained IDL imports:
+/// `root.avdl` imports `level1.avdl`, which imports `level2.avdl`, all within
+/// the `work space/` directory.
+#[test]
+fn test_workspace_path() {
+    let workspace_dir = PathBuf::from(COMPILER_TEST_DIR).join("work space");
+    let avdl_path = workspace_dir.join("root.avdl");
+    let expected_path = workspace_dir.join("root.avpr");
+
+    let actual = parse_and_serialize_with_idl_imports(&avdl_path, &[]);
+    let expected = load_expected(&expected_path);
+    assert_eq!(actual, expected);
+}
+
+// ==============================================================================
 // Extra Directory Tests
 // ==============================================================================
 //
