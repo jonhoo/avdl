@@ -10,7 +10,7 @@ use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
-use indexmap::{IndexMap, IndexSet};
+use std::collections::{HashMap, HashSet};
 use lexopt::prelude::*;
 use miette::{Context, IntoDiagnostic};
 use avdl::import::{import_protocol, import_schema, ImportContext};
@@ -216,7 +216,7 @@ fn run_idl(
             // `protocol_to_json`, but schema mode must do it explicitly.
             let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
             let lookup = build_lookup(&registry_schemas, None);
-            schema_to_json(schema, &mut IndexSet::new(), None, &lookup)
+            schema_to_json(schema, &mut HashSet::new(), None, &lookup)
         }
         IdlFile::NamedSchemasFile(schemas) => {
             // Bare named type declarations (no `schema` keyword) are serialized
@@ -226,7 +226,7 @@ fn run_idl(
             let lookup = build_lookup(&registry_schemas, None);
             let json_schemas: Vec<serde_json::Value> = schemas
                 .iter()
-                .map(|s| schema_to_json(s, &mut IndexSet::new(), None, &lookup))
+                .map(|s| schema_to_json(s, &mut HashSet::new(), None, &lookup))
                 .collect();
             serde_json::Value::Array(json_schemas)
         }
@@ -304,7 +304,7 @@ fn run_idl2schemata(
     // creates a fresh `HashSet` per call. This ensures each `.avsc` file is
     // self-contained with all referenced types inlined on first occurrence.
     for schema in registry.schemas() {
-        let mut known_names = IndexSet::new();
+        let mut known_names = HashSet::new();
         let type_name = match schema.full_name() {
             Some(name) => name,
             // Skip non-named schemas (primitives, etc.).
@@ -432,7 +432,7 @@ fn parse_and_resolve(
 
     let mut registry = SchemaRegistry::new();
     let mut import_ctx = ImportContext::new(import_dirs);
-    let mut messages = IndexMap::new();
+    let mut messages = HashMap::new();
 
     // Mark the initial input file as "imported" before processing declaration
     // items, so that self-imports (direct or via a chain) are detected as
@@ -487,7 +487,7 @@ fn process_decl_items(
     registry: &mut SchemaRegistry,
     import_ctx: &mut ImportContext,
     current_dir: &Path,
-    messages: &mut IndexMap<String, Message>,
+    messages: &mut HashMap<String, Message>,
     warnings: &mut Vec<Warning>,
     source: &str,
     source_name: &str,
@@ -535,7 +535,7 @@ fn resolve_single_import(
     registry: &mut SchemaRegistry,
     import_ctx: &mut ImportContext,
     current_dir: &Path,
-    messages: &mut IndexMap<String, Message>,
+    messages: &mut HashMap<String, Message>,
     warnings: &mut Vec<Warning>,
     source: &str,
     source_name: &str,

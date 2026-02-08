@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use std::collections::HashMap;
 use serde_json::Value;
 
 use super::schema::{AvroSchema, Field};
@@ -9,16 +9,16 @@ pub struct Protocol {
     pub name: String,
     pub namespace: Option<String>,
     pub doc: Option<String>,
-    pub properties: IndexMap<String, Value>,
+    pub properties: HashMap<String, Value>,
     pub types: Vec<AvroSchema>,
-    pub messages: IndexMap<String, Message>,
+    pub messages: HashMap<String, Message>,
 }
 
 /// An Avro protocol message (RPC method).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Message {
     pub doc: Option<String>,
-    pub properties: IndexMap<String, Value>,
+    pub properties: HashMap<String, Value>,
     pub request: Vec<Field>,
     pub response: AvroSchema,
     pub errors: Option<Vec<AvroSchema>>,

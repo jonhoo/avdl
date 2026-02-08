@@ -245,7 +245,7 @@ impl Default for SchemaRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use indexmap::IndexMap;
+    use std::collections::HashMap;
 
     #[test]
     fn test_register_and_lookup() {
@@ -257,7 +257,7 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         reg.register(schema)
             .expect("registration of valid named schema succeeds");
@@ -276,7 +276,7 @@ mod tests {
             symbols: vec!["A".to_string()],
             default: None,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         reg.register(schema.clone())
             .expect("first registration of valid schema succeeds");
@@ -293,7 +293,7 @@ mod tests {
                 doc: None,
                 size: 16,
                 aliases: vec![],
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             })
             .expect("registration of distinct fixed schemas succeeds");
         }
@@ -316,17 +316,17 @@ mod tests {
                 schema: AvroSchema::Reference {
                     name: "Missing".to_string(),
                     namespace: None,
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 },
                 doc: None,
                 default: None,
                 order: None,
                 aliases: vec![],
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         })
         .expect("registration of record with reference field succeeds");
         let unresolved = reg.validate_references();
@@ -344,7 +344,7 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         })
         .expect("registration of Inner record succeeds");
         reg.register(AvroSchema::Record {
@@ -356,17 +356,17 @@ mod tests {
                 schema: AvroSchema::Reference {
                     name: "Inner".to_string(),
                     namespace: None,
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 },
                 doc: None,
                 default: None,
                 order: None,
                 aliases: vec![],
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         })
         .expect("registration of Outer record referencing Inner succeeds");
         let unresolved = reg.validate_references();
@@ -388,15 +388,15 @@ mod tests {
                         items: Box::new(AvroSchema::Reference {
                             name: "MissingA".to_string(),
                             namespace: None,
-                            properties: IndexMap::new(),
+                            properties: HashMap::new(),
                         }),
-                        properties: IndexMap::new(),
+                        properties: HashMap::new(),
                     },
                     doc: None,
                     default: None,
                     order: None,
                     aliases: vec![],
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 },
                 crate::model::schema::Field {
                     name: "lookup".to_string(),
@@ -404,15 +404,15 @@ mod tests {
                         values: Box::new(AvroSchema::Reference {
                             name: "MissingB".to_string(),
                             namespace: None,
-                            properties: IndexMap::new(),
+                            properties: HashMap::new(),
                         }),
-                        properties: IndexMap::new(),
+                        properties: HashMap::new(),
                     },
                     doc: None,
                     default: None,
                     order: None,
                     aliases: vec![],
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 },
                 crate::model::schema::Field {
                     name: "choice".to_string(),
@@ -422,7 +422,7 @@ mod tests {
                             AvroSchema::Reference {
                                 name: "MissingC".to_string(),
                                 namespace: None,
-                                properties: IndexMap::new(),
+                                properties: HashMap::new(),
                             },
                         ],
                         is_nullable_type: true,
@@ -431,12 +431,12 @@ mod tests {
                     default: None,
                     order: None,
                     aliases: vec![],
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 },
             ],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         })
         .expect("registration of Container with nested references succeeds");
         let unresolved = reg.validate_references();
@@ -452,7 +452,7 @@ mod tests {
             doc: None,
             size: 32,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         })
         .expect("registration of Hash into reg1 succeeds");
 
@@ -463,7 +463,7 @@ mod tests {
             doc: None,
             size: 64, // Different size -- should be ignored since reg1 already has "Hash".
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         })
         .expect("registration of Hash into reg2 succeeds");
         reg2.register(AvroSchema::Fixed {
@@ -472,7 +472,7 @@ mod tests {
             doc: None,
             size: 16,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         })
         .expect("registration of Token into reg2 succeeds");
 
@@ -498,7 +498,7 @@ mod tests {
                 doc: None,
                 size: 8,
                 aliases: vec![],
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             })
             .expect("registration of distinct fixed schemas succeeds");
         }
@@ -568,7 +568,7 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         });
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -586,7 +586,7 @@ mod tests {
             symbols: vec!["A".to_string()],
             default: None,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         });
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("invalid Avro name"));
@@ -602,7 +602,7 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         });
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -620,7 +620,7 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         });
         assert!(result.is_ok());
     }
@@ -637,7 +637,7 @@ mod tests {
         let schema = AvroSchema::Reference {
             name: "DoesNotExist".to_string(),
             namespace: Some("com.example".to_string()),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         let unresolved = reg.validate_schema(&schema);
         assert_eq!(unresolved, vec!["com.example.DoesNotExist"]);
@@ -654,14 +654,14 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         })
         .expect("registration of MyRecord succeeds");
 
         let schema = AvroSchema::Reference {
             name: "MyRecord".to_string(),
             namespace: Some("com.example".to_string()),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         let unresolved = reg.validate_schema(&schema);
         assert!(unresolved.is_empty());
@@ -675,9 +675,9 @@ mod tests {
             items: Box::new(AvroSchema::Reference {
                 name: "DoesNotExist".to_string(),
                 namespace: None,
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         let unresolved = reg.validate_schema(&schema);
         assert_eq!(unresolved, vec!["DoesNotExist"]);
@@ -691,9 +691,9 @@ mod tests {
             values: Box::new(AvroSchema::Reference {
                 name: "Missing".to_string(),
                 namespace: Some("org.test".to_string()),
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         let unresolved = reg.validate_schema(&schema);
         assert_eq!(unresolved, vec!["org.test.Missing"]);
@@ -709,7 +709,7 @@ mod tests {
                 AvroSchema::Reference {
                     name: "Missing".to_string(),
                     namespace: None,
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 },
             ],
             is_nullable_type: false,
@@ -739,7 +739,7 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         })
         .expect("registration of MyRecord under com.other succeeds");
 
@@ -748,7 +748,7 @@ mod tests {
         let schema = AvroSchema::Reference {
             name: "MyRecord".to_string(),
             namespace: Some("com.example".to_string()),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         let unresolved = reg.validate_schema(&schema);
         assert_eq!(unresolved, vec!["com.example.MyRecord"]);

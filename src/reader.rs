@@ -32,7 +32,7 @@ use antlr4rust::token_factory::TokenFactory;
 use antlr4rust::token_stream::TokenStream;
 use antlr4rust::tree::{ParseTree, Tree};
 use antlr4rust::{InputStream, TidExt};
-use indexmap::IndexMap;
+use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::doc_comments::extract_doc_comment;
@@ -457,7 +457,7 @@ struct SchemaProperties {
     namespace: Option<String>,
     aliases: Vec<String>,
     order: Option<FieldOrder>,
-    properties: IndexMap<String, Value>,
+    properties: HashMap<String, Value>,
 }
 
 impl SchemaProperties {
@@ -466,7 +466,7 @@ impl SchemaProperties {
             namespace: None,
             aliases: Vec::new(),
             order: None,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         }
     }
 }
@@ -844,7 +844,7 @@ fn walk_protocol<'input>(
     //   protocolDeclarationBody: '{' (import | namedSchema | message)* '}'
     // We iterate all children and dispatch based on type, preserving the
     // original declaration order for imports and types.
-    let mut messages = IndexMap::new();
+    let mut messages = HashMap::new();
     for child in body.get_children() {
         if let Ok(import_ctx) = child.clone().downcast_rc::<ImportStatementContextAll<'input>>() {
             collect_single_import(&import_ctx, decl_items);
@@ -1313,13 +1313,13 @@ fn walk_nullable_type<'input>(
             AvroSchema::Reference {
                 name: name.to_string(),
                 namespace: Some(ns.to_string()),
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }
         } else {
             AvroSchema::Reference {
                 name: type_name.to_string(),
                 namespace: namespace.clone(),
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }
         }
     } else {
@@ -1358,23 +1358,23 @@ fn walk_primitive_type<'input>(
         Idl_Null => AvroSchema::Null,
         Idl_Date => AvroSchema::Logical {
             logical_type: LogicalType::Date,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         },
         Idl_Time => AvroSchema::Logical {
             logical_type: LogicalType::TimeMillis,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         },
         Idl_Timestamp => AvroSchema::Logical {
             logical_type: LogicalType::TimestampMillis,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         },
         Idl_LocalTimestamp => AvroSchema::Logical {
             logical_type: LogicalType::LocalTimestampMillis,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         },
         Idl_UUID => AvroSchema::Logical {
             logical_type: LogicalType::Uuid,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         },
         Idl_Decimal => {
             // decimal(precision [, scale])
@@ -1395,7 +1395,7 @@ fn walk_primitive_type<'input>(
 
             AvroSchema::Logical {
                 logical_type: LogicalType::Decimal { precision, scale },
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }
         }
         _ => {
@@ -1423,7 +1423,7 @@ fn walk_array_type<'input>(
     let items = walk_full_type(&element_ctx, token_stream, src, namespace)?;
     Ok(AvroSchema::Array {
         items: Box::new(items),
-        properties: IndexMap::new(),
+        properties: HashMap::new(),
     })
 }
 
@@ -1440,7 +1440,7 @@ fn walk_map_type<'input>(
     let values = walk_full_type(&value_ctx, token_stream, src, namespace)?;
     Ok(AvroSchema::Map {
         values: Box::new(values),
-        properties: IndexMap::new(),
+        properties: HashMap::new(),
     })
 }
 
@@ -1572,13 +1572,13 @@ fn walk_message<'input>(
                 error_schemas.push(AvroSchema::Reference {
                     name: name.to_string(),
                     namespace: Some(ns.to_string()),
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 });
             } else {
                 error_schemas.push(AvroSchema::Reference {
                     name: error_name.to_string(),
                     namespace: namespace.clone(),
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 });
             }
         }
@@ -2178,7 +2178,7 @@ fn fix_optional_schema(schema: AvroSchema, default_value: &Option<Value>) -> Avr
 /// Apply custom schema properties to a schema. For nullable unions, apply them
 /// to the non-null branch (matching the Java behavior where properties go on
 /// `type.getTypes().get(1)` for optional types).
-fn apply_properties(schema: AvroSchema, properties: IndexMap<String, Value>) -> AvroSchema {
+fn apply_properties(schema: AvroSchema, properties: HashMap<String, Value>) -> AvroSchema {
     match schema {
         AvroSchema::Union {
             types,
@@ -2203,7 +2203,7 @@ fn apply_properties(schema: AvroSchema, properties: IndexMap<String, Value>) -> 
 }
 
 /// Apply properties directly to a single schema node.
-fn apply_properties_to_schema(schema: AvroSchema, properties: IndexMap<String, Value>) -> AvroSchema {
+fn apply_properties_to_schema(schema: AvroSchema, properties: HashMap<String, Value>) -> AvroSchema {
     match schema {
         AvroSchema::Record {
             name,
@@ -2386,35 +2386,35 @@ fn try_promote_logical_type(schema: AvroSchema) -> AvroSchema {
 
     match (logical_name.as_str(), &kind) {
         ("date", PrimitiveType::Int) => {
-            properties.shift_remove("logicalType");
+            properties.remove("logicalType");
             AvroSchema::Logical {
                 logical_type: LogicalType::Date,
                 properties,
             }
         }
         ("time-millis", PrimitiveType::Int) => {
-            properties.shift_remove("logicalType");
+            properties.remove("logicalType");
             AvroSchema::Logical {
                 logical_type: LogicalType::TimeMillis,
                 properties,
             }
         }
         ("timestamp-millis", PrimitiveType::Long) => {
-            properties.shift_remove("logicalType");
+            properties.remove("logicalType");
             AvroSchema::Logical {
                 logical_type: LogicalType::TimestampMillis,
                 properties,
             }
         }
         ("local-timestamp-millis", PrimitiveType::Long) => {
-            properties.shift_remove("logicalType");
+            properties.remove("logicalType");
             AvroSchema::Logical {
                 logical_type: LogicalType::LocalTimestampMillis,
                 properties,
             }
         }
         ("uuid", PrimitiveType::String) => {
-            properties.shift_remove("logicalType");
+            properties.remove("logicalType");
             AvroSchema::Logical {
                 logical_type: LogicalType::Uuid,
                 properties,
@@ -2441,9 +2441,9 @@ fn try_promote_logical_type(schema: AvroSchema) -> AvroSchema {
                 .filter(|&v| v <= i32::MAX as u32)
                 .unwrap_or(0);
 
-            properties.shift_remove("logicalType");
-            properties.shift_remove("precision");
-            properties.shift_remove("scale");
+            properties.remove("logicalType");
+            properties.remove("precision");
+            properties.remove("scale");
 
             AvroSchema::Logical {
                 logical_type: LogicalType::Decimal { precision, scale },

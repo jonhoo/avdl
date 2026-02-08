@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use std::collections::HashMap;
 use serde_json::Value;
 
 /// Field sort order in Avro schemas.
@@ -85,7 +85,7 @@ pub enum AvroSchema {
         fields: Vec<Field>,
         is_error: bool,
         aliases: Vec<std::string::String>,
-        properties: IndexMap<std::string::String, Value>,
+        properties: HashMap<std::string::String, Value>,
     },
     Enum {
         name: std::string::String,
@@ -94,7 +94,7 @@ pub enum AvroSchema {
         symbols: Vec<std::string::String>,
         default: Option<std::string::String>,
         aliases: Vec<std::string::String>,
-        properties: IndexMap<std::string::String, Value>,
+        properties: HashMap<std::string::String, Value>,
     },
     Fixed {
         name: std::string::String,
@@ -102,7 +102,7 @@ pub enum AvroSchema {
         doc: Option<std::string::String>,
         size: u32,
         aliases: Vec<std::string::String>,
-        properties: IndexMap<std::string::String, Value>,
+        properties: HashMap<std::string::String, Value>,
     },
 
     // =========================================================================
@@ -110,11 +110,11 @@ pub enum AvroSchema {
     // =========================================================================
     Array {
         items: Box<AvroSchema>,
-        properties: IndexMap<std::string::String, Value>,
+        properties: HashMap<std::string::String, Value>,
     },
     Map {
         values: Box<AvroSchema>,
-        properties: IndexMap<std::string::String, Value>,
+        properties: HashMap<std::string::String, Value>,
     },
     Union {
         types: Vec<AvroSchema>,
@@ -131,7 +131,7 @@ pub enum AvroSchema {
     /// instead of the bare string `"long"`.
     AnnotatedPrimitive {
         kind: PrimitiveType,
-        properties: IndexMap<std::string::String, Value>,
+        properties: HashMap<std::string::String, Value>,
     },
 
     // =========================================================================
@@ -140,7 +140,7 @@ pub enum AvroSchema {
     Logical {
         logical_type: LogicalType,
         /// Extra properties on the underlying primitive (e.g., `@foo.bar("baz")` on a `long`).
-        properties: IndexMap<std::string::String, Value>,
+        properties: HashMap<std::string::String, Value>,
     },
 
     // =========================================================================
@@ -149,7 +149,7 @@ pub enum AvroSchema {
     Reference {
         name: std::string::String,
         namespace: Option<std::string::String>,
-        properties: IndexMap<std::string::String, Value>,
+        properties: HashMap<std::string::String, Value>,
     },
 }
 
@@ -162,7 +162,7 @@ pub struct Field {
     pub default: Option<Value>,
     pub order: Option<FieldOrder>,
     pub aliases: Vec<std::string::String>,
-    pub properties: IndexMap<std::string::String, Value>,
+    pub properties: HashMap<std::string::String, Value>,
 }
 
 impl AvroSchema {
@@ -602,7 +602,7 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!({"name": "bar"}), &schema));
     }
@@ -616,7 +616,7 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(!is_valid_default(&json!("not_an_object"), &schema));
     }
@@ -630,7 +630,7 @@ mod tests {
             symbols: vec!["HEARTS".to_string(), "DIAMONDS".to_string()],
             default: None,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!("HEARTS"), &schema));
     }
@@ -644,7 +644,7 @@ mod tests {
             symbols: vec!["HEARTS".to_string()],
             default: None,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(!is_valid_default(&json!(0), &schema));
     }
@@ -657,7 +657,7 @@ mod tests {
             doc: None,
             size: 16,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!("0000000000000000"), &schema));
     }
@@ -670,7 +670,7 @@ mod tests {
             doc: None,
             size: 16,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(!is_valid_default(&json!(42), &schema));
     }
@@ -683,7 +683,7 @@ mod tests {
     fn array_accepts_array() {
         let schema = AvroSchema::Array {
             items: Box::new(AvroSchema::Int),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!([]), &schema));
     }
@@ -692,7 +692,7 @@ mod tests {
     fn array_accepts_non_empty_array() {
         let schema = AvroSchema::Array {
             items: Box::new(AvroSchema::Int),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!([1, 2, 3]), &schema));
     }
@@ -701,7 +701,7 @@ mod tests {
     fn array_rejects_string() {
         let schema = AvroSchema::Array {
             items: Box::new(AvroSchema::Int),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(!is_valid_default(&json!("not_an_array"), &schema));
     }
@@ -710,7 +710,7 @@ mod tests {
     fn map_accepts_object() {
         let schema = AvroSchema::Map {
             values: Box::new(AvroSchema::String),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!({}), &schema));
     }
@@ -719,7 +719,7 @@ mod tests {
     fn map_rejects_array() {
         let schema = AvroSchema::Map {
             values: Box::new(AvroSchema::String),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(!is_valid_default(&json!([1, 2]), &schema));
     }
@@ -795,7 +795,7 @@ mod tests {
     fn annotated_long_accepts_integer() {
         let schema = AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::Long,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!(0), &schema));
     }
@@ -804,7 +804,7 @@ mod tests {
     fn annotated_long_rejects_string() {
         let schema = AvroSchema::AnnotatedPrimitive {
             kind: PrimitiveType::Long,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(!is_valid_default(&json!("hello"), &schema));
     }
@@ -813,7 +813,7 @@ mod tests {
     fn logical_date_accepts_integer() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::Date,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!(0), &schema));
     }
@@ -822,7 +822,7 @@ mod tests {
     fn logical_date_rejects_string() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::Date,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(!is_valid_default(&json!("2023-01-01"), &schema));
     }
@@ -831,7 +831,7 @@ mod tests {
     fn logical_uuid_accepts_string() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::Uuid,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!("550e8400-e29b-41d4-a716-446655440000"), &schema));
     }
@@ -840,7 +840,7 @@ mod tests {
     fn logical_uuid_rejects_integer() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::Uuid,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(!is_valid_default(&json!(42), &schema));
     }
@@ -849,7 +849,7 @@ mod tests {
     fn logical_timestamp_millis_accepts_integer() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::TimestampMillis,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert!(is_valid_default(&json!(1609459200000i64), &schema));
     }
@@ -861,7 +861,7 @@ mod tests {
                 precision: 10,
                 scale: 2,
             },
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         // Decimal's underlying type is bytes, which is serialized as a string.
         assert!(is_valid_default(&json!("\\u0000"), &schema));
@@ -876,7 +876,7 @@ mod tests {
         let schema = AvroSchema::Reference {
             name: "SomeType".to_string(),
             namespace: None,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         // References skip validation because the type is not yet resolved.
         assert!(is_valid_default(&json!(42), &schema));

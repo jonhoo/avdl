@@ -21,10 +21,9 @@
 // Instead, the reader calls into `ImportContext` to resolve paths and check for
 // cycles, then handles the recursive parse itself.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use indexmap::IndexMap;
 use serde_json::Value;
 
 use miette::Result;
@@ -191,7 +190,7 @@ fn flatten_schema_inner(
             AvroSchema::Reference {
                 name,
                 namespace,
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }
         }
 
@@ -205,7 +204,7 @@ fn flatten_schema_inner(
             let reference = AvroSchema::Reference {
                 name: name.clone(),
                 namespace: namespace.clone(),
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             };
             collected.push(schema);
             reference
@@ -219,7 +218,7 @@ fn flatten_schema_inner(
             let reference = AvroSchema::Reference {
                 name: name.clone(),
                 namespace: namespace.clone(),
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             };
             collected.push(schema);
             reference
@@ -289,7 +288,7 @@ fn flatten_and_register(schema: AvroSchema, registry: &mut SchemaRegistry) {
 pub fn import_protocol(
     path: &Path,
     registry: &mut SchemaRegistry,
-) -> Result<IndexMap<String, Message>> {
+) -> Result<HashMap<String, Message>> {
     let content = std::fs::read_to_string(path).map_err(|e| {
         miette::miette!("read protocol file `{}`: {e}", path.display())
     })?;
@@ -297,7 +296,7 @@ pub fn import_protocol(
         .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
 
     let default_namespace = json.get("namespace").and_then(|n| n.as_str());
-    let mut messages = IndexMap::new();
+    let mut messages = HashMap::new();
 
     // Extract types from the protocol JSON and register them. Schemas are
     // flattened so that nested named types (records, enums, fixed) within
@@ -414,13 +413,13 @@ fn string_to_schema(s: &str, default_namespace: Option<&str>) -> Result<AvroSche
                 Ok(AvroSchema::Reference {
                     name: name.to_string(),
                     namespace: Some(ns.to_string()),
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 })
             } else {
                 Ok(AvroSchema::Reference {
                     name: type_name.to_string(),
                     namespace: default_namespace.map(|s| s.to_string()),
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 })
             }
         }
@@ -902,8 +901,8 @@ fn extract_string_array(value: Option<&Value>) -> Vec<String> {
 fn collect_extra_properties(
     obj: &serde_json::Map<String, Value>,
     known_keys: &[&str],
-) -> IndexMap<String, Value> {
-    let mut properties = IndexMap::new();
+) -> HashMap<String, Value> {
+    let mut properties = HashMap::new();
     for (k, v) in obj {
         if !known_keys.contains(&k.as_str()) {
             properties.insert(k.clone(), v.clone());
@@ -964,7 +963,7 @@ mod tests {
             AvroSchema::Reference {
                 name: "Foo".to_string(),
                 namespace: Some("org.example".to_string()),
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }
         );
     }
@@ -978,7 +977,7 @@ mod tests {
             AvroSchema::Reference {
                 name: "Bar".to_string(),
                 namespace: Some("com.other".to_string()),
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }
         );
     }
@@ -1075,7 +1074,7 @@ mod tests {
             schema,
             AvroSchema::Logical {
                 logical_type: LogicalType::Date,
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }
         );
     }
@@ -1095,7 +1094,7 @@ mod tests {
                     precision: 10,
                     scale: 2,
                 },
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }
         );
     }

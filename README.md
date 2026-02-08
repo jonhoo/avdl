@@ -52,8 +52,9 @@ This tool aims for semantic correctness against the Java `avro-tools`
 output, but deliberately differs in a few ways:
 
 - **JSON formatting is not byte-identical.** Whitespace and array
-  line-breaking style may differ. The output parses to the same
-  logical structure.
+  line-breaking style may differ. JSON object keys are sorted
+  alphabetically, whereas Java avro-tools preserves insertion order.
+  The output parses to the same logical structure.
 
 - **Import search paths replace Java classpath.** avro-tools resolves
   `import` paths via the JVM classpath; this tool uses explicit

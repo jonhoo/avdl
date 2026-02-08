@@ -7,14 +7,8 @@
 // semantically against the expected `.avpr` or `.avsc` output file.
 //
 // JSON comparison approach: We compare `serde_json::Value` trees via
-// `assert_eq!`. With the `preserve_order` feature enabled on `serde_json`,
-// `Value::Object` uses `IndexMap` internally, so key ordering is preserved
-// during both deserialization and comparison. This means our comparisons are
-// sensitive to key order, which is the desired behavior since the Avro spec
-// defines a canonical key order for schema JSON. If `preserve_order` were
-// disabled, `Value` would use `BTreeMap` and sort keys alphabetically, making
-// comparisons order-insensitive -- still correct for semantic equality, but
-// unable to detect key-ordering regressions.
+// `assert_eq!`. Our JSON serialization sorts object keys alphabetically,
+// so `Value` comparison is order-insensitive and tests semantic equality.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,7 +16,7 @@ use std::path::{Path, PathBuf};
 use avdl::import::{import_protocol, import_schema, ImportContext};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json};
 use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportKind};
-use indexmap::IndexSet;
+use std::collections::HashSet;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 
@@ -117,7 +111,7 @@ fn idl_file_to_json(idl_file: IdlFile, registry: avdl::resolve::SchemaRegistry) 
             // resolved and inlined, matching the protocol-mode behavior.
             let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
             let lookup = build_lookup(&registry_schemas, None);
-            schema_to_json(&schema, &mut IndexSet::new(), None, &lookup)
+            schema_to_json(&schema, &mut HashSet::new(), None, &lookup)
         }
         IdlFile::NamedSchemasFile(schemas) => {
             // Bare named type declarations are serialized as a JSON array.
@@ -125,7 +119,7 @@ fn idl_file_to_json(idl_file: IdlFile, registry: avdl::resolve::SchemaRegistry) 
             let lookup = build_lookup(&registry_schemas, None);
             let json_schemas: Vec<Value> = schemas
                 .iter()
-                .map(|s| schema_to_json(s, &mut IndexSet::new(), None, &lookup))
+                .map(|s| schema_to_json(s, &mut HashSet::new(), None, &lookup))
                 .collect();
             Value::Array(json_schemas)
         }
@@ -159,7 +153,7 @@ fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path])
     import_ctx.mark_imported(&canonical);
 
     // Accumulate messages from IDL imports.
-    let mut imported_messages = indexmap::IndexMap::new();
+    let mut imported_messages = std::collections::HashMap::new();
 
     // Process declaration items in source order, recursively resolving imports.
     process_decl_items_test(
@@ -192,7 +186,7 @@ fn process_decl_items_test(
     registry: &mut avdl::resolve::SchemaRegistry,
     import_ctx: &mut ImportContext,
     current_dir: &Path,
-    messages: &mut indexmap::IndexMap<String, avdl::model::protocol::Message>,
+    messages: &mut std::collections::HashMap<String, avdl::model::protocol::Message>,
 ) {
     for item in decl_items {
         match item {
@@ -437,7 +431,7 @@ fn test_status_schema() {
 fn parse_idl2schemata(
     avdl_path: &Path,
     import_dirs: &[&Path],
-) -> indexmap::IndexMap<String, Value> {
+) -> std::collections::HashMap<String, Value> {
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
@@ -505,11 +499,11 @@ fn parse_idl2schemata(
     // inlined on first occurrence.
     let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
     let all_lookup = build_lookup(&registry_schemas, None);
-    let mut result = indexmap::IndexMap::new();
+    let mut result = std::collections::HashMap::new();
 
     for schema in &registry_schemas {
         if let Some(simple_name) = schema.name() {
-            let mut known_names = IndexSet::new();
+            let mut known_names = HashSet::new();
             let json_value = schema_to_json(schema, &mut known_names, None, &all_lookup);
             result.insert(simple_name.to_string(), json_value);
         }
@@ -527,12 +521,13 @@ fn test_idl2schemata_echo() {
     let schemata = parse_idl2schemata(&input_path("echo.avdl"), &[]);
 
     // echo.avdl defines two records: Ping and Pong.
+    let mut keys: Vec<_> = schemata.keys().collect();
+    keys.sort();
     assert_eq!(
-        schemata.keys().collect::<Vec<_>>(),
+        keys,
         vec!["Ping", "Pong"],
         "expected Ping and Pong schemas from echo.avdl"
     );
-
     // Verify Ping schema structure.
     let ping = &schemata["Ping"];
     assert_eq!(ping["type"], "record");
@@ -568,11 +563,12 @@ fn test_idl2schemata_echo() {
 fn test_idl2schemata_simple() {
     let schemata = parse_idl2schemata(&input_path("simple.avdl"), &[]);
 
-    let names: Vec<&String> = schemata.keys().collect();
+    let mut names: Vec<&String> = schemata.keys().collect();
+    names.sort();
     assert_eq!(
         names,
-        vec!["Kind", "Status", "TestRecord", "MD5", "TestError"],
-        "expected five named schemas from simple.avdl in declaration order"
+        vec!["Kind", "MD5", "Status", "TestError", "TestRecord"],
+        "expected five named schemas from simple.avdl"
     );
 
     // Kind: enum with three symbols and an alias.
@@ -859,7 +855,7 @@ fn test_empty_namespace_annotation_emits_namespace_key() {
 #[test]
 fn test_nested_types_inherit_record_namespace_in_lookup() {
     use avdl::model::schema::{AvroSchema, Field};
-    use indexmap::IndexMap;
+    use std::collections::HashMap;
 
     let inner_enum = AvroSchema::Enum {
         name: "InnerEnum".to_string(),
@@ -868,7 +864,7 @@ fn test_nested_types_inherit_record_namespace_in_lookup() {
         symbols: vec!["A".to_string(), "B".to_string()],
         default: None,
         aliases: vec![],
-        properties: IndexMap::new(),
+        properties: HashMap::new(),
     };
 
     let outer_record = AvroSchema::Record {
@@ -882,11 +878,11 @@ fn test_nested_types_inherit_record_namespace_in_lookup() {
             default: None,
             order: None,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         }],
         is_error: false,
         aliases: vec![],
-        properties: IndexMap::new(),
+        properties: HashMap::new(),
     };
 
     // Protocol default namespace is "org.example", but Outer overrides to
@@ -1406,11 +1402,12 @@ fn test_builtin_logical_type_with_custom_annotation() {
 fn test_idl2schemata_interop() {
     let schemata = parse_idl2schemata(&input_path("interop.avdl"), &[]);
 
-    let names: Vec<&String> = schemata.keys().collect();
+    let mut names: Vec<&String> = schemata.keys().collect();
+    names.sort();
     assert_eq!(
         names,
-        vec!["Foo", "Kind", "MD5", "Node", "Interop"],
-        "expected five named schemas from interop.avdl in declaration order"
+        vec!["Foo", "Interop", "Kind", "MD5", "Node"],
+        "expected five named schemas from interop.avdl"
     );
 
     // Foo: simple record with a single string field.
@@ -1473,7 +1470,7 @@ fn test_idl2schemata_interop() {
 fn parse_idl2schemata_with_idl_imports(
     avdl_path: &Path,
     import_dirs: &[&Path],
-) -> indexmap::IndexMap<String, Value> {
+) -> std::collections::HashMap<String, Value> {
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
@@ -1495,7 +1492,7 @@ fn parse_idl2schemata_with_idl_imports(
 
     // Messages are not needed for idl2schemata, but process_decl_items_test
     // requires a messages accumulator.
-    let mut messages = indexmap::IndexMap::new();
+    let mut messages = std::collections::HashMap::new();
 
     process_decl_items_test(
         &decl_items,
@@ -1513,11 +1510,11 @@ fn parse_idl2schemata_with_idl_imports(
 
     let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
     let all_lookup = build_lookup(&registry_schemas, None);
-    let mut result = indexmap::IndexMap::new();
+    let mut result = std::collections::HashMap::new();
 
     for schema in &registry_schemas {
         if let Some(simple_name) = schema.name() {
-            let mut known_names = IndexSet::new();
+            let mut known_names = HashSet::new();
             let json_value = schema_to_json(schema, &mut known_names, None, &all_lookup);
             result.insert(simple_name.to_string(), json_value);
         }
@@ -1720,10 +1717,11 @@ fn test_idl2schemata_tools_protocol() {
     let avdl_path = PathBuf::from(TOOLS_IDL_DIR).join("protocol.avdl");
     let schemata = parse_idl2schemata(&avdl_path, &[]);
 
-    let names: Vec<&String> = schemata.keys().collect();
+    let mut names: Vec<&String> = schemata.keys().collect();
+    names.sort();
     assert_eq!(
         names,
-        vec!["Kind", "MD5", "TestRecord", "TestError"],
+        vec!["Kind", "MD5", "TestError", "TestRecord"],
         "tools/protocol.avdl should produce exactly 4 named schemas"
     );
 
@@ -1874,7 +1872,7 @@ fn test_idl2schemata_golden_comparison() {
     /// Compare idl2schemata output against golden `.avpr` metadata.
     fn compare_schemata(
         name: &str,
-        schemata: &indexmap::IndexMap<String, Value>,
+        schemata: &std::collections::HashMap<String, Value>,
         golden: &Value,
     ) {
         let golden_metadata = extract_golden_type_metadata(golden);

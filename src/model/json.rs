@@ -9,7 +9,7 @@
 //   then as bare string names afterward.
 // - Primitives serialize as plain strings: "null", "int", etc.
 // - Unions serialize as JSON arrays: ["null", "string"].
-// - JSON object key order is carefully controlled to match Java output.
+// - JSON object keys are alphabetically sorted (BTreeMap-backed serde_json::Map).
 //
 // References (`AvroSchema::Reference`) are resolved against a lookup table so
 // they can be inlined at their first use, just as the Java tools do. This is
@@ -17,10 +17,9 @@
 // after the record that uses it -- the expected JSON inlines the enum inside
 // the record's field.
 
+use std::collections::{HashMap, HashSet};
 use std::io;
 
-use indexmap::IndexMap;
-use indexmap::IndexSet;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -46,7 +45,7 @@ const SCHEMA_TYPE_NAMES: &[&str] = &[
 
 /// A lookup table from full type name to the actual schema definition. This
 /// allows `Reference` nodes to be resolved and inlined at their first use.
-pub type SchemaLookup = IndexMap<String, AvroSchema>;
+pub type SchemaLookup = HashMap<String, AvroSchema>;
 
 /// Serialize a `Protocol` to a `serde_json::Value` matching the Java Avro tools output.
 pub fn protocol_to_json(protocol: &Protocol) -> Value {
@@ -55,8 +54,8 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
     // in the schema registry.
     let lookup = build_lookup(&protocol.types, protocol.namespace.as_deref());
 
-    let mut known_names = IndexSet::new();
-    let mut obj = IndexMap::new();
+    let mut known_names = HashSet::new();
+    let mut obj = Map::new();
 
     obj.insert("protocol".to_string(), Value::String(protocol.name.clone()));
     if let Some(ns) = &protocol.namespace {
@@ -81,16 +80,16 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
         .collect();
     obj.insert("types".to_string(), Value::Array(types));
 
-    let mut messages_obj = IndexMap::new();
+    let mut messages_obj = Map::new();
     for (name, msg) in &protocol.messages {
         messages_obj.insert(
             name.clone(),
             message_to_json(msg, &mut known_names, protocol.namespace.as_deref(), &lookup),
         );
     }
-    obj.insert("messages".to_string(), indexmap_to_value(messages_obj));
+    obj.insert("messages".to_string(), Value::Object(messages_obj));
 
-    indexmap_to_value(obj)
+    Value::Object(obj)
 }
 
 /// Build a lookup table of full_name -> AvroSchema for all named types,
@@ -103,7 +102,7 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
 /// This is public so that schema-mode callers (which don't go through
 /// `protocol_to_json`) can build a lookup from registry schemas.
 pub fn build_lookup(types: &[AvroSchema], default_namespace: Option<&str>) -> SchemaLookup {
-    let mut lookup = IndexMap::new();
+    let mut lookup = HashMap::new();
     for schema in types {
         collect_named_types(schema, default_namespace, &mut lookup);
     }
@@ -171,7 +170,7 @@ fn collect_named_types(
 /// at their first use.
 pub fn schema_to_json(
     schema: &AvroSchema,
-    known_names: &mut IndexSet<String>,
+    known_names: &mut HashSet<String>,
     enclosing_namespace: Option<&str>,
     lookup: &SchemaLookup,
 ) -> Value {
@@ -193,7 +192,7 @@ pub fn schema_to_json(
         // as {"type": "int", ...properties} instead of bare "int".
         // =====================================================================
         AvroSchema::AnnotatedPrimitive { kind, properties } => {
-            let mut obj = IndexMap::new();
+            let mut obj = Map::new();
             obj.insert(
                 "type".to_string(),
                 Value::String(kind.as_str().to_string()),
@@ -201,12 +200,11 @@ pub fn schema_to_json(
             for (k, v) in properties {
                 obj.insert(k.clone(), v.clone());
             }
-            indexmap_to_value(obj)
+            Value::Object(obj)
         }
 
         // =====================================================================
-        // Record: key order is type, name, namespace (if different), doc,
-        // fields, aliases, then properties.
+        // Record
         // =====================================================================
         AvroSchema::Record {
             name,
@@ -230,7 +228,7 @@ pub fn schema_to_json(
             }
             known_names.insert(full_name);
 
-            let mut obj = IndexMap::new();
+            let mut obj = Map::new();
             obj.insert(
                 "type".to_string(),
                 Value::String(if *is_error { "error" } else { "record" }.to_string()),
@@ -272,12 +270,11 @@ pub fn schema_to_json(
                     .collect();
                 obj.insert("aliases".to_string(), Value::Array(aliases_json));
             }
-            indexmap_to_value(obj)
+            Value::Object(obj)
         }
 
         // =====================================================================
-        // Enum: key order is type, name, namespace (if different), doc,
-        // symbols, default, properties, then aliases.
+        // Enum
         // =====================================================================
         AvroSchema::Enum {
             name,
@@ -301,7 +298,7 @@ pub fn schema_to_json(
             }
             known_names.insert(full_name);
 
-            let mut obj = IndexMap::new();
+            let mut obj = Map::new();
             obj.insert(
                 "type".to_string(),
                 Value::String("enum".to_string()),
@@ -336,12 +333,11 @@ pub fn schema_to_json(
                     .collect();
                 obj.insert("aliases".to_string(), Value::Array(aliases_json));
             }
-            indexmap_to_value(obj)
+            Value::Object(obj)
         }
 
         // =====================================================================
-        // Fixed: key order is type, name, namespace (if different), doc,
-        // size, properties, then aliases.
+        // Fixed
         // =====================================================================
         AvroSchema::Fixed {
             name,
@@ -364,7 +360,7 @@ pub fn schema_to_json(
             }
             known_names.insert(full_name);
 
-            let mut obj = IndexMap::new();
+            let mut obj = Map::new();
             obj.insert(
                 "type".to_string(),
                 Value::String("fixed".to_string()),
@@ -394,14 +390,14 @@ pub fn schema_to_json(
                     .collect();
                 obj.insert("aliases".to_string(), Value::Array(aliases_json));
             }
-            indexmap_to_value(obj)
+            Value::Object(obj)
         }
 
         // =====================================================================
         // Array: {"type": "array", "items": ..., ...properties}
         // =====================================================================
         AvroSchema::Array { items, properties } => {
-            let mut obj = IndexMap::new();
+            let mut obj = Map::new();
             obj.insert(
                 "type".to_string(),
                 Value::String("array".to_string()),
@@ -413,14 +409,14 @@ pub fn schema_to_json(
             for (k, v) in properties {
                 obj.insert(k.clone(), v.clone());
             }
-            indexmap_to_value(obj)
+            Value::Object(obj)
         }
 
         // =====================================================================
         // Map: {"type": "map", "values": ..., ...properties}
         // =====================================================================
         AvroSchema::Map { values, properties } => {
-            let mut obj = IndexMap::new();
+            let mut obj = Map::new();
             obj.insert(
                 "type".to_string(),
                 Value::String("map".to_string()),
@@ -432,7 +428,7 @@ pub fn schema_to_json(
             for (k, v) in properties {
                 obj.insert(k.clone(), v.clone());
             }
-            indexmap_to_value(obj)
+            Value::Object(obj)
         }
 
         // =====================================================================
@@ -454,7 +450,7 @@ pub fn schema_to_json(
             logical_type,
             properties,
         } => {
-            let mut obj = IndexMap::new();
+            let mut obj = Map::new();
             match logical_type {
                 LogicalType::Date => {
                     obj.insert("type".to_string(), Value::String("int".to_string()));
@@ -510,7 +506,7 @@ pub fn schema_to_json(
             for (k, v) in properties {
                 obj.insert(k.clone(), v.clone());
             }
-            indexmap_to_value(obj)
+            Value::Object(obj)
         }
 
         // =====================================================================
@@ -554,16 +550,15 @@ pub fn schema_to_json(
 
 // =============================================================================
 // Helper: serialize a record field to JSON.
-// Key order: name, type, doc, default, order (if not ascending), aliases, properties.
 // =============================================================================
 
 fn field_to_json(
     field: &Field,
-    known_names: &mut IndexSet<String>,
+    known_names: &mut HashSet<String>,
     enclosing_namespace: Option<&str>,
     lookup: &SchemaLookup,
 ) -> Value {
-    let mut obj = IndexMap::new();
+    let mut obj = Map::new();
     obj.insert("name".to_string(), Value::String(field.name.clone()));
     obj.insert(
         "type".to_string(),
@@ -599,21 +594,20 @@ fn field_to_json(
     for (k, v) in &field.properties {
         obj.insert(k.clone(), v.clone());
     }
-    indexmap_to_value(obj)
+    Value::Object(obj)
 }
 
 // =============================================================================
 // Helper: serialize a protocol message to JSON.
-// Key order: doc, properties, request, response, errors (if any), one-way (if true).
 // =============================================================================
 
 fn message_to_json(
     msg: &Message,
-    known_names: &mut IndexSet<String>,
+    known_names: &mut HashSet<String>,
     enclosing_namespace: Option<&str>,
     lookup: &SchemaLookup,
 ) -> Value {
-    let mut obj = IndexMap::new();
+    let mut obj = Map::new();
     if let Some(doc) = &msg.doc {
         obj.insert("doc".to_string(), Value::String(doc.clone()));
     }
@@ -640,7 +634,7 @@ fn message_to_json(
     if msg.one_way {
         obj.insert("one-way".to_string(), Value::Bool(true));
     }
-    indexmap_to_value(obj)
+    Value::Object(obj)
 }
 
 /// When referencing a named type, use just the simple name if it shares the same
@@ -693,11 +687,6 @@ fn alias_ref_name(alias: &str, schema_namespace: Option<&str>) -> String {
     }
 }
 
-/// Convert an `IndexMap` to a `serde_json::Value::Object`, preserving insertion order.
-fn indexmap_to_value(map: IndexMap<String, Value>) -> Value {
-    let json_map: Map<String, Value> = map.into_iter().collect();
-    Value::Object(json_map)
-}
 
 // =============================================================================
 // Java-Compatible JSON Serialization
@@ -950,14 +939,14 @@ mod tests {
     /// Serialize a schema with no prior known names, no enclosing namespace,
     /// and an empty lookup table. Suitable for testing standalone schemas.
     fn serialize_schema(schema: &AvroSchema) -> Value {
-        schema_to_json(schema, &mut IndexSet::new(), None, &IndexMap::new())
+        schema_to_json(schema, &mut HashSet::new(), None, &HashMap::new())
     }
 
     /// Serialize a schema with the given known names and lookup, returning the
     /// updated known_names set for subsequent assertions.
     fn serialize_schema_tracking(
         schema: &AvroSchema,
-        known_names: &mut IndexSet<String>,
+        known_names: &mut HashSet<String>,
         enclosing_ns: Option<&str>,
         lookup: &SchemaLookup,
     ) -> Value {
@@ -986,7 +975,7 @@ mod tests {
 
     #[test]
     fn annotated_primitive_serializes_as_object() {
-        let mut props = IndexMap::new();
+        let mut props = HashMap::new();
         props.insert("foo.bar".to_string(), json!("baz"));
 
         let schema = AvroSchema::AnnotatedPrimitive {
@@ -1003,7 +992,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn record_serializes_with_correct_key_order() {
+    fn record_serializes_correctly() {
         let schema = AvroSchema::Record {
             name: "Person".to_string(),
             namespace: Some("com.example".to_string()),
@@ -1016,7 +1005,7 @@ mod tests {
                     default: None,
                     order: None,
                     aliases: vec![],
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 },
                 Field {
                     name: "age".to_string(),
@@ -1025,12 +1014,12 @@ mod tests {
                     default: Some(json!(0)),
                     order: None,
                     aliases: vec![],
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 },
             ],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = serialize_schema(&schema);
@@ -1062,11 +1051,11 @@ mod tests {
                 default: None,
                 order: None,
                 aliases: vec![],
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }],
             is_error: true,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = serialize_schema(&schema);
@@ -1076,7 +1065,7 @@ mod tests {
 
     #[test]
     fn record_with_aliases_and_properties() {
-        let mut props = IndexMap::new();
+        let mut props = HashMap::new();
         props.insert("my-prop".to_string(), json!({"key": 42}));
 
         let schema = AvroSchema::Record {
@@ -1105,14 +1094,14 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = schema_to_json(
             &schema,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             Some("org.example"),
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         assert!(result.get("namespace").is_none());
     }
@@ -1126,14 +1115,14 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = schema_to_json(
             &schema,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             Some("org.example"),
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         assert_eq!(result["namespace"], json!("org.other"));
     }
@@ -1151,7 +1140,7 @@ mod tests {
             symbols: vec!["A".to_string(), "B".to_string(), "C".to_string()],
             default: Some("C".to_string()),
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = serialize_schema(&schema);
@@ -1177,7 +1166,7 @@ mod tests {
             symbols: vec!["FOO".to_string(), "BAR".to_string()],
             default: None,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = serialize_schema(&schema);
@@ -1196,7 +1185,7 @@ mod tests {
             doc: Some("An MD5 hash.".to_string()),
             size: 16,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = serialize_schema(&schema);
@@ -1219,7 +1208,7 @@ mod tests {
     fn array_serializes_correctly() {
         let schema = AvroSchema::Array {
             items: Box::new(AvroSchema::String),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = serialize_schema(&schema);
@@ -1228,7 +1217,7 @@ mod tests {
 
     #[test]
     fn array_with_properties() {
-        let mut props = IndexMap::new();
+        let mut props = HashMap::new();
         props.insert("foo.bar".to_string(), json!("baz"));
 
         let schema = AvroSchema::Array {
@@ -1251,7 +1240,7 @@ mod tests {
     fn map_serializes_correctly() {
         let schema = AvroSchema::Map {
             values: Box::new(AvroSchema::Int),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = serialize_schema(&schema);
@@ -1281,7 +1270,7 @@ mod tests {
     fn logical_type_date() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::Date,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert_eq!(
             serialize_schema(&schema),
@@ -1293,7 +1282,7 @@ mod tests {
     fn logical_type_time_millis() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::TimeMillis,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert_eq!(
             serialize_schema(&schema),
@@ -1305,7 +1294,7 @@ mod tests {
     fn logical_type_timestamp_millis() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::TimestampMillis,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert_eq!(
             serialize_schema(&schema),
@@ -1317,7 +1306,7 @@ mod tests {
     fn logical_type_local_timestamp_millis() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::LocalTimestampMillis,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert_eq!(
             serialize_schema(&schema),
@@ -1329,7 +1318,7 @@ mod tests {
     fn logical_type_uuid() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::Uuid,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert_eq!(
             serialize_schema(&schema),
@@ -1344,7 +1333,7 @@ mod tests {
                 precision: 6,
                 scale: 2,
             },
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
         assert_eq!(
             serialize_schema(&schema),
@@ -1371,23 +1360,23 @@ mod tests {
                 default: None,
                 order: None,
                 aliases: vec![],
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut lookup = IndexMap::new();
+        let mut lookup = HashMap::new();
         lookup.insert("org.example.Ping".to_string(), record);
 
         let reference = AvroSchema::Reference {
             name: "Ping".to_string(),
             namespace: Some("org.example".to_string()),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut known = IndexSet::new();
+        let mut known = HashSet::new();
         let result = serialize_schema_tracking(&reference, &mut known, None, &lookup);
 
         // First use: should be the full record definition (an object).
@@ -1405,19 +1394,19 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut lookup = IndexMap::new();
+        let mut lookup = HashMap::new();
         lookup.insert("org.example.Ping".to_string(), record);
 
         let reference = AvroSchema::Reference {
             name: "Ping".to_string(),
             namespace: Some("org.example".to_string()),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut known = IndexSet::new();
+        let mut known = HashSet::new();
         // First use inlines the definition.
         let _ = serialize_schema_tracking(&reference, &mut known, None, &lookup);
         // Second use should be a bare name string.
@@ -1434,19 +1423,19 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut lookup = IndexMap::new();
+        let mut lookup = HashMap::new();
         lookup.insert("org.example.Ping".to_string(), record);
 
         let reference = AvroSchema::Reference {
             name: "Ping".to_string(),
             namespace: Some("org.example".to_string()),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut known = IndexSet::new();
+        let mut known = HashSet::new();
         // First use inlines.
         let _ = serialize_schema_tracking(
             &reference,
@@ -1662,14 +1651,14 @@ mod tests {
                 "other.DiffNs".to_string(),
                 "NoNs".to_string(),
             ],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = schema_to_json(
             &schema,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             Some("test.aliases"),
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         assert_eq!(result["aliases"], json!(["SameNs", "other.DiffNs", "NoNs"]));
     }
@@ -1686,14 +1675,14 @@ mod tests {
                 "test.aliases.OldEnum".to_string(),
                 "other.ns.ForeignEnum".to_string(),
             ],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = schema_to_json(
             &schema,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             Some("test.aliases"),
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         assert_eq!(result["aliases"], json!(["OldEnum", "other.ns.ForeignEnum"]));
     }
@@ -1706,14 +1695,14 @@ mod tests {
             doc: None,
             size: 16,
             aliases: vec!["test.aliases.OldFixed".to_string()],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = schema_to_json(
             &schema,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             Some("test.aliases"),
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         assert_eq!(result["aliases"], json!(["OldFixed"]));
     }
@@ -1731,14 +1720,14 @@ mod tests {
                 "test.kw.record".to_string(),
                 "test.kw.NormalAlias".to_string(),
             ],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = schema_to_json(
             &schema,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             Some("test.kw"),
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         assert_eq!(result["aliases"], json!(["test.kw.record", "NormalAlias"]));
     }
@@ -1762,23 +1751,23 @@ mod tests {
                 default: None,
                 order: None,
                 aliases: vec![],
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut lookup = IndexMap::new();
+        let mut lookup = HashMap::new();
         lookup.insert("test.kw.record".to_string(), record.clone());
 
         let reference = AvroSchema::Reference {
             name: "record".to_string(),
             namespace: Some("test.kw".to_string()),
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut known = IndexSet::new();
+        let mut known = HashSet::new();
         // First use inlines the definition.
         let _ = serialize_schema_tracking(
             &reference,
@@ -1810,14 +1799,14 @@ mod tests {
             default: Some(json!("FOO")),
             order: Some(FieldOrder::Descending),
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = field_to_json(
             &field,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             None,
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         assert_eq!(result["name"], json!("kind"));
         assert_eq!(result["type"], json!("string"));
@@ -1835,14 +1824,14 @@ mod tests {
             default: None,
             order: Some(FieldOrder::Ascending),
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = field_to_json(
             &field,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             None,
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         // Ascending is the default and should be omitted.
         assert!(result.get("order").is_none());
@@ -1857,21 +1846,21 @@ mod tests {
             default: None,
             order: Some(FieldOrder::Ignore),
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let result = field_to_json(
             &field,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             None,
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         assert_eq!(result["order"], json!("ignore"));
     }
 
     #[test]
     fn field_with_aliases_and_properties() {
-        let mut props = IndexMap::new();
+        let mut props = HashMap::new();
         props.insert("custom-prop".to_string(), json!(true));
 
         let field = Field {
@@ -1886,9 +1875,9 @@ mod tests {
 
         let result = field_to_json(
             &field,
-            &mut IndexSet::new(),
+            &mut HashSet::new(),
             None,
-            &IndexMap::new(),
+            &HashMap::new(),
         );
         assert_eq!(result["aliases"], json!(["old_hash", "h"]));
         assert_eq!(result["custom-prop"], json!(true));
@@ -1904,7 +1893,7 @@ mod tests {
             name: "Echo".to_string(),
             namespace: Some("org.example".to_string()),
             doc: None,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
             types: vec![AvroSchema::Record {
                 name: "Ping".to_string(),
                 namespace: Some("org.example".to_string()),
@@ -1916,13 +1905,13 @@ mod tests {
                     default: Some(json!(-1)),
                     order: None,
                     aliases: vec![],
-                    properties: IndexMap::new(),
+                    properties: HashMap::new(),
                 }],
                 is_error: false,
                 aliases: vec![],
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }],
-            messages: IndexMap::new(),
+            messages: HashMap::new(),
         };
 
         let result = protocol_to_json(&protocol);
@@ -1936,7 +1925,7 @@ mod tests {
 
     #[test]
     fn protocol_with_doc_and_properties() {
-        let mut props = IndexMap::new();
+        let mut props = HashMap::new();
         props.insert("version".to_string(), json!("1.0"));
 
         let protocol = Protocol {
@@ -1945,7 +1934,7 @@ mod tests {
             doc: Some("A greeter protocol.".to_string()),
             properties: props,
             types: vec![],
-            messages: IndexMap::new(),
+            messages: HashMap::new(),
         };
 
         let result = protocol_to_json(&protocol);
@@ -1960,15 +1949,15 @@ mod tests {
             name: "Svc".to_string(),
             namespace: Some("org.example".to_string()),
             doc: None,
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
             types: vec![],
             messages: {
-                let mut msgs = IndexMap::new();
+                let mut msgs = HashMap::new();
                 msgs.insert(
                     "hello".to_string(),
                     Message {
                         doc: Some("Say hello.".to_string()),
-                        properties: IndexMap::new(),
+                        properties: HashMap::new(),
                         request: vec![Field {
                             name: "greeting".to_string(),
                             schema: AvroSchema::String,
@@ -1976,7 +1965,7 @@ mod tests {
                             default: None,
                             order: None,
                             aliases: vec![],
-                            properties: IndexMap::new(),
+                            properties: HashMap::new(),
                         }],
                         response: AvroSchema::String,
                         errors: None,
@@ -1987,7 +1976,7 @@ mod tests {
                     "ping".to_string(),
                     Message {
                         doc: None,
-                        properties: IndexMap::new(),
+                        properties: HashMap::new(),
                         request: vec![],
                         response: AvroSchema::Null,
                         errors: None,
@@ -2027,7 +2016,7 @@ mod tests {
             symbols: vec!["A".to_string(), "B".to_string()],
             default: None,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let record = AvroSchema::Record {
@@ -2041,11 +2030,11 @@ mod tests {
                 default: None,
                 order: None,
                 aliases: vec![],
-                properties: IndexMap::new(),
+                properties: HashMap::new(),
             }],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let lookup = build_lookup(&[record], Some("org.example"));
@@ -2063,7 +2052,7 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
         let lookup = build_lookup(&[record], Some("org.default"));
@@ -2083,11 +2072,11 @@ mod tests {
             fields: vec![],
             is_error: false,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut known = IndexSet::new();
-        let lookup = IndexMap::new();
+        let mut known = HashSet::new();
+        let lookup = HashMap::new();
 
         // First serialization: full object.
         let first = serialize_schema_tracking(&schema, &mut known, None, &lookup);
@@ -2107,11 +2096,11 @@ mod tests {
             symbols: vec!["RED".to_string()],
             default: None,
             aliases: vec![],
-            properties: IndexMap::new(),
+            properties: HashMap::new(),
         };
 
-        let mut known = IndexSet::new();
-        let lookup = IndexMap::new();
+        let mut known = HashSet::new();
+        let lookup = HashMap::new();
 
         // First serialization within matching namespace: full object.
         let first = serialize_schema_tracking(
