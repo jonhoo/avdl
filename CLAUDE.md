@@ -220,7 +220,7 @@ cargo run -- idl --import-dir ./extra/ input.avdl
 
 ```
 src/
-  main.rs               CLI (clap): `idl` and `idl2schemata` subcommands
+  main.rs               CLI (lexopt): `idl` and `idl2schemata` subcommands
   lib.rs                 Module declarations
   reader.rs              Core ANTLR tree walker — the heart of the parser
   model/
