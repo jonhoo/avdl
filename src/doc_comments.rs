@@ -61,9 +61,10 @@ where
     // Record the consumed token index so we can later detect orphaned doc
     // comments (those not consumed by any declaration).
     if let Some(consumed) = consumed_indices
-        && let Some(idx) = doc_token_index {
-            consumed.insert(idx);
-        }
+        && let Some(idx) = doc_token_index
+    {
+        consumed.insert(idx);
+    }
 
     // Strip the /** prefix and */ suffix.
     let inner = text

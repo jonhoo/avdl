@@ -846,9 +846,11 @@ fn walk_protocol<'input>(
     let protocol_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&protocol_name.as_str()) {
-        return Err(
-            make_diagnostic(src, &*name_ctx, format!("Illegal name: {protocol_name}")),
-        );
+        return Err(make_diagnostic(
+            src,
+            &*name_ctx,
+            format!("Illegal name: {protocol_name}"),
+        ));
     }
 
     // Build the protocol properties (custom annotations that aren't namespace/aliases/order).
@@ -963,9 +965,11 @@ fn walk_record<'input>(
     let record_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&record_name.as_str()) {
-        return Err(
-            make_diagnostic(src, &*name_ctx, format!("Illegal name: {record_name}")),
-        );
+        return Err(make_diagnostic(
+            src,
+            &*name_ctx,
+            format!("Illegal name: {record_name}"),
+        ));
     }
 
     // Save and set the current namespace for field type resolution inside the
@@ -1117,13 +1121,14 @@ fn walk_variable<'input>(
     // This catches mismatches like `int count = "hello"` at compile time, matching
     // Java's `Schema.Field` constructor behavior with `validate=true`.
     if let Some(ref default_val) = default_value
-        && let Some(reason) = validate_default(default_val, &final_type) {
-            return Err(make_diagnostic(
-                src,
-                ctx,
-                format!("Invalid default for field `{field_name}`: {reason}"),
-            ));
-        }
+        && let Some(reason) = validate_default(default_val, &final_type)
+    {
+        return Err(make_diagnostic(
+            src,
+            ctx,
+            format!("Invalid default for field `{field_name}`: {reason}"),
+        ));
+    }
 
     Ok(Field {
         name: field_name,
@@ -1161,7 +1166,11 @@ fn walk_enum<'input>(
     let enum_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&enum_name.as_str()) {
-        return Err(make_diagnostic(src, &*name_ctx, format!("Illegal name: {enum_name}")));
+        return Err(make_diagnostic(
+            src,
+            &*name_ctx,
+            format!("Illegal name: {enum_name}"),
+        ));
     }
 
     // Collect enum symbols, rejecting duplicates.
@@ -1245,7 +1254,11 @@ fn walk_fixed<'input>(
     let fixed_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&fixed_name.as_str()) {
-        return Err(make_diagnostic(src, &*name_ctx, format!("Illegal name: {fixed_name}")));
+        return Err(make_diagnostic(
+            src,
+            &*name_ctx,
+            format!("Illegal name: {fixed_name}"),
+        ));
     }
 
     // Parse the size from the IntegerLiteral token.
@@ -1298,7 +1311,11 @@ fn walk_full_type<'input>(
     // The Java implementation checks this in exitNullableType (IdlReader.java
     // lines 776-777) and throws "Type references may not be annotated".
     if !props.properties.is_empty() && is_type_reference(&schema) {
-        return Err(make_diagnostic(src, ctx, "Type references may not be annotated"));
+        return Err(make_diagnostic(
+            src,
+            ctx,
+            "Type references may not be annotated",
+        ));
     }
 
     // Apply custom properties to the schema. For nullable unions we apply
@@ -1920,9 +1937,10 @@ fn try_parse_low_surrogate(chars: &mut std::iter::Peekable<std::str::Chars<'_>>)
         return None;
     }
     if let Ok(low) = u32::from_str_radix(&hex, 16)
-        && (0xDC00..=0xDFFF).contains(&low) {
-            return Some(low);
-        }
+        && (0xDC00..=0xDFFF).contains(&low)
+    {
+        return Some(low);
+    }
     // Not a low surrogate — restore the iterator to where we started so
     // the caller can process these characters normally.
     *chars = saved;
@@ -2072,11 +2090,9 @@ fn parse_float_text(text: &str) -> Result<f64> {
 fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Result<f64> {
     // Split on the binary exponent marker (p/P). The grammar guarantees
     // exactly one is present.
-    let (mantissa_str, exp_str) = hex_body
-        .split_once(['p', 'P'])
-        .ok_or_else(|| {
-            miette::miette!("invalid hex float literal '{original}': missing 'p'/'P' exponent")
-        })?;
+    let (mantissa_str, exp_str) = hex_body.split_once(['p', 'P']).ok_or_else(|| {
+        miette::miette!("invalid hex float literal '{original}': missing 'p'/'P' exponent")
+    })?;
 
     // Parse the binary exponent (decimal integer, possibly signed).
     let exponent: i32 = exp_str

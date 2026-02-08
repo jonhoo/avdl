@@ -62,17 +62,18 @@ fn validate_schema_name(name: &str, namespace: &Option<String>) -> Result<(), St
         ));
     }
     if let Some(ns) = namespace
-        && !ns.is_empty() {
-            for segment in ns.split('.') {
-                if !is_valid_avro_name(segment) {
-                    return Err(format!(
-                        "invalid Avro namespace segment: `{segment}` in `{ns}` \
+        && !ns.is_empty()
+    {
+        for segment in ns.split('.') {
+            if !is_valid_avro_name(segment) {
+                return Err(format!(
+                    "invalid Avro namespace segment: `{segment}` in `{ns}` \
                          (each segment must start with a letter or underscore, \
                          followed by letters, digits, or underscores)"
-                    ));
-                }
+                ));
             }
         }
+    }
     Ok(())
 }
 
