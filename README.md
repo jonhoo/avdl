@@ -23,10 +23,10 @@ avdl idl --import-dir ./extra/ input.avdl
 ## Install
 
 ```sh
-cargo install --path .
+cargo install avdl
 ```
 
-Or just build and run locally:
+Or build and run from a local checkout:
 
 ```sh
 cargo build
