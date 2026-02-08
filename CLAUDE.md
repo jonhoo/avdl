@@ -161,6 +161,13 @@ until some_command; do sleep 1; done
 
 [cc-24136]: https://github.com/anthropics/claude-code/issues/24136
 
+### Sandbox discipline
+
+Never use `dangerouslyDisableSandbox` preemptively. Always attempt
+commands in the default sandbox first — both `cargo` and `java -jar`
+work fine. Only bypass the sandbox after observing an actual
+permission error, and document which error triggered the bypass.
+
 ### Regenerating the ANTLR parser
 
 The generated parser/lexer in `src/generated/` is checked in so that
