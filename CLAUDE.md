@@ -186,23 +186,20 @@ The one standing exception is `gh` (see above).
 
 The generated parser/lexer in `src/generated/` is checked in so that
 building the project only requires Rust. Regeneration is only needed
-when the grammar (`Idl.g4`) changes or the `antlr4rust` submodule is
-updated.
+when the grammar (`Idl.g4`) changes.
 
 ```sh
-scripts/regenerate-antlr.sh                # regenerate using existing JAR
-scripts/regenerate-antlr.sh --rebuild-jar  # rebuild JAR from source first
+scripts/regenerate-antlr.sh
 ```
 
 **Prerequisites** (only for regeneration, not for normal builds):
 - Java (tested with 21)
-- Maven (only if `--rebuild-jar` is used)
 
-The `antlr4rust` submodule is a fork of ANTLR4 that adds Rust target
-support — the upstream ANTLR4 project does not support Rust. The
-pre-built JAR at `antlr4rust/tool/target/antlr4-4.13.3-SNAPSHOT-complete.jar`
-handles the common case. Use `--rebuild-jar` if the `antlr4rust`
-submodule is updated to a newer commit.
+The script automatically downloads the ANTLR tool JAR from the
+[antlr4rust fork](https://github.com/AmatanHead/antlr4) GitHub
+release and caches it at `tmp/antlr4-tool.jar`. This fork adds
+Rust target support — the upstream ANTLR4 project does not support
+Rust.
 
 ## CLI usage
 
@@ -307,16 +304,14 @@ java -jar avro-tools-1.12.1.jar idl input.avdl output.avpr
 
 ### antlr4rust runtime
 
-- `antlr4rust/runtime/Rust/` — the Rust runtime for ANTLR4. Useful
-  for understanding `CommonTokenStream`, `InputStream`, token access
-  patterns, and the generated context types.
-- `antlr4rust/runtime/Rust/tests/general_tests.rs` — usage examples
-  for the ANTLR Rust runtime.
-- `antlr4rust/runtime/Rust/src/common_token_stream.rs` — the
-  `CommonTokenStream` API. Notably, `get(index)` is public and
-  provides raw access to the token buffer including hidden-channel
-  tokens, which we use for doc comment extraction (since
-  `getHiddenTokensToLeft` is unimplemented in antlr4rust).
+The antlr4rust runtime source is available at
+<https://github.com/AmatanHead/antlr4/tree/master/runtime/Rust>.
+Useful for understanding `CommonTokenStream`, `InputStream`, token
+access patterns, and the generated context types. Notably,
+`CommonTokenStream::get(index)` is public and provides raw access to
+the token buffer including hidden-channel tokens, which we use for
+doc comment extraction (since `getHiddenTokensToLeft` is
+unimplemented in antlr4rust).
 
 ## Architecture decisions
 
