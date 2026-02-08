@@ -214,3 +214,20 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
 - **Sub-agent issue file deletion**: If a sub-agent deletes issue files
   as part of its commit, the parent doesn't need a separate close
   commit.
+- **Merge conflict resolution for multi-branch refactors**: When Wave 4
+  (iteration 6) merged both an IdlError-to-miette refactor and an
+  expect-audit that touched the same files (`main.rs`, `reader.rs`,
+  `import.rs`), merge conflicts arose. The fix: merge the larger
+  refactor first (more structural changes), then resolve the smaller
+  change against the new code. For `main.rs`, the conflict was between
+  two patterns for the same function — take the structural improvement
+  (match instead of if/else) and the error handling improvement
+  (`.into_diagnostic()` instead of `IdlError::Io`).
+- **Discovery agent deduplication is essential**: 5 discovery agents
+  filed 7 issues but also generated ~30 SESSION.md observations, many
+  overlapping. Budget time after Phase 1 to clean SESSION.md of items
+  now tracked as issues, and verify that newly filed issues don't
+  overlap with each other or with existing issues.
+- **`compare-golden.sh` works from worktrees now**: The JAR-path issue
+  (`2931799a`) was fixed in a prior iteration. Sub-agents can and do
+  run `scripts/compare-golden.sh` from worktrees successfully.
