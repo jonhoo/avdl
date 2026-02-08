@@ -133,6 +133,34 @@ Direct command invocations without piping (e.g., `cargo run`,
 
 [cc-16305]: https://github.com/anthropics/claude-code/issues/16305
 
+### Sandbox `!` (negation) workaround
+
+The Claude Code sandbox has a [separate bug][cc-24136] where the bash
+`!` keyword (pipeline negation operator) is treated as a literal
+command name instead of a shell reserved word. The command after `!`
+**never executes** — no side effects occur, and stderr shows
+`!: command not found`. This affects `if !`, `while !`, and bare `!`.
+
+The trailing-semicolon workaround for the pipe bug above does **not**
+fix this.
+
+```sh
+# Broken in sandbox (touch never runs):
+if ! some_command; then handle_failure; fi
+
+# Workaround — capture $? instead:
+some_command; rc=$?
+if [ "$rc" -ne 0 ]; then handle_failure; fi
+
+# Broken in sandbox (touch never runs):
+while ! some_command; do sleep 1; done
+
+# Workaround — use `until` (semantic equivalent):
+until some_command; do sleep 1; done
+```
+
+[cc-24136]: https://github.com/anthropics/claude-code/issues/24136
+
 ### Regenerating the ANTLR parser
 
 The generated parser/lexer in `src/generated/` is checked in so that
