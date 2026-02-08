@@ -18,7 +18,7 @@ use avdl::error::IdlError;
 use avdl::import::{import_protocol, import_schema, ImportContext};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json, to_string_pretty_java};
 use avdl::model::protocol::Message;
-use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportEntry, ImportKind};
+use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportEntry, ImportKind, Warning};
 use avdl::resolve::SchemaRegistry;
 
 // ==============================================================================
@@ -91,7 +91,12 @@ fn run_idl(
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
     let (source, input_dir, input_path) = read_input(&input)?;
-    let (idl_file, registry) = parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
+    let (idl_file, registry, warnings) =
+        parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
+
+    // Emit any warnings to stderr, matching Java's `IdlTool` which prints
+    // "Warning: " + message for each warning.
+    emit_warnings(&warnings);
 
     // Serialize the parsed IDL to JSON. Protocols become .avpr, standalone
     // schemas become .avsc.
@@ -175,7 +180,11 @@ fn run_idl2schemata(
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
     let (source, input_dir, input_path) = read_input(&Some(input))?;
-    let (idl_file, registry) = parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
+    let (idl_file, registry, warnings) =
+        parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
+
+    // Emit any warnings to stderr.
+    emit_warnings(&warnings);
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
     fs::create_dir_all(&output_dir)
@@ -315,13 +324,16 @@ fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf, Option
 /// items (imports and local types) in source order. We process them
 /// sequentially here -- resolving imports when encountered and registering
 /// local types when encountered -- so the registry reflects declaration order.
+///
+/// Returns the parsed IDL file, schema registry, and any warnings collected
+/// during parsing (including warnings from imported files).
 fn parse_and_resolve(
     source: &str,
     input_dir: &Path,
     input_path: Option<PathBuf>,
     import_dirs: Vec<PathBuf>,
-) -> miette::Result<(IdlFile, SchemaRegistry)> {
-    let (idl_file, decl_items) = parse_idl(source)
+) -> miette::Result<(IdlFile, SchemaRegistry, Vec<Warning>)> {
+    let (idl_file, decl_items, mut warnings) = parse_idl(source)
         .map_err(miette::Report::new)
         .wrap_err("parse IDL source")?;
 
@@ -347,6 +359,7 @@ fn parse_and_resolve(
         &mut import_ctx,
         input_dir,
         &mut messages,
+        &mut warnings,
     )?;
 
     // For protocol files, rebuild the types list from the registry (which now
@@ -364,7 +377,7 @@ fn parse_and_resolve(
         other => other,
     };
 
-    Ok((idl_file, registry))
+    Ok((idl_file, registry, warnings))
 }
 
 /// Process declaration items (imports and local types) in source order.
@@ -380,6 +393,7 @@ fn process_decl_items(
     import_ctx: &mut ImportContext,
     current_dir: &Path,
     messages: &mut IndexMap<String, Message>,
+    warnings: &mut Vec<Warning>,
 ) -> miette::Result<()> {
     for item in decl_items {
         match item {
@@ -390,6 +404,7 @@ fn process_decl_items(
                     import_ctx,
                     current_dir,
                     messages,
+                    warnings,
                 )?;
             }
             DeclItem::Type(schema) => {
@@ -419,6 +434,7 @@ fn resolve_single_import(
     import_ctx: &mut ImportContext,
     current_dir: &Path,
     messages: &mut IndexMap<String, Message>,
+    warnings: &mut Vec<Warning>,
 ) -> miette::Result<()> {
     let resolved_path = import_ctx
         .resolve_import(&import.path, current_dir)
@@ -459,12 +475,24 @@ fn resolve_single_import(
                     format!("read imported IDL {}", resolved_path.display())
                 })?;
 
-            let (imported_idl, nested_decl_items) =
+            let (imported_idl, nested_decl_items, import_warnings) =
                 parse_idl(&imported_source)
                     .map_err(miette::Report::new)
                     .wrap_err_with(|| {
                         format!("parse imported IDL {}", resolved_path.display())
                     })?;
+
+            // Propagate warnings from the imported file, prepending the import
+            // filename to each warning message. This matches Java's
+            // `warnings.addAll(idlFile.getWarnings(importFile))` in
+            // `IdlReader.exitImportStatement()`.
+            let import_file_name = resolved_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_else(|| import.path.as_str());
+            for w in import_warnings {
+                warnings.push(w.with_import_prefix(import_file_name));
+            }
 
             // If the imported IDL is a protocol, merge its messages.
             if let IdlFile::ProtocolFile(imported_protocol) = &imported_idl {
@@ -479,6 +507,7 @@ fn resolve_single_import(
                 import_ctx,
                 &import_dir,
                 messages,
+                warnings,
             )
             .wrap_err_with(|| {
                 format!("resolve nested imports from `{}`", resolved_path.display())
@@ -487,6 +516,14 @@ fn resolve_single_import(
     }
 
     Ok(())
+}
+
+/// Emit warnings to stderr, matching Java's `IdlTool` format:
+///   "Warning: " + message
+fn emit_warnings(warnings: &[Warning]) {
+    for w in warnings {
+        eprintln!("Warning: {w}");
+    }
 }
 
 /// Write output to a file or stdout.

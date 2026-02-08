@@ -21,12 +21,15 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use std::borrow::Borrow;
+
 use antlr4rust::common_token_stream::CommonTokenStream;
 use antlr4rust::error_listener::ErrorListener;
 use antlr4rust::parser::Parser;
 use antlr4rust::recognizer::Recognizer;
 use antlr4rust::token::Token;
 use antlr4rust::token_factory::TokenFactory;
+use antlr4rust::token_stream::TokenStream;
 use antlr4rust::tree::{ParseTree, Tree};
 use antlr4rust::{InputStream, TidExt};
 use indexmap::IndexMap;
@@ -39,6 +42,58 @@ use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType};
 use crate::resolve::is_valid_avro_name;
+
+// ==============================================================================
+// Warnings
+// ==============================================================================
+
+/// A non-fatal warning generated during IDL parsing, such as an out-of-place
+/// documentation comment. Matches the Java `IdlReader` warning format.
+#[derive(Debug, Clone)]
+pub struct Warning {
+    pub message: String,
+}
+
+impl Warning {
+    /// Create an out-of-place doc comment warning with line and column info.
+    ///
+    /// The format matches Java's `IdlReader.getDocComment()`:
+    ///   "Line %d, char %d: Ignoring out-of-place documentation comment.\n
+    ///    Did you mean to use a multiline comment ( /* ... */ ) instead?"
+    fn out_of_place_doc_comment(line: isize, column: isize) -> Self {
+        Warning {
+            message: format!(
+                "Line {}, char {}: Ignoring out-of-place documentation comment.\n\
+                 Did you mean to use a multiline comment ( /* ... */ ) instead?",
+                line,
+                // Java uses getCharPositionInLine() + 1 (1-based); ANTLR's
+                // get_column() is 0-based, so we add 1 to match.
+                column + 1,
+            ),
+        }
+    }
+
+    /// Prepend an import filename to the warning message, lowercasing the first
+    /// character of the original message. Matches Java's
+    /// `IdlFile.getWarnings(importFile)` behavior.
+    pub fn with_import_prefix(mut self, import_file: &str) -> Self {
+        if let Some(first_char) = self.message.chars().next() {
+            self.message = format!(
+                "{} {}{}",
+                import_file,
+                first_char.to_lowercase(),
+                &self.message[first_char.len_utf8()..]
+            );
+        }
+        self
+    }
+}
+
+impl std::fmt::Display for Warning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
 
 // ==============================================================================
 // ANTLR Error Collection
@@ -135,7 +190,10 @@ pub enum DeclItem {
 /// in source order. The caller is responsible for processing these items in
 /// order (resolving imports and registering types) to produce a correctly
 /// ordered `SchemaRegistry`.
-pub fn parse_idl(input: &str) -> Result<(IdlFile, Vec<DeclItem>)> {
+///
+/// Also returns a `Vec<Warning>` containing any out-of-place doc comment
+/// warnings detected during parsing.
+pub fn parse_idl(input: &str) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
     parse_idl_named(input, "<input>")
 }
 
@@ -144,7 +202,7 @@ pub fn parse_idl(input: &str) -> Result<(IdlFile, Vec<DeclItem>)> {
 pub fn parse_idl_named(
     input: &str,
     source_name: &str,
-) -> Result<(IdlFile, Vec<DeclItem>)> {
+) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
     let input_stream = InputStream::new(input);
     let lexer = IdlLexer::new(input_stream);
     let token_stream = CommonTokenStream::new(lexer);
@@ -172,7 +230,7 @@ pub fn parse_idl_named(
     // Check for ANTLR syntax errors collected during parsing. Any syntax error
     // means the input is malformed, even if ANTLR's error recovery produced a
     // parse tree. This matches Java's behavior of throwing on the first error.
-    let collected_errors = syntax_errors.borrow();
+    let collected_errors = RefCell::borrow(&syntax_errors);
     if !collected_errors.is_empty() {
         let error_msg = if collected_errors.len() == 1 {
             format!("{}: {}", source_name, collected_errors[0])
@@ -201,6 +259,7 @@ pub fn parse_idl_named(
     let src = SourceInfo {
         source: input,
         name: source_name,
+        consumed_doc_indices: RefCell::new(HashSet::new()),
     };
 
     let mut namespace: Option<String> = None;
@@ -215,7 +274,24 @@ pub fn parse_idl_named(
     )
     .map_err(|e| IdlError::Other(format!("walk IDL parse tree for `{source_name}`: {e}")))?;
 
-    Ok((idl_file, decl_items))
+    // ==============================================================================
+    // Orphaned Doc Comment Detection
+    // ==============================================================================
+    //
+    // After the tree walk, scan the entire token stream for DocComment tokens
+    // that were not consumed by any declaration. These are "out-of-place" doc
+    // comments that should be regular multiline comments instead.
+    //
+    // This matches Java's `IdlReader.getDocComment()` behavior, which generates
+    // a warning for each DocComment token in the gap between the previous call's
+    // position and the current call's position that isn't the actual doc comment
+    // for the current node.
+    let warnings = collect_orphaned_doc_comment_warnings(
+        token_stream,
+        &src.consumed_doc_indices.borrow(),
+    );
+
+    Ok((idl_file, decl_items, warnings))
 }
 
 // ==========================================================================
@@ -232,9 +308,16 @@ type TS<'input> = CommonTokenStream<'input, IdlLexer<'input, InputStream<&'input
 
 /// Carries the original source text and a display name through the tree walk
 /// so that error messages can include source location context via miette.
+///
+/// Also tracks which doc comment token indices have been consumed by
+/// declarations, so that orphaned doc comments can be detected after the walk.
 struct SourceInfo<'a> {
     source: &'a str,
     name: &'a str,
+    /// Token indices of doc comments consumed by `extract_doc_from_context`.
+    /// After the full tree walk, any `DocComment` token NOT in this set is
+    /// orphaned and should generate a warning.
+    consumed_doc_indices: RefCell<HashSet<isize>>,
 }
 
 /// Construct an `IdlError::Diagnostic` with source location extracted from
@@ -665,7 +748,7 @@ fn walk_protocol<'input>(
     decl_items: &mut Vec<DeclItem>,
 ) -> Result<Protocol> {
     // Extract doc comment by scanning hidden tokens before the context's start token.
-    let doc = extract_doc_from_context(ctx, token_stream);
+    let doc = extract_doc_from_context(ctx, token_stream, src);
 
     // Process `@namespace(...)` and other schema properties on the protocol.
     let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, PROTOCOL_PROPS)?;
@@ -769,7 +852,7 @@ fn walk_record<'input>(
     src: &SourceInfo<'_>,
     namespace: &mut Option<String>,
 ) -> Result<AvroSchema> {
-    let doc = extract_doc_from_context(ctx, token_stream);
+    let doc = extract_doc_from_context(ctx, token_stream, src);
     let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, NAMED_TYPE_PROPS)?;
 
     let name_ctx = ctx
@@ -860,7 +943,7 @@ fn walk_field_declaration<'input>(
 ) -> Result<Vec<Field>> {
     // The doc comment on the field declaration acts as a default for variables
     // that don't have their own doc comment.
-    let default_doc = extract_doc_from_context(ctx, token_stream);
+    let default_doc = extract_doc_from_context(ctx, token_stream, src);
 
     // Walk the field type.
     let full_type_ctx = ctx
@@ -889,7 +972,7 @@ fn walk_variable<'input>(
     _namespace: &Option<String>,
 ) -> Result<Field> {
     // Variable-specific doc comment overrides the field-level default.
-    let var_doc = extract_doc_from_context(ctx, token_stream);
+    let var_doc = extract_doc_from_context(ctx, token_stream, src);
     let doc = var_doc.or_else(|| default_doc.clone());
 
     let name_ctx = ctx
@@ -939,7 +1022,7 @@ fn walk_enum<'input>(
     src: &SourceInfo<'_>,
     enclosing_namespace: &Option<String>,
 ) -> Result<AvroSchema> {
-    let doc = extract_doc_from_context(ctx, token_stream);
+    let doc = extract_doc_from_context(ctx, token_stream, src);
     let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, ENUM_PROPS)?;
 
     let name_ctx = ctx
@@ -1026,7 +1109,7 @@ fn walk_fixed<'input>(
     src: &SourceInfo<'_>,
     enclosing_namespace: &Option<String>,
 ) -> Result<AvroSchema> {
-    let doc = extract_doc_from_context(ctx, token_stream);
+    let doc = extract_doc_from_context(ctx, token_stream, src);
     let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, NAMED_TYPE_PROPS)?;
 
     let name_ctx = ctx
@@ -1342,7 +1425,7 @@ fn walk_message<'input>(
     src: &SourceInfo<'_>,
     namespace: &Option<String>,
 ) -> Result<(String, Message)> {
-    let doc = extract_doc_from_context(ctx, token_stream);
+    let doc = extract_doc_from_context(ctx, token_stream, src);
     let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, MESSAGE_PROPS)?;
 
     // Walk the result type. `void` maps to Null.
@@ -1362,7 +1445,7 @@ fn walk_message<'input>(
     let mut request_fields = Vec::new();
     let mut seen_param_names: HashSet<String> = HashSet::new();
     for param_ctx in ctx.formalParameter_all() {
-        let param_doc = extract_doc_from_context(&*param_ctx, token_stream);
+        let param_doc = extract_doc_from_context(&*param_ctx, token_stream, src);
 
         let ft_ctx = param_ctx
             .fullType()
@@ -2323,13 +2406,58 @@ fn json_value_as_u32(v: &Value) -> Option<u32> {
 /// Extract the doc comment for a parse tree context by looking at its start
 /// token index. Uses the `extract_doc_comment` function from `doc_comments`
 /// which scans backwards through hidden tokens.
-fn extract_doc_from_context<'input, T>(ctx: &T, token_stream: &TS<'input>) -> Option<String>
+///
+/// Records the consumed doc comment's token index in `src.consumed_doc_indices`
+/// so that orphaned doc comments can be detected after the full tree walk.
+fn extract_doc_from_context<'input, T>(
+    ctx: &T,
+    token_stream: &TS<'input>,
+    src: &SourceInfo<'_>,
+) -> Option<String>
 where
     T: antlr4rust::parser_rule_context::ParserRuleContext<'input>,
 {
     let start = ctx.start();
     let token_index = start.get_token_index();
-    extract_doc_comment(token_stream, token_index)
+    extract_doc_comment(
+        token_stream,
+        token_index,
+        Some(&mut src.consumed_doc_indices.borrow_mut()),
+    )
+}
+
+/// Scan the entire token stream for `DocComment` tokens that were not consumed
+/// by any declaration during the tree walk. Each orphaned doc comment generates
+/// a warning matching Java's format.
+///
+/// This implements the same logic as Java's `IdlReader.getDocComment()`, which
+/// checks for doc comment tokens between the previous call's position and the
+/// current call's position. Our approach is equivalent: after the full walk, any
+/// `DocComment` token not in the consumed set is orphaned.
+fn collect_orphaned_doc_comment_warnings<'input, S>(
+    token_stream: &S,
+    consumed_indices: &HashSet<isize>,
+) -> Vec<Warning>
+where
+    S: TokenStream<'input>,
+{
+    let mut warnings = Vec::new();
+    let token_count = token_stream.size();
+
+    for i in 0..token_count {
+        let tok_wrapper = token_stream.get(i);
+        let token: &<S::TF as TokenFactory<'input>>::Inner = tok_wrapper.borrow();
+        let token_type = token.get_token_type();
+
+        if token_type == Idl_DocComment && !consumed_indices.contains(&i) {
+            warnings.push(Warning::out_of_place_doc_comment(
+                token.get_line(),
+                token.get_column(),
+            ));
+        }
+    }
+
+    warnings
 }
 
 /// Parse a single import statement and append it as a `DeclItem::Import` to
@@ -2948,7 +3076,7 @@ mod tests {
 
     /// Helper: parse an IDL protocol with a single record, return its first field's schema.
     fn parse_first_field_schema(idl: &str) -> AvroSchema {
-        let (_idl_file, decl_items) = parse_idl(idl).expect("IDL should parse successfully");
+        let (_idl_file, decl_items, _warnings) = parse_idl(idl).expect("IDL should parse successfully");
         // Find the record among declaration items.
         for item in &decl_items {
             if let DeclItem::Type(AvroSchema::Record { fields, .. }) = item {

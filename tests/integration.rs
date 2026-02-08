@@ -45,7 +45,7 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
+    let (idl_file, decl_items, _warnings) =
         parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Process declaration items in source order to build a correctly ordered
@@ -142,7 +142,7 @@ fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path])
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
+    let (idl_file, decl_items, _warnings) =
         parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     let current_dir = avdl_path
@@ -233,7 +233,7 @@ fn process_decl_items_test(
                         let imported_input = fs::read_to_string(&resolved).unwrap_or_else(|e| {
                             panic!("failed to read imported IDL {}: {e}", resolved.display())
                         });
-                        let (imported_idl, nested_decl_items) =
+                        let (imported_idl, nested_decl_items, _import_warnings) =
                             parse_idl(&imported_input).unwrap_or_else(|e| {
                                 panic!("failed to parse imported IDL {}: {e}", resolved.display())
                             });
@@ -441,7 +441,7 @@ fn parse_idl2schemata(
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
+    let (idl_file, decl_items, _warnings) =
         parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     let mut registry = avdl::resolve::SchemaRegistry::new();
@@ -629,7 +629,7 @@ fn test_duplicate_type_definition() {
 
     let result = parse_idl(input);
     match result {
-        Ok((IdlFile::ProtocolFile(_), decl_items)) => {
+        Ok((IdlFile::ProtocolFile(_), decl_items, _warnings)) => {
             // The parser may accept duplicate names, but registering them
             // in the SchemaRegistry should fail.
             let mut registry = avdl::resolve::SchemaRegistry::new();
@@ -666,7 +666,7 @@ fn test_import_nonexistent_file() {
         }
     "#;
 
-    let (_, decl_items) =
+    let (_, decl_items, _warnings) =
         parse_idl(input).expect("parsing the IDL text itself should succeed");
 
     let mut registry = avdl::resolve::SchemaRegistry::new();
@@ -800,7 +800,7 @@ fn test_dotted_identifier_namespace_priority() {
         }
     "#;
 
-    let (idl_file, decl_items) = parse_idl(input).expect("should parse successfully");
+    let (idl_file, decl_items, _warnings) = parse_idl(input).expect("should parse successfully");
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
         if let DeclItem::Type(schema) = item {
@@ -840,7 +840,7 @@ fn test_empty_namespace_annotation_emits_namespace_key() {
         }
     "#;
 
-    let (idl_file, decl_items) = parse_idl(input).expect("should parse successfully");
+    let (idl_file, decl_items, _warnings) = parse_idl(input).expect("should parse successfully");
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
         if let DeclItem::Type(schema) = item {
@@ -951,7 +951,7 @@ fn test_cross_namespace_unqualified_reference_is_unresolved() {
         }
     "#;
 
-    let (_, decl_items) = parse_idl(input).expect("should parse successfully");
+    let (_, decl_items, _warnings) = parse_idl(input).expect("should parse successfully");
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
         if let DeclItem::Type(schema) = item {
@@ -1099,7 +1099,7 @@ fn test_extra_protocol_syntax() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
+    let (idl_file, decl_items, _warnings) =
         parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Verify it's a protocol file.
@@ -1145,7 +1145,7 @@ fn test_extra_schema_syntax() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items) =
+    let (idl_file, decl_items, _warnings) =
         parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Verify it's a schema file (not a protocol).
@@ -1215,7 +1215,7 @@ fn test_extra_schema_syntax() {
 /// This mirrors `parse_and_serialize` but accepts a string instead of a file
 /// path, making it convenient for inline test inputs.
 fn parse_inline_to_json(avdl_input: &str) -> Value {
-    let (idl_file, decl_items) =
+    let (idl_file, decl_items, _warnings) =
         parse_idl(avdl_input).unwrap_or_else(|e| panic!("failed to parse inline avdl: {e}"));
 
     let mut registry = avdl::resolve::SchemaRegistry::new();

@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::collections::HashSet;
 
 use antlr4rust::char_stream::InputData;
 use antlr4rust::token::Token;
@@ -13,12 +14,17 @@ use crate::generated::idlparser::{Idl_DocComment, Idl_EmptyComment, Idl_WS};
 /// Scans backwards from `token_index - 1` through the token stream,
 /// skipping whitespace and empty comments, looking for a `DocComment` token.
 ///
+/// If `consumed_indices` is provided, the index of the consumed doc comment
+/// token is recorded so callers can later detect orphaned (unconsumed) doc
+/// comments and generate warnings.
+///
 /// antlr4rust's `CommonTokenStream` does not expose `getHiddenTokensToLeft()`
 /// the way Java ANTLR does, but `get(index)` is public and lets us access
 /// any token by index, including hidden-channel tokens.
 pub fn extract_doc_comment<'input, TS>(
     token_stream: &TS,
     token_index: isize,
+    consumed_indices: Option<&mut HashSet<isize>>,
 ) -> Option<String>
 where
     TS: TokenStream<'input>,
@@ -29,6 +35,7 @@ where
 
     let mut i = token_index - 1;
     let mut doc_token_text: Option<String> = None;
+    let mut doc_token_index: Option<isize> = None;
 
     while i >= 0 {
         let tok_wrapper = token_stream.get(i);
@@ -37,6 +44,7 @@ where
 
         if token_type == Idl_DocComment {
             doc_token_text = Some(token.get_text().to_display());
+            doc_token_index = Some(i);
             break;
         } else if token_type == Idl_WS || token_type == Idl_EmptyComment {
             // Skip whitespace and empty comments, continue scanning.
@@ -49,6 +57,14 @@ where
     }
 
     let text = doc_token_text?;
+
+    // Record the consumed token index so we can later detect orphaned doc
+    // comments (those not consumed by any declaration).
+    if let Some(consumed) = consumed_indices {
+        if let Some(idx) = doc_token_index {
+            consumed.insert(idx);
+        }
+    }
 
     // Strip the /** prefix and */ suffix.
     let inner = text
