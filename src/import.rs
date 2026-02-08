@@ -65,18 +65,24 @@ impl ImportContext {
         // Try relative to current file's directory first.
         let relative = current_dir.join(import_file);
         if relative.exists() {
-            return relative
-                .canonicalize()
-                .map_err(|e| IdlError::Io { source: e });
+            return relative.canonicalize().map_err(|e| {
+                IdlError::Other(format!(
+                    "canonicalize import path `{import_file}` relative to `{}`: {e}",
+                    current_dir.display()
+                ))
+            });
         }
 
         // Try each import search directory.
         for dir in &self.import_dirs {
             let candidate = dir.join(import_file);
             if candidate.exists() {
-                return candidate
-                    .canonicalize()
-                    .map_err(|e| IdlError::Io { source: e });
+                return candidate.canonicalize().map_err(|e| {
+                    IdlError::Other(format!(
+                        "canonicalize import path `{import_file}` in import dir `{}`: {e}",
+                        dir.display()
+                    ))
+                });
             }
         }
 
@@ -159,8 +165,9 @@ pub fn import_protocol(
     path: &Path,
     registry: &mut SchemaRegistry,
 ) -> Result<IndexMap<String, Message>> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| IdlError::Io { source: e })?;
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        IdlError::Other(format!("read protocol file `{}`: {e}", path.display()))
+    })?;
     let json: Value = serde_json::from_str(&content)
         .map_err(|e| IdlError::Parse(format!("invalid JSON in {}: {e}", path.display())))?;
 
@@ -170,8 +177,13 @@ pub fn import_protocol(
     // Extract types from the protocol JSON and register them, including any
     // nested named types within record fields, union branches, etc.
     if let Some(types) = json.get("types").and_then(|t| t.as_array()) {
-        for type_json in types {
-            let schema = json_to_schema(type_json, default_namespace)?;
+        for (i, type_json) in types.iter().enumerate() {
+            let schema = json_to_schema(type_json, default_namespace).map_err(|e| {
+                IdlError::Other(format!(
+                    "parse type at index {i} in protocol `{}`: {e}",
+                    path.display()
+                ))
+            })?;
             register_all_named_types(&schema, registry);
         }
     }
@@ -179,7 +191,12 @@ pub fn import_protocol(
     // Extract messages.
     if let Some(msgs) = json.get("messages").and_then(|m| m.as_object()) {
         for (name, msg_json) in msgs {
-            let message = json_to_message(msg_json, default_namespace)?;
+            let message = json_to_message(msg_json, default_namespace).map_err(|e| {
+                IdlError::Other(format!(
+                    "parse message `{name}` in protocol `{}`: {e}",
+                    path.display()
+                ))
+            })?;
             messages.insert(name.clone(), message);
         }
     }
@@ -199,12 +216,15 @@ pub fn import_protocol(
 /// nested inside record fields, union branches, array items, or map values --
 /// are registered so that subsequent IDL code can reference them by name.
 pub fn import_schema(path: &Path, registry: &mut SchemaRegistry) -> Result<()> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| IdlError::Io { source: e })?;
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        IdlError::Other(format!("read schema file `{}`: {e}", path.display()))
+    })?;
     let json: Value = serde_json::from_str(&content)
         .map_err(|e| IdlError::Parse(format!("invalid JSON in {}: {e}", path.display())))?;
 
-    let schema = json_to_schema(&json, None)?;
+    let schema = json_to_schema(&json, None).map_err(|e| {
+        IdlError::Other(format!("parse schema from `{}`: {e}", path.display()))
+    })?;
     register_all_named_types(&schema, registry);
 
     Ok(())
@@ -352,7 +372,12 @@ fn parse_record(
     let fields = if let Some(Value::Array(fields_json)) = obj.get("fields") {
         fields_json
             .iter()
-            .map(|f| json_to_field(f, ns_for_fields))
+            .enumerate()
+            .map(|(i, f)| {
+                json_to_field(f, ns_for_fields).map_err(|e| {
+                    IdlError::Other(format!("parse field at index {i} of record `{name}`: {e}"))
+                })
+            })
             .collect::<Result<Vec<_>>>()?
     } else {
         vec![]
@@ -480,7 +505,8 @@ fn parse_array(
     let items = obj
         .get("items")
         .ok_or_else(|| IdlError::Parse("array missing 'items'".to_string()))?;
-    let items_schema = json_to_schema(items, default_namespace)?;
+    let items_schema = json_to_schema(items, default_namespace)
+        .map_err(|e| IdlError::Other(format!("parse array items schema: {e}")))?;
     let properties = collect_extra_properties(obj, &["type", "items"]);
     Ok(AvroSchema::Array {
         items: Box::new(items_schema),
@@ -495,7 +521,8 @@ fn parse_map(
     let values = obj
         .get("values")
         .ok_or_else(|| IdlError::Parse("map missing 'values'".to_string()))?;
-    let values_schema = json_to_schema(values, default_namespace)?;
+    let values_schema = json_to_schema(values, default_namespace)
+        .map_err(|e| IdlError::Other(format!("parse map values schema: {e}")))?;
     let properties = collect_extra_properties(obj, &["type", "values"]);
     Ok(AvroSchema::Map {
         values: Box::new(values_schema),
@@ -629,7 +656,8 @@ fn json_to_field(
     let type_json = obj
         .get("type")
         .ok_or_else(|| IdlError::Parse("field missing 'type'".to_string()))?;
-    let schema = json_to_schema(type_json, default_namespace)?;
+    let schema = json_to_schema(type_json, default_namespace)
+        .map_err(|e| IdlError::Other(format!("parse type for field `{name}`: {e}")))?;
     let doc = obj
         .get("doc")
         .and_then(|d| d.as_str())
@@ -681,14 +709,20 @@ fn json_to_message(json: &Value, default_namespace: Option<&str>) -> Result<Mess
     let request = if let Some(Value::Array(params)) = obj.get("request") {
         params
             .iter()
-            .map(|p| json_to_field(p, default_namespace))
+            .enumerate()
+            .map(|(i, p)| {
+                json_to_field(p, default_namespace).map_err(|e| {
+                    IdlError::Other(format!("parse request parameter at index {i}: {e}"))
+                })
+            })
             .collect::<Result<Vec<_>>>()?
     } else {
         vec![]
     };
 
     let response = if let Some(resp) = obj.get("response") {
-        json_to_schema(resp, default_namespace)?
+        json_to_schema(resp, default_namespace)
+            .map_err(|e| IdlError::Other(format!("parse response type for message: {e}")))?
     } else {
         AvroSchema::Null
     };
@@ -696,7 +730,12 @@ fn json_to_message(json: &Value, default_namespace: Option<&str>) -> Result<Mess
     let errors = if let Some(Value::Array(errs)) = obj.get("errors") {
         Some(
             errs.iter()
-                .map(|e| json_to_schema(e, default_namespace))
+                .enumerate()
+                .map(|(i, e)| {
+                    json_to_schema(e, default_namespace).map_err(|e| {
+                        IdlError::Other(format!("parse error type at index {i} for message: {e}"))
+                    })
+                })
                 .collect::<Result<Vec<_>>>()?,
         )
     } else {

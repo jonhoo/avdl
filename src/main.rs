@@ -321,8 +321,9 @@ fn parse_and_resolve(
     input_path: Option<PathBuf>,
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<(IdlFile, SchemaRegistry)> {
-    let (idl_file, decl_items) =
-        parse_idl(source).map_err(miette::Report::new)?;
+    let (idl_file, decl_items) = parse_idl(source)
+        .map_err(miette::Report::new)
+        .wrap_err("parse IDL source")?;
 
     let mut registry = SchemaRegistry::new();
     let mut import_ctx = ImportContext::new(import_dirs);
@@ -395,10 +396,14 @@ fn process_decl_items(
                 // Register the locally-defined type in the registry at this
                 // position, preserving its source-order placement relative to
                 // imports.
+                let schema_name = schema
+                    .full_name()
+                    .unwrap_or_else(|| "<unnamed>".to_string());
                 registry
                     .register(schema.clone())
                     .map_err(IdlError::Other)
-                    .map_err(miette::Report::new)?;
+                    .map_err(miette::Report::new)
+                    .wrap_err_with(|| format!("register schema `{schema_name}`"))?;
             }
         }
     }
@@ -417,7 +422,8 @@ fn resolve_single_import(
 ) -> miette::Result<()> {
     let resolved_path = import_ctx
         .resolve_import(&import.path, current_dir)
-        .map_err(miette::Report::new)?;
+        .map_err(miette::Report::new)
+        .wrap_err_with(|| format!("resolve import `{}`", import.path))?;
 
     // Skip files we've already imported (cycle prevention).
     if import_ctx.mark_imported(&resolved_path) {
@@ -473,7 +479,10 @@ fn resolve_single_import(
                 import_ctx,
                 &import_dir,
                 messages,
-            )?;
+            )
+            .wrap_err_with(|| {
+                format!("resolve nested imports from `{}`", resolved_path.display())
+            })?;
         }
     }
 

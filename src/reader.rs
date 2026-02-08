@@ -165,9 +165,9 @@ pub fn parse_idl_named(
         errors: Rc::clone(&syntax_errors),
     }));
 
-    let tree = parser
-        .idlFile()
-        .map_err(|e| IdlError::Parse(format!("{e:?}")))?;
+    let tree = parser.idlFile().map_err(|e| {
+        IdlError::Parse(format!("parse IDL source `{source_name}`: {e:?}"))
+    })?;
 
     // Check for ANTLR syntax errors collected during parsing. Any syntax error
     // means the input is malformed, even if ANTLR's error recovery produced a
@@ -212,7 +212,8 @@ pub fn parse_idl_named(
         &src,
         &mut namespace,
         &mut decl_items,
-    )?;
+    )
+    .map_err(|e| IdlError::Other(format!("walk IDL parse tree for `{source_name}`: {e}")))?;
 
     Ok((idl_file, decl_items))
 }
@@ -474,7 +475,9 @@ fn walk_schema_properties<'input>(
         let value_ctx = prop
             .jsonValue()
             .ok_or_else(|| make_diagnostic(src, &**prop, "missing property value"))?;
-        let value = walk_json_value(&value_ctx, token_stream, src)?;
+        let value = walk_json_value(&value_ctx, token_stream, src).map_err(|e| {
+            IdlError::Other(format!("parse value for schema property `{name}`: {e}"))
+        })?;
 
         // Intercept well-known annotations only when the context flags allow it.
         // When a flag is false, that name falls through to the custom properties
@@ -900,7 +903,9 @@ fn walk_variable<'input>(
 
     // Parse the default value if present.
     let default_value = if let Some(json_ctx) = ctx.jsonValue() {
-        Some(walk_json_value(&json_ctx, token_stream, src)?)
+        Some(walk_json_value(&json_ctx, token_stream, src).map_err(|e| {
+            IdlError::Other(format!("parse default value for field `{field_name}`: {e}"))
+        })?)
     } else {
         None
     };
@@ -1047,7 +1052,9 @@ fn walk_fixed<'input>(
     let size_tok = ctx.size.as_ref().ok_or_else(|| {
         make_diagnostic(src, ctx, "missing fixed size")
     })?;
-    let size = parse_integer_as_u32(size_tok.get_text())?;
+    let size = parse_integer_as_u32(size_tok.get_text()).map_err(|e| {
+        IdlError::Other(format!("parse fixed size for `{fixed_name}`: {e}"))
+    })?;
 
     Ok(AvroSchema::Fixed {
         name: fixed_name,
@@ -1215,10 +1222,14 @@ fn walk_primitive_type<'input>(
             let precision_tok = ctx.precision.as_ref().ok_or_else(|| {
                 make_diagnostic(src, ctx, "decimal type missing precision")
             })?;
-            let precision = parse_integer_as_u32(precision_tok.get_text())?;
+            let precision = parse_integer_as_u32(precision_tok.get_text()).map_err(|e| {
+                IdlError::Other(format!("parse decimal precision: {e}"))
+            })?;
 
             let scale = if let Some(scale_tok) = ctx.scale.as_ref() {
-                parse_integer_as_u32(scale_tok.get_text())?
+                parse_integer_as_u32(scale_tok.get_text()).map_err(|e| {
+                    IdlError::Other(format!("parse decimal scale: {e}"))
+                })?
             } else {
                 0
             };
