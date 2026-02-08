@@ -356,15 +356,15 @@ pub fn is_valid_default(value: &Value, schema: &AvroSchema) -> bool {
         AvroSchema::Array { .. } => value.is_array(),
         AvroSchema::Map { .. } => value.is_object(),
 
-        // For unions, the default must match the **first** type in the union.
-        // This is per the Avro spec: "the default for a union must correspond
-        // to the first schema in the union."
+        // Java's `Schema.isValidDefault` checks whether the default matches
+        // *any* branch of the union, not just the first. The Avro spec says
+        // "the default must correspond to the first schema", but Java relaxes
+        // this, and we match Java's behavior.
         AvroSchema::Union { types, .. } => {
-            if let Some(first) = types.first() {
-                is_valid_default(value, first)
-            } else {
-                // Empty union — no valid default exists.
+            if types.is_empty() {
                 false
+            } else {
+                types.iter().any(|branch| is_valid_default(value, branch))
             }
         }
 
@@ -738,18 +738,27 @@ mod tests {
     }
 
     #[test]
-    fn union_null_first_rejects_string() {
+    fn union_null_first_accepts_string_from_second_branch() {
         let schema = AvroSchema::Union {
             types: vec![AvroSchema::Null, AvroSchema::String],
             is_nullable_type: true,
         };
-        // Default must match the first type (null), not the second (string).
-        assert!(!is_valid_default(&json!("hello"), &schema));
+        // Java validates against any branch, not just the first.
+        assert!(is_valid_default(&json!("hello"), &schema));
+    }
+
+    #[test]
+    fn union_null_first_rejects_integer() {
+        let schema = AvroSchema::Union {
+            types: vec![AvroSchema::Null, AvroSchema::String],
+            is_nullable_type: true,
+        };
+        // Integer does not match either null or string.
+        assert!(!is_valid_default(&json!(42), &schema));
     }
 
     #[test]
     fn union_string_first_accepts_string() {
-        // After reordering for a non-null default, the non-null type comes first.
         let schema = AvroSchema::Union {
             types: vec![AvroSchema::String, AvroSchema::Null],
             is_nullable_type: true,
@@ -758,12 +767,24 @@ mod tests {
     }
 
     #[test]
-    fn union_string_first_rejects_null() {
+    fn union_string_first_accepts_null_from_second_branch() {
         let schema = AvroSchema::Union {
             types: vec![AvroSchema::String, AvroSchema::Null],
             is_nullable_type: true,
         };
-        assert!(!is_valid_default(&json!(null), &schema));
+        // Null matches the second branch.
+        assert!(is_valid_default(&json!(null), &schema));
+    }
+
+    #[test]
+    fn union_int_string_accepts_either() {
+        let schema = AvroSchema::Union {
+            types: vec![AvroSchema::Int, AvroSchema::String],
+            is_nullable_type: false,
+        };
+        assert!(is_valid_default(&json!(42), &schema));
+        assert!(is_valid_default(&json!("hello"), &schema));
+        assert!(!is_valid_default(&json!(true), &schema));
     }
 
     // =========================================================================

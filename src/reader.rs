@@ -3722,6 +3722,20 @@ mod tests {
     }
 
     #[test]
+    fn default_union_non_first_branch_valid() {
+        // Java validates union defaults against any branch, not just the first.
+        let idl = r#"
+            protocol P {
+                record R {
+                    union { null, string } x = "hello";
+                    union { null, int } y = 42;
+                }
+            }
+        "#;
+        assert!(parse_idl(idl).is_ok(), "union default matching non-first branch should be accepted");
+    }
+
+    #[test]
     fn default_logical_date_int_valid() {
         let idl = r#"protocol P { record R { date d = 0; } }"#;
         assert!(parse_idl(idl).is_ok(), "date with int default should be accepted");
