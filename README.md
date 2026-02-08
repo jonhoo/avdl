@@ -141,9 +141,9 @@ Key upstream sources this port is based on:
 
 ## Background
 
-The initial version of this crate was built during a [live stream on
-YouTube](https://youtu.be/vmKvw73V394). The live stream ends at
-commit [`fac28dd`](https://github.com/jonhoo/avdl/commit/fac28dd).
+The initial version of this crate was built during a [live stream on YouTube](https://youtu.be/vmKvw73V394).
+The live stream ends at commit [`fac28dd`](https://github.com/jonhoo/avdl/commit/fac28dd).
+Post-stream development is documented in [post-stream-summary.md](post-stream-summary.md).
 
 ## License
 
