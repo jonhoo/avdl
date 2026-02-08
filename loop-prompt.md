@@ -212,3 +212,8 @@ After each wave merge:
   merges (e.g., `reader.rs` test section), take the HEAD version and
   manually apply the branch's additions. This is faster and safer
   than resolving inline conflict markers in large files.
+- **Skip sub-agents when all fixes are small**: If all issues in a wave
+  are 5-15 line changes to distinct parts of the same files, apply them
+  all directly on main. Iteration 3 fixed 5 issues in a single commit
+  without any worktrees or sub-agents, which was significantly faster
+  than the multi-agent approach.
