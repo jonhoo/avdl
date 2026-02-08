@@ -63,19 +63,40 @@ fn parse_warnings(input: &str) -> Vec<Warning> {
 }
 
 /// Parse an inline `.avdl` string, then attempt to register all types in a
-/// `SchemaRegistry` and return the first registration error message.
+/// `SchemaRegistry` and return the first registration error rendered through
+/// miette's `GraphicalReportHandler`.
 ///
 /// This catches semantic errors like duplicate type names that are only detected
-/// during schema registration, not during parsing.
+/// during schema registration, not during parsing. When the `DeclItem` carries
+/// a source span, the error is rendered with source highlighting.
 fn registry_error(input: &str) -> Option<String> {
     let (_idl_file, decl_items, _warnings) =
         parse_idl(input).expect("registry error test input should parse successfully");
 
     let mut registry = SchemaRegistry::new();
     for item in &decl_items {
-        if let DeclItem::Type(schema) = item {
-            if let Err(e) = registry.register(schema.clone()) {
-                return Some(e);
+        if let DeclItem::Type(schema, span) = item {
+            if let Err(msg) = registry.register(schema.clone()) {
+                // When a span is available, render through miette for
+                // source-highlighted output matching the parse_error helper.
+                if let Some(span) = span {
+                    let diag = avdl::error::ParseDiagnostic {
+                        src: miette::NamedSource::new("<input>", input.to_string()),
+                        span: *span,
+                        message: msg.clone(),
+                    };
+                    let handler =
+                        GraphicalReportHandler::new_themed(GraphicalTheme::none())
+                            .with_width(80);
+                    let mut buf = String::new();
+                    if handler
+                        .render_report(&mut buf, &diag as &dyn Diagnostic)
+                        .is_ok()
+                    {
+                        return Some(buf);
+                    }
+                }
+                return Some(msg);
             }
         }
     }
@@ -222,7 +243,7 @@ fn test_error_undefined_type() {
 
     let mut registry = SchemaRegistry::new();
     for item in &decl_items {
-        if let DeclItem::Type(schema) = item {
+        if let DeclItem::Type(schema, _) = item {
             let _ = registry.register(schema.clone());
         }
     }

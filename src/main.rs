@@ -197,8 +197,9 @@ fn run_idl(
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
     let (source, input_dir, input_path) = read_input(&input)?;
+    let source_name = input.as_deref().unwrap_or("<stdin>");
     let (idl_file, registry, warnings) =
-        parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
+        parse_and_resolve(&source, source_name, &input_dir, input_path, import_dirs)?;
 
     // Emit any warnings to stderr, matching Java's `IdlTool` which prints
     // "Warning: " + message for each warning.
@@ -280,9 +281,10 @@ fn run_idl2schemata(
     outdir: Option<PathBuf>,
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
+    let source_name = input.clone();
     let (source, input_dir, input_path) = read_input(&Some(input))?;
     let (idl_file, registry, warnings) =
-        parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
+        parse_and_resolve(&source, &source_name, &input_dir, input_path, import_dirs)?;
 
     // Emit any warnings to stderr.
     emit_warnings(&warnings);
@@ -420,6 +422,7 @@ fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf, Option
 /// during parsing (including warnings from imported files).
 fn parse_and_resolve(
     source: &str,
+    source_name: &str,
     input_dir: &Path,
     input_path: Option<PathBuf>,
     import_dirs: Vec<PathBuf>,
@@ -450,6 +453,8 @@ fn parse_and_resolve(
         input_dir,
         &mut messages,
         &mut warnings,
+        source,
+        source_name,
     )?;
 
     // For protocol files, rebuild the types list from the registry (which now
@@ -484,6 +489,8 @@ fn process_decl_items(
     current_dir: &Path,
     messages: &mut IndexMap<String, Message>,
     warnings: &mut Vec<Warning>,
+    source: &str,
+    source_name: &str,
 ) -> miette::Result<()> {
     for item in decl_items {
         match item {
@@ -495,19 +502,25 @@ fn process_decl_items(
                     current_dir,
                     messages,
                     warnings,
+                    source,
+                    source_name,
                 )?;
             }
-            DeclItem::Type(schema) => {
+            DeclItem::Type(schema, span) => {
                 // Register the locally-defined type in the registry at this
                 // position, preserving its source-order placement relative to
                 // imports.
-                let schema_name = schema
-                    .full_name()
-                    .unwrap_or_else(|| "<unnamed>".to_string());
-                registry
-                    .register(schema.clone())
-                    .map_err(|e| miette::miette!("{e}"))
-                    .wrap_err_with(|| format!("register schema `{schema_name}`"))?;
+                if let Err(msg) = registry.register(schema.clone()) {
+                    if let Some(span) = span {
+                        return Err(avdl::error::ParseDiagnostic {
+                            src: miette::NamedSource::new(source_name, source.to_string()),
+                            span: *span,
+                            message: msg,
+                        }
+                        .into());
+                    }
+                    return Err(miette::miette!("{msg}"));
+                }
             }
         }
     }
@@ -524,6 +537,8 @@ fn resolve_single_import(
     current_dir: &Path,
     messages: &mut IndexMap<String, Message>,
     warnings: &mut Vec<Warning>,
+    _source: &str,
+    _source_name: &str,
 ) -> miette::Result<()> {
     let resolved_path = import_ctx
         .resolve_import(&import.path, current_dir)
@@ -585,6 +600,7 @@ fn resolve_single_import(
 
             // Recursively process declaration items from the imported file,
             // preserving their source order for correct type ordering.
+            let imported_name = resolved_path.display().to_string();
             process_decl_items(
                 &nested_decl_items,
                 registry,
@@ -592,6 +608,8 @@ fn resolve_single_import(
                 &import_dir,
                 messages,
                 warnings,
+                &imported_source,
+                &imported_name,
             )
             .wrap_err_with(|| {
                 format!("resolve nested imports from `{}`", resolved_path.display())

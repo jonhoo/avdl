@@ -92,7 +92,7 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
                     }
                 }
             }
-            DeclItem::Type(schema) => {
+            DeclItem::Type(schema, _) => {
                 let _ = registry.register(schema.clone());
             }
         }
@@ -254,7 +254,7 @@ fn process_decl_items_test(
                     }
                 }
             }
-            DeclItem::Type(schema) => {
+            DeclItem::Type(schema, _) => {
                 let _ = registry.register(schema.clone());
             }
         }
@@ -483,7 +483,7 @@ fn parse_idl2schemata(
                     }
                 }
             }
-            DeclItem::Type(schema) => {
+            DeclItem::Type(schema, _) => {
                 let _ = registry.register(schema.clone());
             }
         }
@@ -641,7 +641,7 @@ fn test_duplicate_type_definition() {
             let mut registry = avdl::resolve::SchemaRegistry::new();
             let mut saw_error = false;
             for item in &decl_items {
-                if let DeclItem::Type(schema) = item {
+                if let DeclItem::Type(schema, _) = item {
                     if registry.register(schema.clone()).is_err() {
                         saw_error = true;
                     }
@@ -808,7 +808,7 @@ fn test_dotted_identifier_namespace_priority() {
     let (idl_file, decl_items, _warnings) = parse_idl(input).expect("should parse successfully");
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
-        if let DeclItem::Type(schema) = item {
+        if let DeclItem::Type(schema, _) = item {
             let _ = registry.register(schema.clone());
         }
     }
@@ -848,7 +848,7 @@ fn test_empty_namespace_annotation_emits_namespace_key() {
     let (idl_file, decl_items, _warnings) = parse_idl(input).expect("should parse successfully");
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
-        if let DeclItem::Type(schema) = item {
+        if let DeclItem::Type(schema, _) = item {
             let _ = registry.register(schema.clone());
         }
     }
@@ -959,7 +959,7 @@ fn test_cross_namespace_unqualified_reference_is_unresolved() {
     let (_, decl_items, _warnings) = parse_idl(input).expect("should parse successfully");
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
-        if let DeclItem::Type(schema) = item {
+        if let DeclItem::Type(schema, _) = item {
             let _ = registry.register(schema.clone());
         }
     }
@@ -1120,7 +1120,7 @@ fn test_extra_protocol_syntax() {
     let type_items: Vec<_> = decl_items
         .iter()
         .filter_map(|item| match item {
-            DeclItem::Type(schema) => Some(schema),
+            DeclItem::Type(schema, _) => Some(schema),
             _ => None,
         })
         .collect();
@@ -1191,7 +1191,7 @@ fn test_extra_schema_syntax() {
     let type_items: Vec<_> = decl_items
         .iter()
         .filter_map(|item| match item {
-            DeclItem::Type(schema) => Some(schema),
+            DeclItem::Type(schema, _) => Some(schema),
             _ => None,
         })
         .collect();
@@ -1225,7 +1225,7 @@ fn parse_inline_to_json(avdl_input: &str) -> Value {
 
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
-        if let DeclItem::Type(schema) = item {
+        if let DeclItem::Type(schema, _) = item {
             let _ = registry.register(schema.clone());
         }
     }
@@ -2035,7 +2035,7 @@ fn test_idl2schemata_unresolved_type_detected() {
 
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
-        if let DeclItem::Type(schema) = item {
+        if let DeclItem::Type(schema, _) = item {
             let _ = registry.register(schema.clone());
         }
     }
@@ -2109,7 +2109,7 @@ fn test_cycle_test_root() {
     // Register all types and verify no unresolved references.
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
-        if let DeclItem::Type(schema) = item {
+        if let DeclItem::Type(schema, _) = item {
             registry
                 .register(schema.clone())
                 .unwrap_or_else(|e| panic!("failed to register type: {e}"));
@@ -2246,7 +2246,7 @@ fn test_logical_types_file() {
     // Register types and serialize to JSON for field-level assertions.
     let mut registry = avdl::resolve::SchemaRegistry::new();
     for item in &decl_items {
-        if let DeclItem::Type(schema) = item {
+        if let DeclItem::Type(schema, _) = item {
             registry
                 .register(schema.clone())
                 .unwrap_or_else(|e| panic!("failed to register type: {e}"));

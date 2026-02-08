@@ -212,7 +212,11 @@ pub enum DeclItem {
     /// An import statement to be resolved later.
     Import(ImportEntry),
     /// A locally-defined named type (record, enum, or fixed).
-    Type(AvroSchema),
+    ///
+    /// The optional `SourceSpan` records the byte range of the declaration in
+    /// the originating IDL source, enabling source-highlighted diagnostics when
+    /// registration fails (e.g., duplicate type name).
+    Type(AvroSchema, Option<miette::SourceSpan>),
 }
 
 /// Parse an Avro IDL string into an `IdlFile` and a list of declaration items.
@@ -410,6 +414,31 @@ fn make_diagnostic_from_token(
         message,
     }
     .into()
+}
+
+/// Extract a `SourceSpan` from a parse tree context's start token.
+///
+/// Returns `None` if the token has no valid position (e.g., synthetic tokens).
+/// Used to attach spans to `DeclItem::Type` and `DeclItem::Import` entries so
+/// that downstream errors (duplicate type name, import failure) can produce
+/// source-highlighted diagnostics.
+fn span_from_context<'input>(
+    ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'input>,
+) -> Option<miette::SourceSpan> {
+    let start_token = ctx.start();
+    let offset = start_token.get_start();
+    let stop = start_token.get_stop();
+
+    if offset >= 0 && stop >= offset {
+        Some(miette::SourceSpan::new(
+            (offset as usize).into(),
+            (stop - offset + 1) as usize,
+        ))
+    } else if offset >= 0 {
+        Some(miette::SourceSpan::new((offset as usize).into(), 1))
+    } else {
+        None
+    }
 }
 
 // ==========================================================================
@@ -729,9 +758,10 @@ fn walk_idl_file<'input>(
         if let Ok(import_ctx) = child.clone().downcast_rc::<ImportStatementContextAll<'input>>() {
             collect_single_import(&import_ctx, decl_items);
         } else if let Ok(ns_ctx) = child.downcast_rc::<NamedSchemaDeclarationContextAll<'input>>() {
+            let span = span_from_context(&*ns_ctx);
             let schema = walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
             local_schemas.push(schema.clone());
-            decl_items.push(DeclItem::Type(schema));
+            decl_items.push(DeclItem::Type(schema, span));
         }
     }
 
@@ -816,8 +846,9 @@ fn walk_protocol<'input>(
         if let Ok(import_ctx) = child.clone().downcast_rc::<ImportStatementContextAll<'input>>() {
             collect_single_import(&import_ctx, decl_items);
         } else if let Ok(ns_ctx) = child.clone().downcast_rc::<NamedSchemaDeclarationContextAll<'input>>() {
+            let span = span_from_context(&*ns_ctx);
             let schema = walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
-            decl_items.push(DeclItem::Type(schema));
+            decl_items.push(DeclItem::Type(schema, span));
         } else if let Ok(msg_ctx) = child.downcast_rc::<MessageDeclarationContextAll<'input>>() {
             let (msg_name, message) = walk_message(&msg_ctx, token_stream, src, namespace)?;
             messages.insert(msg_name, message);
@@ -3120,7 +3151,7 @@ mod tests {
         let (_idl_file, decl_items, _warnings) = parse_idl(idl).expect("IDL should parse successfully");
         // Find the record among declaration items.
         for item in &decl_items {
-            if let DeclItem::Type(AvroSchema::Record { fields, .. }) = item {
+            if let DeclItem::Type(AvroSchema::Record { fields, .. }, _) = item {
                 return fields[0].schema.clone();
             }
         }
@@ -3535,7 +3566,7 @@ mod tests {
         let (_idl_file, decl_items, _warnings) =
             parse_idl(idl).expect("duplicate @namespace should be accepted");
         let record = decl_items.iter().find_map(|item| {
-            if let DeclItem::Type(schema @ AvroSchema::Record { .. }) = item {
+            if let DeclItem::Type(schema @ AvroSchema::Record { .. }, _) = item {
                 Some(schema)
             } else {
                 None
