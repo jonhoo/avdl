@@ -16,7 +16,7 @@ use miette::{Context, IntoDiagnostic};
 use avdl::import::{import_protocol, import_schema, ImportContext};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json, to_string_pretty_java};
 use avdl::model::protocol::Message;
-use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportEntry, ImportKind, Warning};
+use avdl::reader::{parse_idl_named, DeclItem, IdlFile, ImportEntry, ImportKind, Warning};
 use avdl::resolve::SchemaRegistry;
 
 // ==============================================================================
@@ -427,7 +427,7 @@ fn parse_and_resolve(
     input_path: Option<PathBuf>,
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<(IdlFile, SchemaRegistry, Vec<Warning>)> {
-    let (idl_file, decl_items, mut warnings) = parse_idl(source)
+    let (idl_file, decl_items, mut warnings) = parse_idl_named(source, source_name)
         .wrap_err("parse IDL source")?;
 
     let mut registry = SchemaRegistry::new();
@@ -589,8 +589,9 @@ fn resolve_single_import(
                     format!("read imported IDL {}", resolved_path.display())
                 })?;
 
+            let imported_name = resolved_path.display().to_string();
             let (imported_idl, nested_decl_items, import_warnings) =
-                parse_idl(&imported_source)
+                parse_idl_named(&imported_source, &imported_name)
                     .wrap_err_with(|| {
                         format!("parse imported IDL {}", resolved_path.display())
                     })?;
@@ -614,7 +615,6 @@ fn resolve_single_import(
 
             // Recursively process declaration items from the imported file,
             // preserving their source order for correct type ordering.
-            let imported_name = resolved_path.display().to_string();
             process_decl_items(
                 &nested_decl_items,
                 registry,

@@ -956,19 +956,34 @@ fn walk_record<'input>(
     for field_ctx in body.fieldDeclaration_all() {
         let mut field_fields =
             walk_field_declaration(&field_ctx, token_stream, src, namespace)?;
-        for field in &field_fields {
+        // Check for duplicates. We zip with the variable declaration contexts
+        // so that the diagnostic highlights the duplicate field *name*, not the
+        // type keyword that starts the field declaration.
+        let var_ctxs = field_ctx.variableDeclaration_all();
+        for (field, var_ctx) in field_fields.iter().zip(var_ctxs.iter()) {
             if !seen_field_names.insert(field.name.clone()) {
-                // Restore namespace before returning error.
                 *namespace = saved_namespace;
-                return Err(make_diagnostic(
-                    src,
-                    &*field_ctx,
-                    format!(
-                        "duplicate field '{}' in record '{}'",
-                        field.name, record_name
-                    ),
-                )
-                .into());
+                let name_ctx = var_ctx.identifier();
+                let diag = if let Some(name_ctx) = name_ctx {
+                    make_diagnostic(
+                        src,
+                        &*name_ctx,
+                        format!(
+                            "duplicate field '{}' in record '{}'",
+                            field.name, record_name
+                        ),
+                    )
+                } else {
+                    make_diagnostic(
+                        src,
+                        &*field_ctx,
+                        format!(
+                            "duplicate field '{}' in record '{}'",
+                            field.name, record_name
+                        ),
+                    )
+                };
+                return Err(diag.into());
             }
         }
         fields.append(&mut field_fields);

@@ -99,14 +99,15 @@ output, but deliberately differs in a few ways:
   **avdl** points directly at the problem:
 
   ```
-  Error:   × parse `dup-field.avdl`
+  Error:   × parse IDL source
+    ├─▶ parse `dup-field.avdl`
     ╰─▶ duplicate field 'name' in record 'User'
-     ╭─[dup-field.avdl:5:9]
-   4 │         string name;
-   5 │         int name;
-     ·         ─┬─
-     ·          ╰── duplicate field 'name' in record 'User'
-   6 │     }
+     ╭─[dup-field.avdl:4:13]
+   3 │         string name;
+   4 │         int name;
+     ·             ──┬─
+     ·               ╰── duplicate field 'name' in record 'User'
+   5 │     }
      ╰────
   ```
 

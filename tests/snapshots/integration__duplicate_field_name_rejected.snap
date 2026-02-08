@@ -12,9 +12,9 @@ Error {
         ,
         span: SourceSpan {
             offset: SourceOffset(
-                117,
+                121,
             ),
-            length: 3,
+            length: 4,
         },
         message: "duplicate field 'name' in record 'R'",
     },
