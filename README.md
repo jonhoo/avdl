@@ -70,12 +70,44 @@ output, but deliberately differs in a few ways:
   accepted via ANTLR error recovery. avro-tools 1.12.1 crashes on this
   input.
 
-- **Better error diagnostics.** The Rust tool gives clear error
-  messages in cases where avro-tools 1.12.1 crashes with unchecked
-  exceptions: duplicate message parameter names
-  (`NoSuchElementException` in avro-tools), and reserved type names via
-  backtick escapes like `` record `int` {} `` (`NullPointerException`
-  in avro-tools).
+- **Better error diagnostics.** Errors include source context with the
+  offending token underlined, powered by [miette](https://docs.rs/miette).
+  The Rust tool also gives clear error messages in cases where
+  avro-tools 1.12.1 crashes with unchecked exceptions (e.g.,
+  `NoSuchElementException` for duplicate message parameters,
+  `NullPointerException` for reserved type names via backtick escapes).
+
+  For example, given a record with a duplicate field name:
+
+  ```avro
+  record User {
+      string name;
+      int name;
+  }
+  ```
+
+  **avro-tools** produces a Java stack trace:
+
+  ```
+  Exception in thread "main" org.apache.avro.SchemaParseException:
+    org.apache.avro.AvroRuntimeException: Field already used: name type:STRING pos:0
+      at org.apache.avro.idl.IdlReader.parse(IdlReader.java:220)
+      ... 5 more
+  ```
+
+  **avdl** points directly at the problem:
+
+  ```
+  Error:   × parse `dup-field.avdl`
+    ╰─▶ duplicate field 'name' in record 'User'
+     ╭─[dup-field.avdl:5:9]
+   4 │         string name;
+   5 │         int name;
+     ·         ─┬─
+     ·          ╰── duplicate field 'name' in record 'User'
+   6 │     }
+     ╰────
+  ```
 
 - **Namespace validation covers all segments.** Rust validates every
   dot-separated segment of namespace names. Java's
