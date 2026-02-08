@@ -161,12 +161,20 @@ until some_command; do sleep 1; done
 
 [cc-24136]: https://github.com/anthropics/claude-code/issues/24136
 
+### Sandbox `gh` (GitHub CLI) workaround
+
+The `gh` CLI requires access to auth tokens stored under `~/.config/gh/`
+(or `$GH_CONFIG_DIR`). The sandbox blocks this access, so `gh` commands
+(e.g., `gh pr view`, `gh api`) fail with authentication errors. Use
+`dangerouslyDisableSandbox: true` for `gh` invocations.
+
 ### Sandbox discipline
 
 Never use `dangerouslyDisableSandbox` preemptively. Always attempt
 commands in the default sandbox first — both `cargo` and `java -jar`
 work fine. Only bypass the sandbox after observing an actual
 permission error, and document which error triggered the bypass.
+The one standing exception is `gh` (see above).
 
 ### Regenerating the ANTLR parser
 
