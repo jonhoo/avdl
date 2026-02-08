@@ -193,6 +193,9 @@ pub enum IdlFile {
 pub struct ImportEntry {
     pub kind: ImportKind,
     pub path: String,
+    /// Byte range of the import statement in the originating IDL source,
+    /// enabling source-highlighted diagnostics when import resolution fails.
+    pub span: Option<miette::SourceSpan>,
 }
 
 /// The kind of import statement.
@@ -2552,6 +2555,7 @@ fn collect_single_import<'input>(
         decl_items.push(DeclItem::Import(ImportEntry {
             kind: import_kind,
             path: get_string_from_literal(loc.get_text()),
+            span: span_from_context(import_ctx),
         }));
     }
 }

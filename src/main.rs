@@ -537,12 +537,26 @@ fn resolve_single_import(
     current_dir: &Path,
     messages: &mut IndexMap<String, Message>,
     warnings: &mut Vec<Warning>,
-    _source: &str,
-    _source_name: &str,
+    source: &str,
+    source_name: &str,
 ) -> miette::Result<()> {
-    let resolved_path = import_ctx
-        .resolve_import(&import.path, current_dir)
-        .wrap_err_with(|| format!("resolve import `{}`", import.path))?;
+    let resolved_path = match import_ctx.resolve_import(&import.path, current_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            // When the import statement has a source span, wrap the error in a
+            // `ParseDiagnostic` so that miette renders the offending import
+            // statement with source highlighting.
+            if let Some(span) = import.span {
+                return Err(avdl::error::ParseDiagnostic {
+                    src: miette::NamedSource::new(source_name, source.to_string()),
+                    span,
+                    message: format!("{e}"),
+                }
+                .into());
+            }
+            return Err(e).wrap_err_with(|| format!("resolve import `{}`", import.path));
+        }
+    };
 
     // Skip files we've already imported (cycle prevention).
     if import_ctx.mark_imported(&resolved_path) {

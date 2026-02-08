@@ -309,7 +309,8 @@ fn test_warning_multiple_out_of_place_doc_comments() {
 // ==============================================================================
 
 /// Importing a nonexistent file should produce an error during import
-/// resolution. This tests the error message from `ImportContext::resolve_import`.
+/// resolution. This tests the error message from `ImportContext::resolve_import`,
+/// rendered with source highlighting pointing at the import statement.
 #[test]
 fn test_error_import_nonexistent_file() {
     let input = r#"
@@ -323,22 +324,39 @@ fn test_error_import_nonexistent_file() {
         parse_idl(input).expect("parsing the IDL text itself should succeed");
 
     let import_ctx = avdl::import::ImportContext::new(vec![]);
-    let mut errors = Vec::new();
 
     for item in &decl_items {
         if let DeclItem::Import(import) = item {
             let result = import_ctx.resolve_import(&import.path, std::path::Path::new("."));
             if let Err(e) = result {
-                errors.push(format!("{e}"));
+                // When a span is available, render through miette for
+                // source-highlighted output matching other error tests.
+                if let Some(span) = import.span {
+                    let diag = avdl::error::ParseDiagnostic {
+                        src: miette::NamedSource::new("<input>", input.to_string()),
+                        span,
+                        message: format!("{e}"),
+                    };
+                    let handler =
+                        GraphicalReportHandler::new_themed(GraphicalTheme::none())
+                            .with_width(80);
+                    let mut buf = String::new();
+                    if handler
+                        .render_report(&mut buf, &diag as &dyn Diagnostic)
+                        .is_ok()
+                    {
+                        insta::assert_snapshot!(buf);
+                        return;
+                    }
+                }
+
+                insta::assert_snapshot!(format!("{e}"));
+                return;
             }
         }
     }
 
-    assert!(
-        !errors.is_empty(),
-        "should produce an error for nonexistent import"
-    );
-    insta::assert_snapshot!(errors.join("\n"));
+    panic!("should produce an error for nonexistent import");
 }
 
 // ==============================================================================
