@@ -593,7 +593,7 @@ fn resolve_single_import(
             let import_file_name = resolved_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or_else(|| import.path.as_str());
+                .unwrap_or(import.path.as_str());
             for w in import_warnings {
                 warnings.push(w.with_import_prefix(import_file_name));
             }

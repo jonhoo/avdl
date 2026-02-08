@@ -61,8 +61,8 @@ fn validate_schema_name(name: &str, namespace: &Option<String>) -> Result<(), St
              followed by letters, digits, or underscores)"
         ));
     }
-    if let Some(ns) = namespace {
-        if !ns.is_empty() {
+    if let Some(ns) = namespace
+        && !ns.is_empty() {
             for segment in ns.split('.') {
                 if !is_valid_avro_name(segment) {
                     return Err(format!(
@@ -73,7 +73,6 @@ fn validate_schema_name(name: &str, namespace: &Option<String>) -> Result<(), St
                 }
             }
         }
-    }
     Ok(())
 }
 

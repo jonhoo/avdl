@@ -847,7 +847,7 @@ fn walk_protocol<'input>(
 
     if INVALID_TYPE_NAMES.contains(&protocol_name.as_str()) {
         return Err(
-            make_diagnostic(src, &*name_ctx, format!("Illegal name: {protocol_name}")).into(),
+            make_diagnostic(src, &*name_ctx, format!("Illegal name: {protocol_name}")),
         );
     }
 
@@ -964,7 +964,7 @@ fn walk_record<'input>(
 
     if INVALID_TYPE_NAMES.contains(&record_name.as_str()) {
         return Err(
-            make_diagnostic(src, &*name_ctx, format!("Illegal name: {record_name}")).into(),
+            make_diagnostic(src, &*name_ctx, format!("Illegal name: {record_name}")),
         );
     }
 
@@ -1011,7 +1011,7 @@ fn walk_record<'input>(
                         ),
                     )
                 };
-                return Err(diag.into());
+                return Err(diag);
             }
         }
         fields.append(&mut field_fields);
@@ -1116,15 +1116,14 @@ fn walk_variable<'input>(
     // Validate that the default value's JSON type matches the field's Avro type.
     // This catches mismatches like `int count = "hello"` at compile time, matching
     // Java's `Schema.Field` constructor behavior with `validate=true`.
-    if let Some(ref default_val) = default_value {
-        if let Some(reason) = validate_default(default_val, &final_type) {
+    if let Some(ref default_val) = default_value
+        && let Some(reason) = validate_default(default_val, &final_type) {
             return Err(make_diagnostic(
                 src,
                 ctx,
                 format!("Invalid default for field `{field_name}`: {reason}"),
             ));
         }
-    }
 
     Ok(Field {
         name: field_name,
@@ -1162,7 +1161,7 @@ fn walk_enum<'input>(
     let enum_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&enum_name.as_str()) {
-        return Err(make_diagnostic(src, &*name_ctx, format!("Illegal name: {enum_name}")).into());
+        return Err(make_diagnostic(src, &*name_ctx, format!("Illegal name: {enum_name}")));
     }
 
     // Collect enum symbols, rejecting duplicates.
@@ -1176,8 +1175,7 @@ fn walk_enum<'input>(
                     src,
                     &*sym_ctx,
                     format!("duplicate enum symbol: {sym_name}"),
-                )
-                .into());
+                ));
             }
             symbols.push(sym_name);
         }
@@ -1197,8 +1195,7 @@ fn walk_enum<'input>(
                         "The Enum Default: {} is not in the enum symbol set: {:?}",
                         sym, symbols
                     ),
-                )
-                .into());
+                ));
             }
             Some(sym)
         } else {
@@ -1248,7 +1245,7 @@ fn walk_fixed<'input>(
     let fixed_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&fixed_name.as_str()) {
-        return Err(make_diagnostic(src, &*name_ctx, format!("Illegal name: {fixed_name}")).into());
+        return Err(make_diagnostic(src, &*name_ctx, format!("Illegal name: {fixed_name}")));
     }
 
     // Parse the size from the IntegerLiteral token.
@@ -1301,7 +1298,7 @@ fn walk_full_type<'input>(
     // The Java implementation checks this in exitNullableType (IdlReader.java
     // lines 776-777) and throws "Type references may not be annotated".
     if !props.properties.is_empty() && is_type_reference(&schema) {
-        return Err(make_diagnostic(src, ctx, "Type references may not be annotated").into());
+        return Err(make_diagnostic(src, ctx, "Type references may not be annotated"));
     }
 
     // Apply custom properties to the schema. For nullable unions we apply
@@ -1591,8 +1588,7 @@ fn walk_message<'input>(
                     "duplicate parameter '{}' in message '{}'",
                     field.name, message_name
                 ),
-            )
-            .into());
+            ));
         }
         request_fields.push(field);
     }
@@ -1607,9 +1603,8 @@ fn walk_message<'input>(
         return Err(make_diagnostic(
             src,
             ctx,
-            &format!("One-way message '{}' must return void", message_name),
-        )
-        .into());
+            format!("One-way message '{}' must return void", message_name),
+        ));
     }
 
     // Check for throws clause. The `errors` field on the context ext struct
@@ -1924,11 +1919,10 @@ fn try_parse_low_surrogate(chars: &mut std::iter::Peekable<std::str::Chars<'_>>)
         *chars = saved;
         return None;
     }
-    if let Ok(low) = u32::from_str_radix(&hex, 16) {
-        if (0xDC00..=0xDFFF).contains(&low) {
+    if let Ok(low) = u32::from_str_radix(&hex, 16)
+        && (0xDC00..=0xDFFF).contains(&low) {
             return Some(low);
         }
-    }
     // Not a low surrogate — restore the iterator to where we started so
     // the caller can process these characters normally.
     *chars = saved;
@@ -2038,7 +2032,7 @@ fn parse_float_text(text: &str) -> Result<f64> {
     // Strip trailing Java type suffix (f/F/d/D). These are permitted by
     // the ANTLR grammar but have no semantic effect — all values are
     // treated as f64, matching Java's `Double.parseDouble` behavior.
-    let number = if text.ends_with(|c: char| matches!(c, 'f' | 'F' | 'd' | 'D')) {
+    let number = if text.ends_with(['f', 'F', 'd', 'D']) {
         &text[..text.len() - 1]
     } else {
         text
@@ -2079,7 +2073,7 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
     // Split on the binary exponent marker (p/P). The grammar guarantees
     // exactly one is present.
     let (mantissa_str, exp_str) = hex_body
-        .split_once(|c: char| c == 'p' || c == 'P')
+        .split_once(['p', 'P'])
         .ok_or_else(|| {
             miette::miette!("invalid hex float literal '{original}': missing 'p'/'P' exponent")
         })?;
