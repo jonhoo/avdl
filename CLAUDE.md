@@ -39,7 +39,7 @@ same logical structure as the Java tool's output. Always compare
 semantically (parse both as JSON and compare values) rather than as
 raw strings.
 
-### Comparing against the Java tool
+### Comparing against avro-tools
 
 ```sh
 INPUT_DIR=avro/lang/java/idl/src/test/idl/input

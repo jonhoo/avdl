@@ -42,7 +42,7 @@ output, but deliberately differs in a few ways:
   within objects, and array line-breaking style may differ. The output
   parses to the same logical structure.
 
-- **Import search paths replace Java classpath.** Java resolves
+- **Import search paths replace Java classpath.** avro-tools resolves
   `import` paths via the JVM classpath; this tool uses explicit
   `--import-dir` flags instead, which serve the same purpose without
   requiring a JVM.
@@ -54,15 +54,15 @@ output, but deliberately differs in a few ways:
   test harness supports the same output.
 
 - **Trailing commas in enums.** `enum E { A, B, C, }` is silently
-  accepted via ANTLR error recovery. Java 1.12.1 crashes on this
+  accepted via ANTLR error recovery. avro-tools 1.12.1 crashes on this
   input.
 
 - **Better error diagnostics.** The Rust tool gives clear error
-  messages in cases where Java 1.12.1 crashes with unchecked
+  messages in cases where avro-tools 1.12.1 crashes with unchecked
   exceptions: duplicate message parameter names
-  (`NoSuchElementException` in Java), and reserved type names via
+  (`NoSuchElementException` in avro-tools), and reserved type names via
   backtick escapes like `` record `int` {} `` (`NullPointerException`
-  in Java).
+  in avro-tools).
 
 - **Namespace validation covers all segments.** Rust validates every
   dot-separated segment of namespace names. Java's
