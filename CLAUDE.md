@@ -9,8 +9,14 @@ Protocol JSON (`.avpr`) or Schema JSON (`.avsc`).
 
 - [Avro specification](https://avro.apache.org/docs/1.12.0/specification/)
   — full schema, protocol, and serialization format.
+  Local source: `avro/doc/content/en/docs/1.12.0/Specification/_index.md`
 - [Avro IDL language](https://avro.apache.org/docs/1.12.0/idl-language/)
   — the `.avdl` surface syntax this tool parses.
+  Local source: `avro/doc/content/en/docs/1.12.0/IDL Language/_index.md`
+
+These are the authoritative Hugo source files for the published docs
+at avro.apache.org. Prefer reading the local copies over fetching the
+website — they are always available and match the submodule version.
 
 ## Build and test
 

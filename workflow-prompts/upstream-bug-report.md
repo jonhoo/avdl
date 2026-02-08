@@ -9,8 +9,13 @@ project. Run this for each upstream issue that isn't already a `.jira.md`.
 - **Java tool JAR:** `avro-tools-1.12.1.jar` (see CLAUDE.md for path)
 - **Java source:** `avro/lang/java/idl/src/main/java/org/apache/avro/idl/`
 - **ANTLR grammar:** `avro/share/idl_grammar/org/apache/avro/idl/Idl.g4`
-- **Avro specification:** https://avro.apache.org/docs/1.12.0/specification/
-- **Avro IDL language:** https://avro.apache.org/docs/1.12.0/idl-language/
+- **Avro specification (local):**
+  `avro/doc/content/en/docs/1.12.0/Specification/_index.md`
+- **Avro IDL language (local):**
+  `avro/doc/content/en/docs/1.12.0/IDL Language/_index.md`
+- **Spec URLs (for citation):**
+  https://avro.apache.org/docs/1.12.0/specification/ and
+  https://avro.apache.org/docs/1.12.0/idl-language/
 - **Existing `.jira.md` files** in `upstream-issues/` serve as format
   examples
 
@@ -38,7 +43,55 @@ project. Run this for each upstream issue that isn't already a `.jira.md`.
    - `avro/lang/java/idl/src/test/java/` (unit tests)
 4. Check for source comments that acknowledge the issue.
 
-## Phase 3: Write a minimal reproduction
+## Phase 3: Confirm this is actually an upstream bug
+
+Before investing in a polished report, build confidence that the
+observed behavior is genuinely a bug — not a misunderstanding of the
+IDL semantics, an intentional design choice, or a known limitation.
+
+1. **Read the specification.** Check both the local Avro specification
+   and IDL language docs (see Prerequisites for paths). Look for:
+   - Explicit prohibition of the behavior ("Unions may not...")
+   - Implicit constraints (e.g., a grammar production that the spec
+     says is only valid in certain contexts)
+   - Ambiguity — if the spec doesn't clearly say the behavior is
+     wrong, the case is weaker
+
+2. **Read Java source comments.** Search `IdlReader.java` and related
+   files for comments near the affected code path. Look for:
+   - `// TODO` or `// FIXME` that acknowledge the issue
+   - Comments explaining *why* a particular behavior was chosen
+   - Javadoc on public methods that describes intended semantics
+   - References to JIRA tickets (e.g., `AVRO-1234`)
+
+3. **Check the Java test suite for intent signals.** Look at
+   `avro/lang/java/idl/src/test/` for tests that exercise related
+   behavior. A test that explicitly asserts the behavior you think is
+   buggy is strong evidence it's intentional. An absence of tests is
+   neutral — it may simply be untested.
+
+4. **Consider alternative explanations:**
+   - Could this be undefined behavior that the spec intentionally
+     leaves to implementations?
+   - Could the spec have changed between versions, making the Java
+     tool correct for an older spec?
+   - Is this a case where the Java tool's behavior, while surprising,
+     produces output that is still valid Avro?
+
+5. **Classify the result:**
+   - **Confirmed bug:** The spec explicitly prohibits the behavior,
+     or the tool produces output that is invalid per the spec.
+     Proceed to Phase 4.
+   - **Likely bug:** The spec is ambiguous, but the tool produces
+     output that no Avro consumer can parse, or silently loses data.
+     Proceed, but note the ambiguity in the report description.
+   - **Not a bug:** The behavior is intentional, documented, or
+     within the spec's latitude. Do not write a `.jira.md`. Instead,
+     add a note to the original `.md` explaining why it's not
+     upstream-actionable, and move the file to `issues/` if the
+     behavior still affects our Rust port.
+
+## Phase 4: Write a minimal reproduction
 
 1. Write a standalone `.avdl` file in `tmp/` that triggers the bug.
    Strip everything not necessary — no extra records, no imports, no
@@ -52,18 +105,24 @@ project. Run this for each upstream issue that isn't already a `.jira.md`.
 4. If the bug is silent corruption (valid exit code, invalid output),
    show the full JSON output and highlight the invalid portion.
 
-## Phase 4: Verify against the specification
+## Phase 5: Verify the spec quote for citation
+
+Phase 3 already established that the behavior violates the spec.
+This phase captures the exact text for the report.
 
 1. Find the relevant section of the Avro specification or IDL
-   language reference.
+   language reference (see Prerequisites for local file paths).
 2. Quote the exact text that the Java behavior violates.
-3. If the spec is ambiguous, explain why the behavior is still wrong
+3. Record the published URL for citation in the report (e.g.,
+   `https://avro.apache.org/docs/1.12.0/specification/#unions`).
+4. If the spec is ambiguous, explain why the behavior is still wrong
    (e.g., produces invalid schema JSON that no consumer can parse).
 
-## Phase 5: Write the `.jira.md`
+## Phase 6: Write the `.jira.md`
 
 Create `upstream-issues/<uuid>-<desc>.jira.md` using the template
-below. Then delete the original `.md` file (it is superseded).
+below. Then **delete the original `.md` file** — it is superseded by
+the `.jira.md` and should not remain alongside it.
 
 ### Content rules
 
@@ -138,6 +197,8 @@ grammar rules to modify.>
 
 Before considering the `.jira.md` complete:
 
+- [ ] Phase 3 classification is "confirmed bug" or "likely bug"
+- [ ] Original `.md` has been deleted
 - [ ] Reproduction is self-contained (no imports, no classpath, no
       test-suite references)
 - [ ] Reproduction is minimal (nothing can be removed without losing
@@ -156,24 +217,31 @@ Before considering the `.jira.md` complete:
 
 For batch conversion, launch one sub-agent per issue:
 
-> You are converting an internal bug report into a JIRA-ready bug
-> report for the Apache Avro project. The project is at
+> You are investigating an internal bug report to determine whether
+> it is genuinely an upstream Apache Avro bug, and if so, converting
+> it into a JIRA-ready bug report. The project is at
 > `/home/jon/dev/stream/avdl/main/`.
 >
 > Read the workflow at `workflow-prompts/upstream-bug-report.md` and
-> follow it phase by phase.
+> follow it phase by phase. **Phase 3 (confirm it's actually a bug)
+> is critical** — do not skip it. If you conclude the behavior is
+> intentional or within spec latitude, report that finding instead
+> of writing a `.jira.md`.
 >
 > **Source issue:** `upstream-issues/<filename>.md`
 >
-> **Output:** `upstream-issues/<filename>.jira.md`
+> **Output (if confirmed):** `upstream-issues/<filename>.jira.md`
 >
 > After writing the `.jira.md`, delete the original `.md`.
+> If the issue is not a bug, do not write a `.jira.md` — instead,
+> add a note to the original `.md` explaining why.
 >
 > Key references:
 > - Java source: `avro/lang/java/idl/src/main/java/org/apache/avro/idl/`
 > - Grammar: `avro/share/idl_grammar/org/apache/avro/idl/Idl.g4`
+> - Avro spec (local): `avro/doc/content/en/docs/1.12.0/Specification/_index.md`
+> - Avro IDL (local): `avro/doc/content/en/docs/1.12.0/IDL Language/_index.md`
 > - Existing `.jira.md` files in `upstream-issues/` for format examples
-> - Avro spec: https://avro.apache.org/docs/1.12.0/specification/
 >
 > Use `tmp/` for reproduction files. Run the reproduction through
 > `java -jar` to capture exact output. Run through the verification
