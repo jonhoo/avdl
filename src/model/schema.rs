@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// Field sort order in Avro schemas.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,10 +232,9 @@ impl AvroSchema {
             AvroSchema::Record { .. }
             | AvroSchema::Enum { .. }
             | AvroSchema::Fixed { .. }
-            | AvroSchema::Reference { .. } => {
-                self.full_name()
-                    .expect("match arm restricts to Record/Enum/Fixed/Reference, all have full_name")
-            }
+            | AvroSchema::Reference { .. } => self
+                .full_name()
+                .expect("match arm restricts to Record/Enum/Fixed/Reference, all have full_name"),
 
             // Complex anonymous types: keyed by their structural type name.
             AvroSchema::Array { .. } => "array".to_string(),
@@ -391,7 +390,9 @@ pub fn is_valid_default(value: &Value, schema: &AvroSchema) -> bool {
         AvroSchema::Logical { logical_type, .. } => {
             let underlying = match logical_type {
                 LogicalType::Date | LogicalType::TimeMillis => AvroSchema::Int,
-                LogicalType::TimestampMillis | LogicalType::LocalTimestampMillis => AvroSchema::Long,
+                LogicalType::TimestampMillis | LogicalType::LocalTimestampMillis => {
+                    AvroSchema::Long
+                }
                 LogicalType::Uuid => AvroSchema::String,
                 LogicalType::Decimal { .. } => AvroSchema::Bytes,
             };
@@ -555,7 +556,10 @@ mod tests {
 
     #[test]
     fn int_rejects_object() {
-        assert!(!is_valid_default(&json!({"key": "value"}), &AvroSchema::Int));
+        assert!(!is_valid_default(
+            &json!({"key": "value"}),
+            &AvroSchema::Int
+        ));
     }
 
     #[test]
@@ -833,7 +837,10 @@ mod tests {
             logical_type: LogicalType::Uuid,
             properties: HashMap::new(),
         };
-        assert!(is_valid_default(&json!("550e8400-e29b-41d4-a716-446655440000"), &schema));
+        assert!(is_valid_default(
+            &json!("550e8400-e29b-41d4-a716-446655440000"),
+            &schema
+        ));
     }
 
     #[test]

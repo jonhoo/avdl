@@ -7,10 +7,14 @@
 // that the generator doesn't cover (clippy, unused_parens, unused_variables).
 
 #[allow(clippy::all, unused_variables)]
+#[rustfmt::skip]
 pub mod idlbaselistener;
 #[allow(clippy::all, unused_variables)]
+#[rustfmt::skip]
 pub mod idllexer;
 #[allow(clippy::all, unused_variables)]
+#[rustfmt::skip]
 pub mod idllistener;
 #[allow(clippy::all, unused_parens, unused_variables)]
+#[rustfmt::skip]
 pub mod idlparser;

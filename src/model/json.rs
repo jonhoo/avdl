@@ -84,7 +84,12 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
     for (name, msg) in &protocol.messages {
         messages_obj.insert(
             name.clone(),
-            message_to_json(msg, &mut known_names, protocol.namespace.as_deref(), &lookup),
+            message_to_json(
+                msg,
+                &mut known_names,
+                protocol.namespace.as_deref(),
+                &lookup,
+            ),
         );
     }
     obj.insert("messages".to_string(), Value::Object(messages_obj));
@@ -193,10 +198,7 @@ pub fn schema_to_json(
         // =====================================================================
         AvroSchema::AnnotatedPrimitive { kind, properties } => {
             let mut obj = Map::new();
-            obj.insert(
-                "type".to_string(),
-                Value::String(kind.as_str().to_string()),
-            );
+            obj.insert("type".to_string(), Value::String(kind.as_str().to_string()));
             for (k, v) in properties {
                 obj.insert(k.clone(), v.clone());
             }
@@ -299,10 +301,7 @@ pub fn schema_to_json(
             known_names.insert(full_name);
 
             let mut obj = Map::new();
-            obj.insert(
-                "type".to_string(),
-                Value::String("enum".to_string()),
-            );
+            obj.insert("type".to_string(), Value::String("enum".to_string()));
             obj.insert("name".to_string(), Value::String(name.clone()));
             // Emit the namespace key when it differs from the enclosing context.
             // Special case: when there's no enclosing namespace (standalone .avsc),
@@ -361,10 +360,7 @@ pub fn schema_to_json(
             known_names.insert(full_name);
 
             let mut obj = Map::new();
-            obj.insert(
-                "type".to_string(),
-                Value::String("fixed".to_string()),
-            );
+            obj.insert("type".to_string(), Value::String("fixed".to_string()));
             obj.insert("name".to_string(), Value::String(name.clone()));
             // Emit the namespace key when it differs from the enclosing context.
             // Special case: when there's no enclosing namespace (standalone .avsc),
@@ -398,10 +394,7 @@ pub fn schema_to_json(
         // =====================================================================
         AvroSchema::Array { items, properties } => {
             let mut obj = Map::new();
-            obj.insert(
-                "type".to_string(),
-                Value::String("array".to_string()),
-            );
+            obj.insert("type".to_string(), Value::String("array".to_string()));
             obj.insert(
                 "items".to_string(),
                 schema_to_json(items, known_names, enclosing_namespace, lookup),
@@ -417,10 +410,7 @@ pub fn schema_to_json(
         // =====================================================================
         AvroSchema::Map { values, properties } => {
             let mut obj = Map::new();
-            obj.insert(
-                "type".to_string(),
-                Value::String("map".to_string()),
-            );
+            obj.insert("type".to_string(), Value::String("map".to_string()));
             obj.insert(
                 "values".to_string(),
                 schema_to_json(values, known_names, enclosing_namespace, lookup),
@@ -454,10 +444,7 @@ pub fn schema_to_json(
             match logical_type {
                 LogicalType::Date => {
                     obj.insert("type".to_string(), Value::String("int".to_string()));
-                    obj.insert(
-                        "logicalType".to_string(),
-                        Value::String("date".to_string()),
-                    );
+                    obj.insert("logicalType".to_string(), Value::String("date".to_string()));
                 }
                 LogicalType::TimeMillis => {
                     obj.insert("type".to_string(), Value::String("int".to_string()));
@@ -482,24 +469,15 @@ pub fn schema_to_json(
                 }
                 LogicalType::Uuid => {
                     obj.insert("type".to_string(), Value::String("string".to_string()));
-                    obj.insert(
-                        "logicalType".to_string(),
-                        Value::String("uuid".to_string()),
-                    );
+                    obj.insert("logicalType".to_string(), Value::String("uuid".to_string()));
                 }
-                LogicalType::Decimal {
-                    precision,
-                    scale,
-                } => {
+                LogicalType::Decimal { precision, scale } => {
                     obj.insert("type".to_string(), Value::String("bytes".to_string()));
                     obj.insert(
                         "logicalType".to_string(),
                         Value::String("decimal".to_string()),
                     );
-                    obj.insert(
-                        "precision".to_string(),
-                        Value::Number((*precision).into()),
-                    );
+                    obj.insert("precision".to_string(), Value::Number((*precision).into()));
                     obj.insert("scale".to_string(), Value::Number((*scale).into()));
                 }
             }
@@ -514,9 +492,7 @@ pub fn schema_to_json(
         // output a bare name for subsequent uses.
         // =====================================================================
         AvroSchema::Reference {
-            name,
-            namespace,
-            ..
+            name, namespace, ..
         } => {
             let full_name = match namespace {
                 Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
@@ -573,10 +549,7 @@ fn field_to_json(
     // Ascending is the default -- omit it.
     match &field.order {
         Some(FieldOrder::Descending) => {
-            obj.insert(
-                "order".to_string(),
-                Value::String("descending".to_string()),
-            );
+            obj.insert("order".to_string(), Value::String("descending".to_string()));
         }
         Some(FieldOrder::Ignore) => {
             obj.insert("order".to_string(), Value::String("ignore".to_string()));
@@ -687,7 +660,6 @@ fn alias_ref_name(alias: &str, schema_namespace: Option<&str>) -> String {
     }
 }
 
-
 // =============================================================================
 // Java-Compatible JSON Serialization
 // =============================================================================
@@ -787,9 +759,7 @@ fn decimal_to_scientific(ryu_str: &str) -> String {
     // Find the first non-zero digit to locate the leading significant digit.
     // For values >= 1.0 the integer part always starts with a non-zero digit;
     // for values < 1.0 (like "0.0001") there may be leading zeros.
-    let first_nonzero = all_digits
-        .find(|c: char| c != '0')
-        .unwrap_or(0);
+    let first_nonzero = all_digits.find(|c: char| c != '0').unwrap_or(0);
     let significant_digits = &all_digits[first_nonzero..];
 
     // The exponent is determined by how far the original decimal point is from
@@ -1380,7 +1350,10 @@ mod tests {
         let result = serialize_schema_tracking(&reference, &mut known, None, &lookup);
 
         // First use: should be the full record definition (an object).
-        assert!(result.is_object(), "first use of reference should inline the full definition");
+        assert!(
+            result.is_object(),
+            "first use of reference should inline the full definition"
+        );
         assert_eq!(result["type"], json!("record"));
         assert_eq!(result["name"], json!("Ping"));
     }
@@ -1437,19 +1410,10 @@ mod tests {
 
         let mut known = HashSet::new();
         // First use inlines.
-        let _ = serialize_schema_tracking(
-            &reference,
-            &mut known,
-            Some("org.example"),
-            &lookup,
-        );
+        let _ = serialize_schema_tracking(&reference, &mut known, Some("org.example"), &lookup);
         // Second use within the same namespace should use the short name.
-        let result = serialize_schema_tracking(
-            &reference,
-            &mut known,
-            Some("org.example"),
-            &lookup,
-        );
+        let result =
+            serialize_schema_tracking(&reference, &mut known, Some("org.example"), &lookup);
         assert_eq!(result, json!("Ping"));
     }
 
@@ -1546,10 +1510,7 @@ mod tests {
         // even though it collides. (This matches Java's behavior: if
         // space == null, shouldWriteFull returns true but getQualified just
         // returns the name portion.)
-        assert_eq!(
-            schema_ref_name("record", None, None),
-            "record"
-        );
+        assert_eq!(schema_ref_name("record", None, None), "record");
     }
 
     #[test]
@@ -1583,10 +1544,7 @@ mod tests {
 
     #[test]
     fn alias_no_namespace_keeps_simple_name() {
-        assert_eq!(
-            alias_ref_name("NoNs", Some("test.aliases")),
-            "NoNs"
-        );
+        assert_eq!(alias_ref_name("NoNs", Some("test.aliases")), "NoNs");
     }
 
     #[test]
@@ -1628,10 +1586,7 @@ mod tests {
     #[test]
     fn alias_schema_nil_namespace() {
         // Schema has no namespace; alias has namespace -- should keep full.
-        assert_eq!(
-            alias_ref_name("some.ns.Alias", None),
-            "some.ns.Alias"
-        );
+        assert_eq!(alias_ref_name("some.ns.Alias", None), "some.ns.Alias");
     }
 
     // =========================================================================
@@ -1684,7 +1639,10 @@ mod tests {
             Some("test.aliases"),
             &HashMap::new(),
         );
-        assert_eq!(result["aliases"], json!(["OldEnum", "other.ns.ForeignEnum"]));
+        assert_eq!(
+            result["aliases"],
+            json!(["OldEnum", "other.ns.ForeignEnum"])
+        );
     }
 
     #[test]
@@ -1769,20 +1727,10 @@ mod tests {
 
         let mut known = HashSet::new();
         // First use inlines the definition.
-        let _ = serialize_schema_tracking(
-            &reference,
-            &mut known,
-            Some("test.kw"),
-            &lookup,
-        );
+        let _ = serialize_schema_tracking(&reference, &mut known, Some("test.kw"), &lookup);
         // Second use: even though namespaces match, the name `record` collides
         // with a Schema.Type name, so the full name must be used.
-        let result = serialize_schema_tracking(
-            &reference,
-            &mut known,
-            Some("test.kw"),
-            &lookup,
-        );
+        let result = serialize_schema_tracking(&reference, &mut known, Some("test.kw"), &lookup);
         assert_eq!(result, json!("test.kw.record"));
     }
 
@@ -1802,12 +1750,7 @@ mod tests {
             properties: HashMap::new(),
         };
 
-        let result = field_to_json(
-            &field,
-            &mut HashSet::new(),
-            None,
-            &HashMap::new(),
-        );
+        let result = field_to_json(&field, &mut HashSet::new(), None, &HashMap::new());
         assert_eq!(result["name"], json!("kind"));
         assert_eq!(result["type"], json!("string"));
         assert_eq!(result["doc"], json!("The kind."));
@@ -1827,12 +1770,7 @@ mod tests {
             properties: HashMap::new(),
         };
 
-        let result = field_to_json(
-            &field,
-            &mut HashSet::new(),
-            None,
-            &HashMap::new(),
-        );
+        let result = field_to_json(&field, &mut HashSet::new(), None, &HashMap::new());
         // Ascending is the default and should be omitted.
         assert!(result.get("order").is_none());
     }
@@ -1849,12 +1787,7 @@ mod tests {
             properties: HashMap::new(),
         };
 
-        let result = field_to_json(
-            &field,
-            &mut HashSet::new(),
-            None,
-            &HashMap::new(),
-        );
+        let result = field_to_json(&field, &mut HashSet::new(), None, &HashMap::new());
         assert_eq!(result["order"], json!("ignore"));
     }
 
@@ -1873,12 +1806,7 @@ mod tests {
             properties: props,
         };
 
-        let result = field_to_json(
-            &field,
-            &mut HashSet::new(),
-            None,
-            &HashMap::new(),
-        );
+        let result = field_to_json(&field, &mut HashSet::new(), None, &HashMap::new());
         assert_eq!(result["aliases"], json!(["old_hash", "h"]));
         assert_eq!(result["custom-prop"], json!(true));
     }
@@ -1917,7 +1845,9 @@ mod tests {
         let result = protocol_to_json(&protocol);
         assert_eq!(result["protocol"], json!("Echo"));
         assert_eq!(result["namespace"], json!("org.example"));
-        let types = result["types"].as_array().expect("types should be an array");
+        let types = result["types"]
+            .as_array()
+            .expect("types should be an array");
         assert_eq!(types.len(), 1);
         assert_eq!(types[0]["name"], json!("Ping"));
         assert_eq!(result["messages"], json!({}));
@@ -1988,7 +1918,9 @@ mod tests {
         };
 
         let result = protocol_to_json(&protocol);
-        let messages = result["messages"].as_object().expect("messages should be an object");
+        let messages = result["messages"]
+            .as_object()
+            .expect("messages should be an object");
         assert_eq!(messages.len(), 2);
 
         let hello = &messages["hello"];
@@ -2103,21 +2035,11 @@ mod tests {
         let lookup = HashMap::new();
 
         // First serialization within matching namespace: full object.
-        let first = serialize_schema_tracking(
-            &schema,
-            &mut known,
-            Some("org.palette"),
-            &lookup,
-        );
+        let first = serialize_schema_tracking(&schema, &mut known, Some("org.palette"), &lookup);
         assert!(first.is_object());
 
         // Second serialization within same namespace: short name.
-        let second = serialize_schema_tracking(
-            &schema,
-            &mut known,
-            Some("org.palette"),
-            &lookup,
-        );
+        let second = serialize_schema_tracking(&schema, &mut known, Some("org.palette"), &lookup);
         assert_eq!(second, json!("Color"));
     }
 
@@ -2243,10 +2165,7 @@ mod tests {
             "default": 0.0_f64
         });
         let json_str = to_string_pretty_java(&val).expect("serialization succeeds");
-        assert!(
-            json_str.contains("0.0"),
-            "expected 0.0, got: {json_str}"
-        );
+        assert!(json_str.contains("0.0"), "expected 0.0, got: {json_str}");
     }
 
     #[test]
@@ -2255,10 +2174,7 @@ mod tests {
             "size": 16
         });
         let json_str = to_string_pretty_java(&val).expect("serialization succeeds");
-        assert!(
-            json_str.contains("16"),
-            "expected 16, got: {json_str}"
-        );
+        assert!(json_str.contains("16"), "expected 16, got: {json_str}");
     }
 
     // =========================================================================
@@ -2282,10 +2198,7 @@ mod tests {
 
     #[test]
     fn ryu_edge_case_f64_max() {
-        assert_eq!(
-            format_f64_like_java(f64::MAX),
-            "1.7976931348623157E308"
-        );
+        assert_eq!(format_f64_like_java(f64::MAX), "1.7976931348623157E308");
     }
 
     #[test]

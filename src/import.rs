@@ -26,10 +26,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use miette::Result;
 use crate::model::protocol::Message;
 use crate::model::schema::{AvroSchema, FieldOrder, LogicalType, PrimitiveType};
 use crate::resolve::SchemaRegistry;
+use miette::Result;
 
 // ==============================================================================
 // Import Context: Cycle Prevention and Path Resolution
@@ -143,10 +143,7 @@ fn flatten_schema(schema: AvroSchema) -> (Vec<AvroSchema>, AvroSchema) {
 /// Inner recursive helper for `flatten_schema`. Walks the schema tree,
 /// collects named types into `collected`, and returns the schema with
 /// inline named type definitions replaced by `Reference` nodes.
-fn flatten_schema_inner(
-    schema: AvroSchema,
-    collected: &mut Vec<AvroSchema>,
-) -> AvroSchema {
+fn flatten_schema_inner(schema: AvroSchema, collected: &mut Vec<AvroSchema>) -> AvroSchema {
     match schema {
         AvroSchema::Record {
             name,
@@ -162,8 +159,7 @@ fn flatten_schema_inner(
             let flattened_fields: Vec<_> = fields
                 .into_iter()
                 .map(|field| {
-                    let flattened_field_schema =
-                        flatten_schema_inner(field.schema, collected);
+                    let flattened_field_schema = flatten_schema_inner(field.schema, collected);
                     crate::model::schema::Field {
                         schema: flattened_field_schema,
                         ..field
@@ -289,9 +285,8 @@ pub fn import_protocol(
     path: &Path,
     registry: &mut SchemaRegistry,
 ) -> Result<HashMap<String, Message>> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        miette::miette!("read protocol file `{}`: {e}", path.display())
-    })?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| miette::miette!("read protocol file `{}`: {e}", path.display()))?;
     let json: Value = serde_json::from_str(&content)
         .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
 
@@ -342,15 +337,13 @@ pub fn import_protocol(
 /// nested inside record fields, union branches, array items, or map values --
 /// are registered so that subsequent IDL code can reference them by name.
 pub fn import_schema(path: &Path, registry: &mut SchemaRegistry) -> Result<()> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        miette::miette!("read schema file `{}`: {e}", path.display())
-    })?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| miette::miette!("read schema file `{}`: {e}", path.display()))?;
     let json: Value = serde_json::from_str(&content)
         .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
 
-    let schema = json_to_schema(&json, None).map_err(|e| {
-        miette::miette!("parse schema from `{}`: {e}", path.display())
-    })?;
+    let schema = json_to_schema(&json, None)
+        .map_err(|e| miette::miette!("parse schema from `{}`: {e}", path.display()))?;
     flatten_and_register(schema, registry);
 
     Ok(())
@@ -444,8 +437,9 @@ fn object_to_schema(
         "map" => parse_map(obj, default_namespace),
 
         // A primitive type with optional logical type or custom properties.
-        prim @ ("null" | "boolean" | "int" | "long" | "float" | "double" | "bytes"
-        | "string") => parse_annotated_primitive(obj, prim, default_namespace),
+        prim @ ("null" | "boolean" | "int" | "long" | "float" | "double" | "bytes" | "string") => {
+            parse_annotated_primitive(obj, prim, default_namespace)
+        }
 
         other => Err(miette::miette!("unknown schema type: {other}")),
     }
@@ -463,7 +457,10 @@ fn object_to_schema(
 /// simple name. This mirrors the Java `Schema.Name` constructor behavior.
 fn split_qualified_name(raw_name: &str) -> (String, Option<String>) {
     if let Some(pos) = raw_name.rfind('.') {
-        (raw_name[pos + 1..].to_string(), Some(raw_name[..pos].to_string()))
+        (
+            raw_name[pos + 1..].to_string(),
+            Some(raw_name[..pos].to_string()),
+        )
     } else {
         (raw_name.to_string(), None)
     }
@@ -599,9 +596,8 @@ fn parse_fixed(
         .get("size")
         .and_then(|s| s.as_u64())
         .ok_or_else(|| miette::miette!("fixed missing 'size'"))?;
-    let size = u32::try_from(size_u64).map_err(|_| {
-        miette::miette!("fixed size {size_u64} exceeds maximum ({})", u32::MAX)
-    })?;
+    let size = u32::try_from(size_u64)
+        .map_err(|_| miette::miette!("fixed size {size_u64} exceeds maximum ({})", u32::MAX))?;
     let aliases = extract_string_array(obj.get("aliases"));
 
     let properties = collect_extra_properties(
@@ -677,19 +673,15 @@ fn parse_annotated_primitive(
             "local-timestamp-millis" => LogicalType::LocalTimestampMillis,
             "uuid" => LogicalType::Uuid,
             "decimal" => {
-                let precision_u64 =
-                    obj.get("precision").and_then(|p| p.as_u64()).unwrap_or(0);
+                let precision_u64 = obj.get("precision").and_then(|p| p.as_u64()).unwrap_or(0);
                 if precision_u64 < 1 {
                     miette::bail!("decimal precision must be >= 1");
                 }
-                let precision = u32::try_from(precision_u64).map_err(|_| {
-                    miette::miette!("decimal precision too large")
-                })?;
-                let scale_u64 =
-                    obj.get("scale").and_then(|s| s.as_u64()).unwrap_or(0);
-                let scale = u32::try_from(scale_u64).map_err(|_| {
-                    miette::miette!("decimal scale too large")
-                })?;
+                let precision = u32::try_from(precision_u64)
+                    .map_err(|_| miette::miette!("decimal precision too large"))?;
+                let scale_u64 = obj.get("scale").and_then(|s| s.as_u64()).unwrap_or(0);
+                let scale = u32::try_from(scale_u64)
+                    .map_err(|_| miette::miette!("decimal scale too large"))?;
                 LogicalType::Decimal { precision, scale }
             }
             _ => {
@@ -702,10 +694,8 @@ fn parse_annotated_primitive(
             }
         };
 
-        let properties = collect_extra_properties(
-            obj,
-            &["type", "logicalType", "precision", "scale"],
-        );
+        let properties =
+            collect_extra_properties(obj, &["type", "logicalType", "precision", "scale"]);
         return Ok(AvroSchema::Logical {
             logical_type: lt,
             properties,
@@ -799,10 +789,8 @@ fn json_to_field(
 
     let aliases = extract_string_array(obj.get("aliases"));
 
-    let properties = collect_extra_properties(
-        obj,
-        &["name", "type", "doc", "default", "order", "aliases"],
-    );
+    let properties =
+        collect_extra_properties(obj, &["name", "type", "doc", "default", "order", "aliases"]);
 
     Ok(crate::model::schema::Field {
         name,
@@ -834,9 +822,8 @@ fn json_to_message(json: &Value, default_namespace: Option<&str>) -> Result<Mess
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                json_to_field(p, default_namespace).map_err(|e| {
-                    miette::miette!("parse request parameter at index {i}: {e}")
-                })
+                json_to_field(p, default_namespace)
+                    .map_err(|e| miette::miette!("parse request parameter at index {i}: {e}"))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -865,10 +852,8 @@ fn json_to_message(json: &Value, default_namespace: Option<&str>) -> Result<Mess
         None
     };
 
-    let properties = collect_extra_properties(
-        obj,
-        &["doc", "request", "response", "errors", "one-way"],
-    );
+    let properties =
+        collect_extra_properties(obj, &["doc", "request", "response", "errors", "one-way"]);
 
     Ok(Message {
         doc,
@@ -924,7 +909,10 @@ mod tests {
     fn mark_imported_returns_false_on_first_call() {
         let mut ctx = ImportContext::new(vec![]);
         let path = PathBuf::from("/tmp/test.avdl");
-        assert!(!ctx.mark_imported(&path), "first import should return false");
+        assert!(
+            !ctx.mark_imported(&path),
+            "first import should return false"
+        );
     }
 
     #[test]
@@ -956,8 +944,7 @@ mod tests {
 
     #[test]
     fn parse_named_reference_with_namespace() {
-        let schema =
-            json_to_schema(&json!("Foo"), Some("org.example")).expect("parse reference");
+        let schema = json_to_schema(&json!("Foo"), Some("org.example")).expect("parse reference");
         assert_eq!(
             schema,
             AvroSchema::Reference {
@@ -1010,9 +997,7 @@ mod tests {
         .expect("parse record");
 
         match schema {
-            AvroSchema::Record {
-                name, fields, ..
-            } => {
+            AvroSchema::Record { name, fields, .. } => {
                 assert_eq!(name, "Event");
                 assert_eq!(fields.len(), 2);
                 assert_eq!(fields[0].name, "id");
@@ -1035,9 +1020,7 @@ mod tests {
         .expect("parse enum");
 
         match schema {
-            AvroSchema::Enum {
-                name, symbols, ..
-            } => {
+            AvroSchema::Enum { name, symbols, .. } => {
                 assert_eq!(name, "Suit");
                 assert_eq!(symbols.len(), 4);
             }
@@ -1047,11 +1030,8 @@ mod tests {
 
     #[test]
     fn parse_fixed_object() {
-        let schema = json_to_schema(
-            &json!({"type": "fixed", "name": "MD5", "size": 16}),
-            None,
-        )
-        .expect("parse fixed");
+        let schema = json_to_schema(&json!({"type": "fixed", "name": "MD5", "size": 16}), None)
+            .expect("parse fixed");
 
         match schema {
             AvroSchema::Fixed { name, size, .. } => {
@@ -1064,11 +1044,8 @@ mod tests {
 
     #[test]
     fn parse_logical_type_date() {
-        let schema = json_to_schema(
-            &json!({"type": "int", "logicalType": "date"}),
-            None,
-        )
-        .expect("parse date");
+        let schema = json_to_schema(&json!({"type": "int", "logicalType": "date"}), None)
+            .expect("parse date");
 
         assert_eq!(
             schema,
@@ -1101,11 +1078,8 @@ mod tests {
 
     #[test]
     fn parse_array_schema() {
-        let schema = json_to_schema(
-            &json!({"type": "array", "items": "string"}),
-            None,
-        )
-        .expect("parse array");
+        let schema = json_to_schema(&json!({"type": "array", "items": "string"}), None)
+            .expect("parse array");
 
         match schema {
             AvroSchema::Array { items, .. } => {
@@ -1117,11 +1091,8 @@ mod tests {
 
     #[test]
     fn parse_map_schema() {
-        let schema = json_to_schema(
-            &json!({"type": "map", "values": "long"}),
-            None,
-        )
-        .expect("parse map");
+        let schema =
+            json_to_schema(&json!({"type": "map", "values": "long"}), None).expect("parse map");
 
         match schema {
             AvroSchema::Map { values, .. } => {
@@ -1144,9 +1115,7 @@ mod tests {
         .expect("parse error record");
 
         match schema {
-            AvroSchema::Record {
-                name, is_error, ..
-            } => {
+            AvroSchema::Record { name, is_error, .. } => {
                 assert_eq!(name, "NotFound");
                 assert!(is_error);
             }
@@ -1286,11 +1255,8 @@ mod tests {
 
     #[test]
     fn custom_properties_on_primitive_without_logical_type_preserved() {
-        let schema = json_to_schema(
-            &json!({"type": "int", "foo.bar": "baz"}),
-            None,
-        )
-        .expect("parse primitive with custom property");
+        let schema = json_to_schema(&json!({"type": "int", "foo.bar": "baz"}), None)
+            .expect("parse primitive with custom property");
 
         match schema {
             AvroSchema::AnnotatedPrimitive { kind, properties } => {
@@ -1303,11 +1269,8 @@ mod tests {
 
     #[test]
     fn bare_primitive_object_without_extra_properties_stays_primitive() {
-        let schema = json_to_schema(
-            &json!({"type": "long"}),
-            None,
-        )
-        .expect("parse bare primitive object");
+        let schema =
+            json_to_schema(&json!({"type": "long"}), None).expect("parse bare primitive object");
 
         assert_eq!(schema, AvroSchema::Long);
     }
@@ -1505,8 +1468,14 @@ mod tests {
         let mut registry = SchemaRegistry::new();
         flatten_and_register(schema, &mut registry);
 
-        assert!(registry.contains("test.nested.Outer"), "outer record should be registered");
-        assert!(registry.contains("test.nested.Inner"), "nested record should be registered");
+        assert!(
+            registry.contains("test.nested.Outer"),
+            "outer record should be registered"
+        );
+        assert!(
+            registry.contains("test.nested.Inner"),
+            "nested record should be registered"
+        );
     }
 
     #[test]
@@ -1534,7 +1503,10 @@ mod tests {
         flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Container"));
-        assert!(registry.contains("test.nested.Status"), "nested enum should be registered");
+        assert!(
+            registry.contains("test.nested.Status"),
+            "nested enum should be registered"
+        );
     }
 
     #[test]
@@ -1562,7 +1534,10 @@ mod tests {
         flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Container"));
-        assert!(registry.contains("test.nested.MD5"), "nested fixed should be registered");
+        assert!(
+            registry.contains("test.nested.MD5"),
+            "nested fixed should be registered"
+        );
     }
 
     #[test]
@@ -1590,7 +1565,10 @@ mod tests {
         flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Wrapper"));
-        assert!(registry.contains("test.nested.Payload"), "nested record in union should be registered");
+        assert!(
+            registry.contains("test.nested.Payload"),
+            "nested record in union should be registered"
+        );
     }
 
     #[test]
@@ -1621,7 +1599,10 @@ mod tests {
         flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Collection"));
-        assert!(registry.contains("test.nested.Entry"), "nested record in array items should be registered");
+        assert!(
+            registry.contains("test.nested.Entry"),
+            "nested record in array items should be registered"
+        );
     }
 
     #[test]
@@ -1652,7 +1633,10 @@ mod tests {
         flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Lookup"));
-        assert!(registry.contains("test.nested.MapEntry"), "nested record in map values should be registered");
+        assert!(
+            registry.contains("test.nested.MapEntry"),
+            "nested record in map values should be registered"
+        );
     }
 
     #[test]
@@ -1691,8 +1675,14 @@ mod tests {
         flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.deep.Root"));
-        assert!(registry.contains("test.deep.Leaf"), "deeply nested record should be registered");
-        assert!(registry.contains("test.deep.Tag"), "deeply nested enum should be registered");
+        assert!(
+            registry.contains("test.deep.Leaf"),
+            "deeply nested record should be registered"
+        );
+        assert!(
+            registry.contains("test.deep.Tag"),
+            "deeply nested enum should be registered"
+        );
     }
 
     #[test]
@@ -1801,7 +1791,10 @@ mod tests {
         .expect("parse deeply nested schema");
 
         let (collected, _top_level) = flatten_schema(schema);
-        let names: Vec<_> = collected.iter().filter_map(|s| s.name().map(str::to_string)).collect();
+        let names: Vec<_> = collected
+            .iter()
+            .filter_map(|s| s.name().map(str::to_string))
+            .collect();
         assert_eq!(
             names,
             vec!["Tag", "Level3", "Level2", "Level1"],
@@ -1832,21 +1825,21 @@ mod tests {
         let (collected, _top_level) = flatten_schema(schema);
 
         // Find Container in collected types and check its union field.
-        let container = collected.iter().find(|s| s.name() == Some("Container"))
+        let container = collected
+            .iter()
+            .find(|s| s.name() == Some("Container"))
             .expect("Container should be in collected types");
         match container {
-            AvroSchema::Record { fields, .. } => {
-                match &fields[0].schema {
-                    AvroSchema::Union { types, .. } => {
-                        assert!(
-                            matches!(&types[1], AvroSchema::Reference { name, .. } if name == "Payload"),
-                            "union branch should be a Reference to Payload, got {:?}",
-                            types[1]
-                        );
-                    }
-                    other => panic!("expected Union, got {other:?}"),
+            AvroSchema::Record { fields, .. } => match &fields[0].schema {
+                AvroSchema::Union { types, .. } => {
+                    assert!(
+                        matches!(&types[1], AvroSchema::Reference { name, .. } if name == "Payload"),
+                        "union branch should be a Reference to Payload, got {:?}",
+                        types[1]
+                    );
                 }
-            }
+                other => panic!("expected Union, got {other:?}"),
+            },
             other => panic!("expected Record, got {other:?}"),
         }
     }
@@ -1875,21 +1868,21 @@ mod tests {
         .expect("parse record with nested record in array");
 
         let (collected, _) = flatten_schema(schema);
-        let collection = collected.iter().find(|s| s.name() == Some("Collection"))
+        let collection = collected
+            .iter()
+            .find(|s| s.name() == Some("Collection"))
             .expect("Collection should be collected");
         match collection {
-            AvroSchema::Record { fields, .. } => {
-                match &fields[0].schema {
-                    AvroSchema::Array { items, .. } => {
-                        assert!(
-                            matches!(items.as_ref(), AvroSchema::Reference { name, .. } if name == "Entry"),
-                            "array items should be a Reference to Entry, got {:?}",
-                            items
-                        );
-                    }
-                    other => panic!("expected Array, got {other:?}"),
+            AvroSchema::Record { fields, .. } => match &fields[0].schema {
+                AvroSchema::Array { items, .. } => {
+                    assert!(
+                        matches!(items.as_ref(), AvroSchema::Reference { name, .. } if name == "Entry"),
+                        "array items should be a Reference to Entry, got {:?}",
+                        items
+                    );
                 }
-            }
+                other => panic!("expected Array, got {other:?}"),
+            },
             other => panic!("expected Record, got {other:?}"),
         }
     }
@@ -1918,21 +1911,21 @@ mod tests {
         .expect("parse record with nested record in map");
 
         let (collected, _) = flatten_schema(schema);
-        let lookup = collected.iter().find(|s| s.name() == Some("Lookup"))
+        let lookup = collected
+            .iter()
+            .find(|s| s.name() == Some("Lookup"))
             .expect("Lookup should be collected");
         match lookup {
-            AvroSchema::Record { fields, .. } => {
-                match &fields[0].schema {
-                    AvroSchema::Map { values, .. } => {
-                        assert!(
-                            matches!(values.as_ref(), AvroSchema::Reference { name, .. } if name == "MapEntry"),
-                            "map values should be a Reference to MapEntry, got {:?}",
-                            values
-                        );
-                    }
-                    other => panic!("expected Map, got {other:?}"),
+            AvroSchema::Record { fields, .. } => match &fields[0].schema {
+                AvroSchema::Map { values, .. } => {
+                    assert!(
+                        matches!(values.as_ref(), AvroSchema::Reference { name, .. } if name == "MapEntry"),
+                        "map values should be a Reference to MapEntry, got {:?}",
+                        values
+                    );
                 }
-            }
+                other => panic!("expected Map, got {other:?}"),
+            },
             other => panic!("expected Record, got {other:?}"),
         }
     }

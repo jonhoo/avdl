@@ -10,14 +10,14 @@ use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
-use std::collections::{HashMap, HashSet};
-use lexopt::prelude::*;
-use miette::{Context, IntoDiagnostic};
-use avdl::import::{import_protocol, import_schema, ImportContext};
+use avdl::import::{ImportContext, import_protocol, import_schema};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json, to_string_pretty_java};
 use avdl::model::protocol::Message;
-use avdl::reader::{parse_idl_named, DeclItem, IdlFile, ImportEntry, ImportKind, Warning};
+use avdl::reader::{DeclItem, IdlFile, ImportEntry, ImportKind, Warning, parse_idl_named};
 use avdl::resolve::SchemaRegistry;
+use lexopt::prelude::*;
+use miette::{Context, IntoDiagnostic};
+use std::collections::{HashMap, HashSet};
 
 // ==============================================================================
 // CLI Help Text
@@ -100,9 +100,7 @@ fn parse_idl_args(parser: &mut lexopt::Parser) -> Result<IdlArgs, lexopt::Error>
 }
 
 /// Parse `--import-dir` and positional args for the `idl2schemata` subcommand.
-fn parse_idl2schemata_args(
-    parser: &mut lexopt::Parser,
-) -> Result<Idl2schemataArgs, lexopt::Error> {
+fn parse_idl2schemata_args(parser: &mut lexopt::Parser) -> Result<Idl2schemataArgs, lexopt::Error> {
     let mut import_dirs = Vec::new();
     let mut positionals: Vec<String> = Vec::new();
 
@@ -123,11 +121,12 @@ fn parse_idl2schemata_args(
         }
     }
 
-    let input = positionals.first().cloned().ok_or_else(|| {
-        lexopt::Error::MissingValue {
+    let input = positionals
+        .first()
+        .cloned()
+        .ok_or_else(|| lexopt::Error::MissingValue {
             option: Some("INPUT".to_string()),
-        }
-    })?;
+        })?;
     let outdir = positionals.get(1).map(PathBuf::from);
 
     Ok(Idl2schemataArgs {
@@ -176,8 +175,7 @@ fn main() -> miette::Result<()> {
             run_idl(args.input, args.output, args.import_dirs)
         }
         "idl2schemata" => {
-            let args =
-                parse_idl2schemata_args(&mut parser).map_err(|e| miette::miette!("{e}"))?;
+            let args = parse_idl2schemata_args(&mut parser).map_err(|e| miette::miette!("{e}"))?;
             run_idl2schemata(args.input, args.outdir, args.import_dirs)
         }
         other => {
@@ -232,8 +230,8 @@ fn run_idl(
         }
     };
 
-    let json_str = to_string_pretty_java(&json_value)
-        .map_err(|e| miette::miette!("serialize JSON: {e}"))?;
+    let json_str =
+        to_string_pretty_java(&json_value).map_err(|e| miette::miette!("serialize JSON: {e}"))?;
 
     // Validate that all type references resolved before writing output.
     // Unresolved references indicate missing imports, undefined types, or
@@ -427,8 +425,8 @@ fn parse_and_resolve(
     input_path: Option<PathBuf>,
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<(IdlFile, SchemaRegistry, Vec<Warning>)> {
-    let (idl_file, decl_items, mut warnings) = parse_idl_named(source, source_name)
-        .wrap_err("parse IDL source")?;
+    let (idl_file, decl_items, mut warnings) =
+        parse_idl_named(source, source_name).wrap_err("parse IDL source")?;
 
     let mut registry = SchemaRegistry::new();
     let mut import_ctx = ImportContext::new(import_dirs);
@@ -571,30 +569,22 @@ fn resolve_single_import(
     match import.kind {
         ImportKind::Protocol => {
             let imported_messages = import_protocol(&resolved_path, registry)
-                .wrap_err_with(|| {
-                    format!("import protocol {}", resolved_path.display())
-                })?;
+                .wrap_err_with(|| format!("import protocol {}", resolved_path.display()))?;
             messages.extend(imported_messages);
         }
         ImportKind::Schema => {
             import_schema(&resolved_path, registry)
-                .wrap_err_with(|| {
-                    format!("import schema {}", resolved_path.display())
-                })?;
+                .wrap_err_with(|| format!("import schema {}", resolved_path.display()))?;
         }
         ImportKind::Idl => {
             let imported_source = fs::read_to_string(&resolved_path)
                 .into_diagnostic()
-                .wrap_err_with(|| {
-                    format!("read imported IDL {}", resolved_path.display())
-                })?;
+                .wrap_err_with(|| format!("read imported IDL {}", resolved_path.display()))?;
 
             let imported_name = resolved_path.display().to_string();
             let (imported_idl, nested_decl_items, import_warnings) =
                 parse_idl_named(&imported_source, &imported_name)
-                    .wrap_err_with(|| {
-                        format!("parse imported IDL {}", resolved_path.display())
-                    })?;
+                    .wrap_err_with(|| format!("parse imported IDL {}", resolved_path.display()))?;
 
             // Propagate warnings from the imported file, prepending the import
             // filename to each warning message. This matches Java's
@@ -658,9 +648,7 @@ fn write_output(output: &Option<String>, content: &str) -> miette::Result<()> {
                 if e.kind() == io::ErrorKind::BrokenPipe {
                     return Ok(());
                 }
-                return Err(e)
-                    .into_diagnostic()
-                    .wrap_err("write to stdout");
+                return Err(e).into_diagnostic().wrap_err("write to stdout");
             }
             Ok(())
         }

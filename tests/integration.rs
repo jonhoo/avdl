@@ -13,12 +13,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use avdl::import::{import_protocol, import_schema, ImportContext};
+use avdl::import::{ImportContext, import_protocol, import_schema};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json};
-use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportKind};
-use std::collections::HashSet;
+use avdl::reader::{DeclItem, IdlFile, ImportKind, parse_idl};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
+use std::collections::HashSet;
 
 const INPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/input";
 const OUTPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/output";
@@ -39,8 +39,8 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items, _warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items, _warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Process declaration items in source order to build a correctly ordered
     // registry. This resolves non-IDL imports and registers local types.
@@ -66,12 +66,13 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
 
                 match import.kind {
                     ImportKind::Schema => {
-                        import_schema(&resolved, &mut registry)
-                            .unwrap_or_else(|e| panic!("failed to import schema {}: {e}", resolved.display()));
+                        import_schema(&resolved, &mut registry).unwrap_or_else(|e| {
+                            panic!("failed to import schema {}: {e}", resolved.display())
+                        });
                     }
                     ImportKind::Protocol => {
-                        let _messages = import_protocol(&resolved, &mut registry)
-                            .unwrap_or_else(|e| {
+                        let _messages =
+                            import_protocol(&resolved, &mut registry).unwrap_or_else(|e| {
                                 panic!("failed to import protocol {}: {e}", resolved.display())
                             });
                     }
@@ -136,8 +137,8 @@ fn parse_and_serialize_with_idl_imports(avdl_path: &Path, import_dirs: &[&Path])
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items, _warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items, _warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     let current_dir = avdl_path
         .parent()
@@ -193,12 +194,7 @@ fn process_decl_items_test(
             DeclItem::Import(import) => {
                 let resolved = import_ctx
                     .resolve_import(&import.path, current_dir)
-                    .unwrap_or_else(|e| {
-                        panic!(
-                            "failed to resolve import '{}': {e}",
-                            import.path,
-                        )
-                    });
+                    .unwrap_or_else(|e| panic!("failed to resolve import '{}': {e}", import.path,));
 
                 // Skip already-imported files (cycle prevention).
                 if import_ctx.mark_imported(&resolved) {
@@ -217,9 +213,10 @@ fn process_decl_items_test(
                         });
                     }
                     ImportKind::Protocol => {
-                        let imported_messages = import_protocol(&resolved, registry).unwrap_or_else(|e| {
-                            panic!("failed to import protocol {}: {e}", resolved.display())
-                        });
+                        let imported_messages = import_protocol(&resolved, registry)
+                            .unwrap_or_else(|e| {
+                                panic!("failed to import protocol {}: {e}", resolved.display())
+                            });
                         messages.extend(imported_messages);
                     }
                     ImportKind::Idl => {
@@ -435,8 +432,8 @@ fn parse_idl2schemata(
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items, _warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items, _warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     let mut registry = avdl::resolve::SchemaRegistry::new();
     let current_dir = avdl_path
@@ -460,12 +457,13 @@ fn parse_idl2schemata(
 
                 match import.kind {
                     ImportKind::Schema => {
-                        import_schema(&resolved, &mut registry)
-                            .unwrap_or_else(|e| panic!("failed to import schema {}: {e}", resolved.display()));
+                        import_schema(&resolved, &mut registry).unwrap_or_else(|e| {
+                            panic!("failed to import schema {}: {e}", resolved.display())
+                        });
                     }
                     ImportKind::Protocol => {
-                        let _messages = import_protocol(&resolved, &mut registry)
-                            .unwrap_or_else(|e| {
+                        let _messages =
+                            import_protocol(&resolved, &mut registry).unwrap_or_else(|e| {
                                 panic!("failed to import protocol {}: {e}", resolved.display())
                             });
                     }
@@ -593,7 +591,9 @@ fn test_idl2schemata_simple() {
     assert_eq!(test_record["type"], "record");
     assert_eq!(test_record["doc"], "A TestRecord.");
     assert!(test_record.get("my-property").is_some());
-    let fields = test_record["fields"].as_array().expect("TestRecord should have fields");
+    let fields = test_record["fields"]
+        .as_array()
+        .expect("TestRecord should have fields");
     assert!(fields.len() > 5, "TestRecord should have many fields");
 
     // MD5: fixed type with size 16. Each schema is serialized independently
@@ -828,7 +828,10 @@ fn test_empty_namespace_annotation_emits_namespace_key() {
     );
 
     let json = idl_file_to_json(idl_file, registry);
-    let types = json.get("types").and_then(|t| t.as_array()).expect("missing types");
+    let types = json
+        .get("types")
+        .and_then(|t| t.as_array())
+        .expect("missing types");
     assert_eq!(types.len(), 1);
     let record = &types[0];
 
@@ -975,10 +978,8 @@ fn test_import() {
 #[test]
 fn test_nestedimport() {
     let input_dir = PathBuf::from(INPUT_DIR);
-    let actual = parse_and_serialize_with_idl_imports(
-        &input_path("nestedimport.avdl"),
-        &[&input_dir],
-    );
+    let actual =
+        parse_and_serialize_with_idl_imports(&input_path("nestedimport.avdl"), &[&input_dir]);
     let expected = load_expected(&output_path("nestedimport.avpr"));
     assert_eq!(actual, expected);
 }
@@ -1068,13 +1069,16 @@ fn test_extra_protocol_syntax() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items, _warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items, _warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Verify it's a protocol file.
     let protocol = match idl_file {
         IdlFile::ProtocolFile(p) => p,
-        other => panic!("expected ProtocolFile, got {:?}", std::mem::discriminant(&other)),
+        other => panic!(
+            "expected ProtocolFile, got {:?}",
+            std::mem::discriminant(&other)
+        ),
     };
 
     assert_eq!(protocol.name, "Parrot");
@@ -1088,7 +1092,11 @@ fn test_extra_protocol_syntax() {
             _ => None,
         })
         .collect();
-    assert_eq!(type_items.len(), 1, "protocolSyntax.avdl should define exactly one named type");
+    assert_eq!(
+        type_items.len(),
+        1,
+        "protocolSyntax.avdl should define exactly one named type"
+    );
     assert_eq!(
         type_items[0].full_name(),
         Some("communication.Message".to_string()),
@@ -1114,13 +1122,16 @@ fn test_extra_schema_syntax() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items, _warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items, _warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Verify it's a schema file (not a protocol).
     let schema = match idl_file {
         IdlFile::SchemaFile(s) => s,
-        other => panic!("expected SchemaFile, got {:?}", std::mem::discriminant(&other)),
+        other => panic!(
+            "expected SchemaFile, got {:?}",
+            std::mem::discriminant(&other)
+        ),
     };
 
     // The main schema should be an array type.
@@ -1129,7 +1140,9 @@ fn test_extra_schema_syntax() {
             // The items should reference the Message record. It might be
             // a Reference or an inline Record depending on parse order.
             match items.as_ref() {
-                avdl::model::schema::AvroSchema::Reference { name, namespace, .. } => {
+                avdl::model::schema::AvroSchema::Reference {
+                    name, namespace, ..
+                } => {
                     assert_eq!(name, "Message");
                     // Namespace could be Some("communication") or resolved later.
                     if let Some(ns) = namespace {
@@ -1247,7 +1260,10 @@ fn test_builtin_logical_types_propagate_to_json() {
     let local_created = &fields[3];
     assert_eq!(local_created["name"], "local_created");
     assert_eq!(local_created["type"]["type"], "long");
-    assert_eq!(local_created["type"]["logicalType"], "local-timestamp-millis");
+    assert_eq!(
+        local_created["type"]["logicalType"],
+        "local-timestamp-millis"
+    );
 
     // uuid -> {"type": "string", "logicalType": "uuid"}
     let event_id = &fields[4];
@@ -1421,7 +1437,9 @@ fn test_idl2schemata_interop() {
     // Kind: enum with three symbols (A, B, C).
     let kind = &schemata["Kind"];
     assert_eq!(kind["type"], "enum");
-    let kind_symbols = kind["symbols"].as_array().expect("Kind should have symbols");
+    let kind_symbols = kind["symbols"]
+        .as_array()
+        .expect("Kind should have symbols");
     assert_eq!(kind_symbols.len(), 3);
 
     // MD5: fixed type with size 16.
@@ -1455,11 +1473,7 @@ fn test_idl2schemata_interop() {
     let interop_fields = interop["fields"]
         .as_array()
         .expect("Interop should have fields");
-    assert_eq!(
-        interop_fields.len(),
-        13,
-        "Interop should have 13 fields"
-    );
+    assert_eq!(interop_fields.len(), 13, "Interop should have 13 fields");
 }
 
 /// Parse an `.avdl` file that has IDL imports through the `idl2schemata`
@@ -1474,8 +1488,8 @@ fn parse_idl2schemata_with_idl_imports(
     let input = fs::read_to_string(avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items, _warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items, _warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     let current_dir = avdl_path
         .parent()
@@ -1614,10 +1628,7 @@ fn test_mutual_import_cycle_handled_gracefully() {
     assert_eq!(actual["protocol"], "CycleA");
     let types = actual["types"].as_array().expect("should have types array");
 
-    let type_names: Vec<&str> = types
-        .iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
+    let type_names: Vec<&str> = types.iter().filter_map(|t| t["name"].as_str()).collect();
 
     assert!(
         type_names.contains(&"RecB"),
@@ -1646,8 +1657,8 @@ fn test_comments_warnings_count() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (_idl_file, _decl_items, warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (_idl_file, _decl_items, warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     assert_eq!(
         warnings.len(),
@@ -1666,7 +1677,9 @@ fn test_comments_warnings_count() {
     // Each warning should mention "out-of-place documentation comment".
     for (i, warning) in warnings.iter().enumerate() {
         assert!(
-            warning.message.contains("Ignoring out-of-place documentation comment"),
+            warning
+                .message
+                .contains("Ignoring out-of-place documentation comment"),
             "warning {} should mention out-of-place doc comment, got: {}",
             i + 1,
             warning
@@ -1682,10 +1695,30 @@ fn test_comments_warnings_count() {
     //   (36,5), (37,7), (42,7), (43,7), (46,9), (47,5),
     //   (54,7), (55,7), (58,9), (59,7), (60,11), (61,11)
     let expected_positions: &[(u32, u32)] = &[
-        (21, 8), (21, 45), (22, 5), (23, 5), (24, 5), (25, 5),
-        (26, 7), (27, 7), (28, 7), (33, 7), (34, 7), (35, 5),
-        (36, 5), (37, 7), (42, 7), (43, 7), (46, 9), (47, 5),
-        (54, 7), (55, 7), (58, 9), (59, 7), (60, 11), (61, 11),
+        (21, 8),
+        (21, 45),
+        (22, 5),
+        (23, 5),
+        (24, 5),
+        (25, 5),
+        (26, 7),
+        (27, 7),
+        (28, 7),
+        (33, 7),
+        (34, 7),
+        (35, 5),
+        (36, 5),
+        (37, 7),
+        (42, 7),
+        (43, 7),
+        (46, 9),
+        (47, 5),
+        (54, 7),
+        (55, 7),
+        (58, 9),
+        (59, 7),
+        (60, 11),
+        (61, 11),
     ];
 
     for (i, (warning, &(expected_line, expected_col))) in
@@ -1839,9 +1872,7 @@ fn collect_all_named_types(
 /// Returns a list of `(simple_name, type_kind, effective_namespace)` tuples
 /// in first-occurrence order.
 fn extract_golden_type_metadata(avpr: &Value) -> Vec<(String, String, Option<String>)> {
-    let protocol_ns = avpr
-        .get("namespace")
-        .and_then(|ns| ns.as_str());
+    let protocol_ns = avpr.get("namespace").and_then(|ns| ns.as_str());
 
     let types = avpr
         .get("types")
@@ -1893,7 +1924,10 @@ fn test_idl2schemata_golden_comparison() {
             schemata.len(),
             golden_metadata.len(),
             schemata.keys().collect::<Vec<_>>(),
-            golden_metadata.iter().map(|(n, _, _)| n).collect::<Vec<_>>()
+            golden_metadata
+                .iter()
+                .map(|(n, _, _)| n)
+                .collect::<Vec<_>>()
         );
 
         // Verify each schema's name, type kind, and namespace match.
@@ -1917,9 +1951,7 @@ fn test_idl2schemata_golden_comparison() {
                 "{name}.avdl: schema '{actual_name}' type kind mismatch"
             );
 
-            let actual_ns = actual_json
-                .get("namespace")
-                .and_then(|ns| ns.as_str());
+            let actual_ns = actual_json.get("namespace").and_then(|ns| ns.as_str());
             assert_eq!(
                 actual_ns, *golden_ns,
                 "{name}.avdl: schema '{actual_name}' namespace mismatch"
@@ -1929,9 +1961,19 @@ fn test_idl2schemata_golden_comparison() {
 
     // Protocol files that DO NOT need IDL imports and have golden .avpr output.
     let simple_files = [
-        "echo", "simple", "comments", "cycle", "forward_ref", "interop",
-        "leading_underscore", "mr_events", "namespaces", "reservedwords",
-        "unicode", "union", "uuid",
+        "echo",
+        "simple",
+        "comments",
+        "cycle",
+        "forward_ref",
+        "interop",
+        "leading_underscore",
+        "mr_events",
+        "namespaces",
+        "reservedwords",
+        "unicode",
+        "union",
+        "uuid",
     ];
 
     for name in &simple_files {
@@ -2050,8 +2092,8 @@ fn test_cycle_test_root() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items, warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items, warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Should produce no warnings.
     assert!(
@@ -2070,7 +2112,10 @@ fn test_cycle_test_root() {
     };
 
     assert_eq!(protocol.name, "Cycle");
-    assert_eq!(protocol.namespace.as_deref(), Some("org.apache.avro.gen.test"));
+    assert_eq!(
+        protocol.namespace.as_deref(),
+        Some("org.apache.avro.gen.test")
+    );
 
     // Register all types and verify no unresolved references.
     let mut registry = avdl::resolve::SchemaRegistry::new();
@@ -2089,10 +2134,7 @@ fn test_cycle_test_root() {
     );
 
     // Should have 5 named types: Record1, Record2, Record3, TestEnum, TestFixed.
-    let type_names: Vec<&str> = registry
-        .schemas()
-        .filter_map(|s| s.name())
-        .collect();
+    let type_names: Vec<&str> = registry.schemas().filter_map(|s| s.name()).collect();
     assert_eq!(
         type_names,
         vec!["Record1", "Record2", "Record3", "TestEnum", "TestFixed"],
@@ -2119,7 +2161,9 @@ fn test_cycle_test_root() {
     let record1 = &types[0];
     assert_eq!(record1["type"], "record");
     assert_eq!(record1["name"], "Record1");
-    let r1_fields = record1["fields"].as_array().expect("Record1 should have fields");
+    let r1_fields = record1["fields"]
+        .as_array()
+        .expect("Record1 should have fields");
     assert_eq!(r1_fields.len(), 2);
     assert_eq!(r1_fields[0]["name"], "fString");
     assert_eq!(r1_fields[1]["name"], "rec3");
@@ -2128,7 +2172,9 @@ fn test_cycle_test_root() {
     let record3 = &r1_fields[1]["type"];
     assert_eq!(record3["type"], "record");
     assert_eq!(record3["name"], "Record3");
-    let r3_fields = record3["fields"].as_array().expect("Record3 should have fields");
+    let r3_fields = record3["fields"]
+        .as_array()
+        .expect("Record3 should have fields");
     assert_eq!(r3_fields.len(), 2);
     assert_eq!(r3_fields[0]["name"], "fEnum");
     assert_eq!(r3_fields[1]["name"], "rec2");
@@ -2137,14 +2183,18 @@ fn test_cycle_test_root() {
     let test_enum = &r3_fields[0]["type"];
     assert_eq!(test_enum["type"], "enum");
     assert_eq!(test_enum["name"], "TestEnum");
-    let symbols = test_enum["symbols"].as_array().expect("TestEnum should have symbols");
+    let symbols = test_enum["symbols"]
+        .as_array()
+        .expect("TestEnum should have symbols");
     assert_eq!(symbols.len(), 2);
 
     // Record2 is inlined inside Record3's `rec2` field.
     let record2 = &r3_fields[1]["type"];
     assert_eq!(record2["type"], "record");
     assert_eq!(record2["name"], "Record2");
-    let r2_fields = record2["fields"].as_array().expect("Record2 should have fields");
+    let r2_fields = record2["fields"]
+        .as_array()
+        .expect("Record2 should have fields");
     assert_eq!(r2_fields.len(), 3);
     assert_eq!(r2_fields[0]["name"], "fFixed");
     assert_eq!(r2_fields[1]["name"], "val");
@@ -2159,10 +2209,15 @@ fn test_cycle_test_root() {
     // Record1 is referenced by string name in Record2's `fRec1` nullable union
     // (since it was already defined at the top level).
     let f_rec1_type = &r2_fields[2]["type"];
-    let union = f_rec1_type.as_array().expect("fRec1 type should be a union array");
+    let union = f_rec1_type
+        .as_array()
+        .expect("fRec1 type should be a union array");
     assert_eq!(union.len(), 2);
     assert_eq!(union[0], "null");
-    assert_eq!(union[1], "Record1", "back-reference to Record1 should be a string name");
+    assert_eq!(
+        union[1], "Record1",
+        "back-reference to Record1 should be a string name"
+    );
 }
 
 // ==============================================================================
@@ -2187,8 +2242,8 @@ fn test_logical_types_file() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (idl_file, decl_items, warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (idl_file, decl_items, warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     // Should produce no warnings.
     assert!(
@@ -2221,7 +2276,11 @@ fn test_logical_types_file() {
 
     let json = idl_file_to_json(idl_file, registry);
     let types = json["types"].as_array().expect("should have types array");
-    assert_eq!(types.len(), 1, "should have one record type: LogicalTypeFields");
+    assert_eq!(
+        types.len(),
+        1,
+        "should have one record type: LogicalTypeFields"
+    );
 
     let record = &types[0];
     assert_eq!(record["name"], "LogicalTypeFields");
@@ -2312,8 +2371,8 @@ fn test_tools_protocol_warning() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (_idl_file, _decl_items, warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (_idl_file, _decl_items, warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     assert_eq!(
         warnings.len(),
@@ -2329,7 +2388,9 @@ fn test_tools_protocol_warning() {
     );
 
     assert!(
-        warnings[0].message.contains("Ignoring out-of-place documentation comment"),
+        warnings[0]
+            .message
+            .contains("Ignoring out-of-place documentation comment"),
         "warning should mention out-of-place doc comment, got: {}",
         warnings[0]
     );
@@ -2348,8 +2409,8 @@ fn test_tools_schema_warning() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let (_idl_file, _decl_items, warnings) =
-        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+    let (_idl_file, _decl_items, warnings) = parse_idl(&input)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
     assert_eq!(
         warnings.len(),
@@ -2365,7 +2426,9 @@ fn test_tools_schema_warning() {
     );
 
     assert!(
-        warnings[0].message.contains("Ignoring out-of-place documentation comment"),
+        warnings[0]
+            .message
+            .contains("Ignoring out-of-place documentation comment"),
         "warning should mention out-of-place doc comment, got: {}",
         warnings[0]
     );

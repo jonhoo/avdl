@@ -11,7 +11,7 @@
 // (with Unicode and color disabled for reproducible snapshots) so that we test
 // what the user actually sees, including source spans and labels.
 
-use avdl::reader::{parse_idl, DeclItem, Warning};
+use avdl::reader::{DeclItem, Warning, parse_idl};
 use avdl::resolve::SchemaRegistry;
 use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
 
@@ -33,8 +33,7 @@ fn parse_error(input: &str) -> Option<String> {
             let mut buf = String::new();
             // Use the ASCII theme for reproducible snapshots (no Unicode box
             // drawing, no ANSI color codes).
-            let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none())
-                .with_width(80);
+            let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
 
             // Try to render as a full miette diagnostic. Only use the
             // graphical handler when the underlying error carries source code
@@ -86,8 +85,7 @@ fn registry_error(input: &str) -> Option<String> {
                         message: msg.clone(),
                     };
                     let handler =
-                        GraphicalReportHandler::new_themed(GraphicalTheme::none())
-                            .with_width(80);
+                        GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
                     let mut buf = String::new();
                     if handler
                         .render_report(&mut buf, &diag as &dyn Diagnostic)
@@ -338,8 +336,7 @@ fn test_error_import_nonexistent_file() {
                         message: format!("{e}"),
                     };
                     let handler =
-                        GraphicalReportHandler::new_themed(GraphicalTheme::none())
-                            .with_width(80);
+                        GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
                     let mut buf = String::new();
                     if handler
                         .render_report(&mut buf, &diag as &dyn Diagnostic)

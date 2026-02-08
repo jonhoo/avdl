@@ -606,7 +606,10 @@ mod tests {
         });
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("invalid Avro namespace segment"), "error was: {err}");
+        assert!(
+            err.contains("invalid Avro namespace segment"),
+            "error was: {err}"
+        );
         assert!(err.contains("bad-segment"), "error was: {err}");
     }
 

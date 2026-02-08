@@ -32,17 +32,19 @@ use antlr4rust::token_factory::TokenFactory;
 use antlr4rust::token_stream::TokenStream;
 use antlr4rust::tree::{ParseTree, Tree};
 use antlr4rust::{InputStream, TidExt};
-use std::collections::HashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::doc_comments::extract_doc_comment;
 use crate::error::ParseDiagnostic;
-use miette::{Context, Result};
 use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
-use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType, validate_default};
+use crate::model::schema::{
+    AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType, validate_default,
+};
 use crate::resolve::is_valid_avro_name;
+use miette::{Context, Result};
 
 // ==============================================================================
 // Warnings
@@ -165,9 +167,19 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
 /// Type names that collide with Avro built-in types. Matches Java's
 /// `IdlReader.INVALID_TYPE_NAMES`.
 const INVALID_TYPE_NAMES: &[&str] = &[
-    "boolean", "int", "long", "float", "double",
-    "bytes", "string", "null", "date", "time_ms",
-    "timestamp_ms", "localtimestamp_ms", "uuid",
+    "boolean",
+    "int",
+    "long",
+    "float",
+    "double",
+    "bytes",
+    "string",
+    "null",
+    "date",
+    "time_ms",
+    "timestamp_ms",
+    "localtimestamp_ms",
+    "uuid",
 ];
 
 // ==========================================================================
@@ -261,10 +273,10 @@ pub fn parse_idl_named(
         errors: Rc::clone(&syntax_errors),
     }));
 
-    let tree = parser.idlFile().map_err(|e| {
-        miette::miette!("ANTLR parse error: {e:?}")
-    })
-    .wrap_err_with(|| format!("parse `{source_name}`"))?;
+    let tree = parser
+        .idlFile()
+        .map_err(|e| miette::miette!("ANTLR parse error: {e:?}"))
+        .wrap_err_with(|| format!("parse `{source_name}`"))?;
 
     // Check for ANTLR syntax errors collected during parsing. Any syntax error
     // means the input is malformed, even if ANTLR's error recovery produced a
@@ -300,14 +312,8 @@ pub fn parse_idl_named(
     let mut namespace: Option<String> = None;
     let mut decl_items = Vec::new();
 
-    let idl_file = walk_idl_file(
-        &tree,
-        token_stream,
-        &src,
-        &mut namespace,
-        &mut decl_items,
-    )
-    .wrap_err_with(|| format!("parse `{source_name}`"))?;
+    let idl_file = walk_idl_file(&tree, token_stream, &src, &mut namespace, &mut decl_items)
+        .wrap_err_with(|| format!("parse `{source_name}`"))?;
 
     // ==============================================================================
     // Orphaned Doc Comment Detection
@@ -321,10 +327,8 @@ pub fn parse_idl_named(
     // a warning for each DocComment token in the gap between the previous call's
     // position and the current call's position that isn't the actual doc comment
     // for the current node.
-    let warnings = collect_orphaned_doc_comment_warnings(
-        token_stream,
-        &src.consumed_doc_indices.borrow(),
-    );
+    let warnings =
+        collect_orphaned_doc_comment_warnings(token_stream, &src.consumed_doc_indices.borrow());
 
     Ok((idl_file, decl_items, warnings))
 }
@@ -512,22 +516,37 @@ struct PropertyContext {
 /// Reserved property names for Schema objects (record, fixed, array, map, etc.).
 /// From `Schema.SCHEMA_RESERVED` in avro-tools 1.12.1.
 const SCHEMA_RESERVED: &[&str] = &[
-    "doc", "fields", "items", "name", "namespace", "size",
-    "symbols", "values", "type", "aliases",
+    "doc",
+    "fields",
+    "items",
+    "name",
+    "namespace",
+    "size",
+    "symbols",
+    "values",
+    "type",
+    "aliases",
 ];
 
 /// Reserved property names for Enum schemas. All of `SCHEMA_RESERVED` plus
 /// `default`. From `Schema.ENUM_RESERVED` in avro-tools 1.12.1.
 const ENUM_RESERVED: &[&str] = &[
-    "doc", "fields", "items", "name", "namespace", "size",
-    "symbols", "values", "type", "aliases", "default",
+    "doc",
+    "fields",
+    "items",
+    "name",
+    "namespace",
+    "size",
+    "symbols",
+    "values",
+    "type",
+    "aliases",
+    "default",
 ];
 
 /// Reserved property names for Field objects. From `Schema.FIELD_RESERVED`
 /// (defined alongside `Schema.Field`) in avro-tools 1.12.1.
-const FIELD_RESERVED: &[&str] = &[
-    "default", "doc", "name", "order", "type", "aliases",
-];
+const FIELD_RESERVED: &[&str] = &["default", "doc", "name", "order", "type", "aliases"];
 
 /// Reserved property names for Protocol objects. From
 /// `Protocol.PROTOCOL_RESERVED` in avro-tools 1.12.1.
@@ -536,14 +555,17 @@ const FIELD_RESERVED: &[&str] = &[
 /// avro-tools 1.12.1 does NOT -- `@version` is accepted on protocols
 /// (used in `simple.avdl` and `nestedimport.avdl`).
 const PROTOCOL_RESERVED: &[&str] = &[
-    "namespace", "protocol", "doc", "messages", "types", "errors",
+    "namespace",
+    "protocol",
+    "doc",
+    "messages",
+    "types",
+    "errors",
 ];
 
 /// Reserved property names for Message objects. From
 /// `Protocol.MESSAGE_RESERVED` in avro-tools 1.12.1.
-const MESSAGE_RESERVED: &[&str] = &[
-    "doc", "response", "request", "errors", "one-way",
-];
+const MESSAGE_RESERVED: &[&str] = &["doc", "response", "request", "errors", "one-way"];
 
 /// Context for protocol declarations: namespace is intercepted, but aliases
 /// and order are treated as custom properties.
@@ -682,9 +704,7 @@ fn walk_schema_properties<'input>(
                         return Err(make_diagnostic(
                             src,
                             &**prop,
-                            format!(
-                                "@order must be ASCENDING, DESCENDING, or IGNORE, got: {s}"
-                            ),
+                            format!("@order must be ASCENDING, DESCENDING, or IGNORE, got: {s}"),
                         ));
                     }
                 }
@@ -734,8 +754,7 @@ fn walk_idl_file<'input>(
 ) -> Result<IdlFile> {
     // Protocol mode: the IDL contains `protocol Name { ... }`.
     if let Some(protocol_ctx) = ctx.protocolDeclaration() {
-        let protocol =
-            walk_protocol(&protocol_ctx, token_stream, src, namespace, decl_items)?;
+        let protocol = walk_protocol(&protocol_ctx, token_stream, src, namespace, decl_items)?;
         return Ok(IdlFile::ProtocolFile(protocol));
     }
 
@@ -758,7 +777,10 @@ fn walk_idl_file<'input>(
     // We iterate all children to preserve the original declaration order.
     let mut local_schemas = Vec::new();
     for child in ctx.get_children() {
-        if let Ok(import_ctx) = child.clone().downcast_rc::<ImportStatementContextAll<'input>>() {
+        if let Ok(import_ctx) = child
+            .clone()
+            .downcast_rc::<ImportStatementContextAll<'input>>()
+        {
             collect_single_import(&import_ctx, decl_items);
         } else if let Ok(ns_ctx) = child.downcast_rc::<NamedSchemaDeclarationContextAll<'input>>() {
             let span = span_from_context(&*ns_ctx);
@@ -809,7 +831,8 @@ fn walk_protocol<'input>(
     let doc = extract_doc_from_context(ctx, token_stream, src);
 
     // Process `@namespace(...)` and other schema properties on the protocol.
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, PROTOCOL_PROPS)?;
+    let props =
+        walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, PROTOCOL_PROPS)?;
 
     // Get the protocol name from the identifier.
     let name_ctx = ctx
@@ -823,12 +846,9 @@ fn walk_protocol<'input>(
     let protocol_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&protocol_name.as_str()) {
-        return Err(make_diagnostic(
-            src,
-            &*name_ctx,
-            format!("Illegal name: {protocol_name}"),
-        )
-        .into());
+        return Err(
+            make_diagnostic(src, &*name_ctx, format!("Illegal name: {protocol_name}")).into(),
+        );
     }
 
     // Build the protocol properties (custom annotations that aren't namespace/aliases/order).
@@ -846,9 +866,15 @@ fn walk_protocol<'input>(
     // original declaration order for imports and types.
     let mut messages = HashMap::new();
     for child in body.get_children() {
-        if let Ok(import_ctx) = child.clone().downcast_rc::<ImportStatementContextAll<'input>>() {
+        if let Ok(import_ctx) = child
+            .clone()
+            .downcast_rc::<ImportStatementContextAll<'input>>()
+        {
             collect_single_import(&import_ctx, decl_items);
-        } else if let Ok(ns_ctx) = child.clone().downcast_rc::<NamedSchemaDeclarationContextAll<'input>>() {
+        } else if let Ok(ns_ctx) = child
+            .clone()
+            .downcast_rc::<NamedSchemaDeclarationContextAll<'input>>()
+        {
             let span = span_from_context(&*ns_ctx);
             let schema = walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
             decl_items.push(DeclItem::Type(schema, span));
@@ -912,7 +938,12 @@ fn walk_record<'input>(
     namespace: &mut Option<String>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, NAMED_TYPE_PROPS)?;
+    let props = walk_schema_properties(
+        &ctx.schemaProperty_all(),
+        token_stream,
+        src,
+        NAMED_TYPE_PROPS,
+    )?;
 
     let name_ctx = ctx
         .identifier()
@@ -920,23 +951,21 @@ fn walk_record<'input>(
     let raw_identifier = identifier_text(&name_ctx);
 
     // Determine if this is a record or an error type.
-    let is_error = ctx.recordType.as_ref().is_some_and(|tok| {
-        tok.get_token_type() == Idl_Error
-    });
+    let is_error = ctx
+        .recordType
+        .as_ref()
+        .is_some_and(|tok| tok.get_token_type() == Idl_Error);
 
     // Compute namespace: `@namespace` on the record overrides; otherwise
     // the identifier may contain dots, or we fall back to the enclosing namespace.
-    let record_namespace = compute_namespace(&raw_identifier, &props.namespace)
-        .or_else(|| namespace.clone());
+    let record_namespace =
+        compute_namespace(&raw_identifier, &props.namespace).or_else(|| namespace.clone());
     let record_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&record_name.as_str()) {
-        return Err(make_diagnostic(
-            src,
-            &*name_ctx,
-            format!("Illegal name: {record_name}"),
-        )
-        .into());
+        return Err(
+            make_diagnostic(src, &*name_ctx, format!("Illegal name: {record_name}")).into(),
+        );
     }
 
     // Save and set the current namespace for field type resolution inside the
@@ -954,8 +983,7 @@ fn walk_record<'input>(
     let mut fields = Vec::new();
     let mut seen_field_names: HashSet<String> = HashSet::new();
     for field_ctx in body.fieldDeclaration_all() {
-        let mut field_fields =
-            walk_field_declaration(&field_ctx, token_stream, src, namespace)?;
+        let mut field_fields = walk_field_declaration(&field_ctx, token_stream, src, namespace)?;
         // Check for duplicates. We zip with the variable declaration contexts
         // so that the diagnostic highlights the duplicate field *name*, not the
         // type keyword that starts the field declaration.
@@ -1028,8 +1056,14 @@ fn walk_field_declaration<'input>(
     // Walk each variable declaration.
     let mut fields = Vec::new();
     for var_ctx in ctx.variableDeclaration_all() {
-        let field =
-            walk_variable(&var_ctx, &field_type, &default_doc, token_stream, src, namespace)?;
+        let field = walk_variable(
+            &var_ctx,
+            &field_type,
+            &default_doc,
+            token_stream,
+            src,
+            namespace,
+        )?;
         fields.push(field);
     }
 
@@ -1056,12 +1090,15 @@ fn walk_variable<'input>(
 
     // Walk the variable-level schema properties (e.g. @order, @aliases on a
     // specific variable rather than on the field type).
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, VARIABLE_PROPS)?;
+    let props =
+        walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, VARIABLE_PROPS)?;
 
     // Parse the default value if present.
     let default_value = if let Some(json_ctx) = ctx.jsonValue() {
-        Some(walk_json_value(&json_ctx, token_stream, src)
-            .wrap_err_with(|| format!("parse default value for field `{field_name}`"))?)
+        Some(
+            walk_json_value(&json_ctx, token_stream, src)
+                .wrap_err_with(|| format!("parse default value for field `{field_name}`"))?,
+        )
     } else {
         None
     };
@@ -1125,12 +1162,7 @@ fn walk_enum<'input>(
     let enum_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&enum_name.as_str()) {
-        return Err(make_diagnostic(
-            src,
-            &*name_ctx,
-            format!("Illegal name: {enum_name}"),
-        )
-        .into());
+        return Err(make_diagnostic(src, &*name_ctx, format!("Illegal name: {enum_name}")).into());
     }
 
     // Collect enum symbols, rejecting duplicates.
@@ -1198,7 +1230,12 @@ fn walk_fixed<'input>(
     enclosing_namespace: &Option<String>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, NAMED_TYPE_PROPS)?;
+    let props = walk_schema_properties(
+        &ctx.schemaProperty_all(),
+        token_stream,
+        src,
+        NAMED_TYPE_PROPS,
+    )?;
 
     let name_ctx = ctx
         .identifier()
@@ -1211,18 +1248,14 @@ fn walk_fixed<'input>(
     let fixed_name = extract_name(&raw_identifier);
 
     if INVALID_TYPE_NAMES.contains(&fixed_name.as_str()) {
-        return Err(make_diagnostic(
-            src,
-            &*name_ctx,
-            format!("Illegal name: {fixed_name}"),
-        )
-        .into());
+        return Err(make_diagnostic(src, &*name_ctx, format!("Illegal name: {fixed_name}")).into());
     }
 
     // Parse the size from the IntegerLiteral token.
-    let size_tok = ctx.size.as_ref().ok_or_else(|| {
-        make_diagnostic(src, ctx, "missing fixed size")
-    })?;
+    let size_tok = ctx
+        .size
+        .as_ref()
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing fixed size"))?;
     let size = parse_integer_as_u32(size_tok.get_text()).map_err(|e| {
         make_diagnostic_from_token(
             src,
@@ -1268,12 +1301,7 @@ fn walk_full_type<'input>(
     // The Java implementation checks this in exitNullableType (IdlReader.java
     // lines 776-777) and throws "Type references may not be annotated".
     if !props.properties.is_empty() && is_type_reference(&schema) {
-        return Err(make_diagnostic(
-            src,
-            ctx,
-            "Type references may not be annotated",
-        )
-        .into());
+        return Err(make_diagnostic(src, ctx, "Type references may not be annotated").into());
     }
 
     // Apply custom properties to the schema. For nullable unions we apply
@@ -1357,9 +1385,10 @@ fn walk_primitive_type<'input>(
     ctx: &PrimitiveTypeContextAll<'input>,
     src: &SourceInfo<'_>,
 ) -> Result<AvroSchema> {
-    let type_tok = ctx.typeName.as_ref().ok_or_else(|| {
-        make_diagnostic(src, ctx, "missing primitive type name")
-    })?;
+    let type_tok = ctx
+        .typeName
+        .as_ref()
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing primitive type name"))?;
     let token_type = type_tok.get_token_type();
 
     let schema = match token_type {
@@ -1393,17 +1422,16 @@ fn walk_primitive_type<'input>(
         },
         Idl_Decimal => {
             // decimal(precision [, scale])
-            let precision_tok = ctx.precision.as_ref().ok_or_else(|| {
-                make_diagnostic(src, ctx, "decimal type missing precision")
-            })?;
-            let precision = parse_integer_as_u32(precision_tok.get_text()).map_err(|e| {
-                miette::miette!("parse decimal precision: {e}")
-            })?;
+            let precision_tok = ctx
+                .precision
+                .as_ref()
+                .ok_or_else(|| make_diagnostic(src, ctx, "decimal type missing precision"))?;
+            let precision = parse_integer_as_u32(precision_tok.get_text())
+                .map_err(|e| miette::miette!("parse decimal precision: {e}"))?;
 
             let scale = if let Some(scale_tok) = ctx.scale.as_ref() {
-                parse_integer_as_u32(scale_tok.get_text()).map_err(|e| {
-                    miette::miette!("parse decimal scale: {e}")
-                })?
+                parse_integer_as_u32(scale_tok.get_text())
+                    .map_err(|e| miette::miette!("parse decimal scale: {e}"))?
             } else {
                 0
             };
@@ -1517,7 +1545,8 @@ fn walk_message<'input>(
     namespace: &Option<String>,
 ) -> Result<(String, Message)> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, MESSAGE_PROPS)?;
+    let props =
+        walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, MESSAGE_PROPS)?;
 
     // Walk the result type. `void` maps to Null.
     let result_ctx = ctx
@@ -1546,8 +1575,14 @@ fn walk_message<'input>(
         let var_ctx = param_ctx
             .variableDeclaration()
             .ok_or_else(|| make_diagnostic(src, &*param_ctx, "missing parameter variable"))?;
-        let field =
-            walk_variable(&var_ctx, &param_type, &param_doc, token_stream, src, namespace)?;
+        let field = walk_variable(
+            &var_ctx,
+            &param_type,
+            &param_doc,
+            token_stream,
+            src,
+            namespace,
+        )?;
         if !seen_param_names.insert(field.name.clone()) {
             return Err(make_diagnostic(
                 src,
@@ -1665,9 +1700,10 @@ fn walk_json_literal<'input>(
     ctx: &JsonLiteralContextAll<'input>,
     src: &SourceInfo<'_>,
 ) -> Result<Value> {
-    let tok = ctx.literal.as_ref().ok_or_else(|| {
-        make_diagnostic(src, ctx, "missing JSON literal token")
-    })?;
+    let tok = ctx
+        .literal
+        .as_ref()
+        .ok_or_else(|| make_diagnostic(src, ctx, "missing JSON literal token"))?;
     let token_type = tok.get_token_type();
     let text = tok.get_text();
 
@@ -1696,9 +1732,10 @@ fn walk_json_object<'input>(
 ) -> Result<Value> {
     let mut map = serde_json::Map::new();
     for pair_ctx in ctx.jsonPair_all() {
-        let key_tok = pair_ctx.name.as_ref().ok_or_else(|| {
-            make_diagnostic(src, &*pair_ctx, "missing JSON object key")
-        })?;
+        let key_tok = pair_ctx
+            .name
+            .as_ref()
+            .ok_or_else(|| make_diagnostic(src, &*pair_ctx, "missing JSON object key"))?;
         let key = get_string_from_literal(key_tok.get_text());
 
         let value_ctx = pair_ctx
@@ -1777,12 +1814,9 @@ fn unescape_java(s: &str) -> String {
                         // code point. We replicate that here.
                         if (0xD800..=0xDBFF).contains(&code_point) {
                             // High surrogate — peek ahead for a \uXXXX low surrogate.
-                            let combined = try_parse_low_surrogate(&mut chars)
-                                .map(|low| {
-                                    (code_point - 0xD800) * 0x400
-                                        + (low - 0xDC00)
-                                        + 0x10000
-                                });
+                            let combined = try_parse_low_surrogate(&mut chars).map(|low| {
+                                (code_point - 0xD800) * 0x400 + (low - 0xDC00) + 0x10000
+                            });
                             if let Some(ch) = combined.and_then(char::from_u32) {
                                 result.push(ch);
                             } else {
@@ -1938,9 +1972,9 @@ fn parse_integer_literal(text: &str) -> Result<Value> {
             .map_err(|e| miette::miette!("invalid octal integer literal '{text}': {e}"))?;
         -abs
     } else {
-        number.parse::<i64>().map_err(|e| {
-            miette::miette!("invalid integer literal '{text}': {e}")
-        })?
+        number
+            .parse::<i64>()
+            .map_err(|e| miette::miette!("invalid integer literal '{text}': {e}"))?
     };
 
     let int_value = long_value as i32;
@@ -2025,9 +2059,9 @@ fn parse_float_text(text: &str) -> Result<f64> {
     }
 
     // Standard decimal float — Rust's f64::from_str handles this directly.
-    number.parse::<f64>().map_err(|e| {
-        miette::miette!("invalid floating point literal '{text}': {e}")
-    })
+    number
+        .parse::<f64>()
+        .map_err(|e| miette::miette!("invalid floating point literal '{text}': {e}"))
 }
 
 /// Parse the body of a hex floating-point literal (everything after the `0x`
@@ -2047,17 +2081,13 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
     let (mantissa_str, exp_str) = hex_body
         .split_once(|c: char| c == 'p' || c == 'P')
         .ok_or_else(|| {
-            miette::miette!(
-                "invalid hex float literal '{original}': missing 'p'/'P' exponent"
-            )
+            miette::miette!("invalid hex float literal '{original}': missing 'p'/'P' exponent")
         })?;
 
     // Parse the binary exponent (decimal integer, possibly signed).
-    let exponent: i32 = exp_str.parse().map_err(|e| {
-        miette::miette!(
-            "invalid hex float exponent in '{original}': {e}"
-        )
-    })?;
+    let exponent: i32 = exp_str
+        .parse()
+        .map_err(|e| miette::miette!("invalid hex float exponent in '{original}': {e}"))?;
 
     // Parse the hex mantissa, which may contain a '.' decimal point.
     let mantissa = if let Some((int_part, frac_part)) = mantissa_str.split_once('.') {
@@ -2066,11 +2096,9 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
         let int_val = if int_part.is_empty() {
             0.0
         } else {
-            u64::from_str_radix(int_part, 16).map_err(|e| {
-                miette::miette!(
-                    "invalid hex float mantissa in '{original}': {e}"
-                )
-            })? as f64
+            u64::from_str_radix(int_part, 16)
+                .map_err(|e| miette::miette!("invalid hex float mantissa in '{original}': {e}"))?
+                as f64
         };
 
         // Fractional part: each hex digit after the point represents
@@ -2079,9 +2107,7 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
         let mut place = 1.0_f64 / 16.0;
         for ch in frac_part.chars() {
             let digit = ch.to_digit(16).ok_or_else(|| {
-                miette::miette!(
-                    "invalid hex digit '{ch}' in float literal '{original}'"
-                )
+                miette::miette!("invalid hex digit '{ch}' in float literal '{original}'")
             })? as f64;
             frac_val += digit * place;
             place /= 16.0;
@@ -2090,11 +2116,9 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
         int_val + frac_val
     } else {
         // No decimal point — the mantissa is a plain hex integer.
-        u64::from_str_radix(mantissa_str, 16).map_err(|e| {
-            miette::miette!(
-                "invalid hex float mantissa in '{original}': {e}"
-            )
-        })? as f64
+        u64::from_str_radix(mantissa_str, 16)
+            .map_err(|e| miette::miette!("invalid hex float mantissa in '{original}': {e}"))?
+            as f64
     };
 
     Ok(mantissa * 2.0_f64.powi(exponent))
@@ -2155,7 +2179,9 @@ fn is_type_reference(schema: &AvroSchema) -> bool {
         AvroSchema::Union {
             types,
             is_nullable_type: true,
-        } => types.iter().any(|t| matches!(t, AvroSchema::Reference { .. })),
+        } => types
+            .iter()
+            .any(|t| matches!(t, AvroSchema::Reference { .. })),
         _ => false,
     }
 }
@@ -2203,11 +2229,13 @@ fn apply_properties(schema: AvroSchema, properties: HashMap<String, Value>) -> A
             // rather than hardcoding index 1, because nullable unions may be
             // reordered to `[T, null]` when the field has a non-null default.
             let mut new_types = types;
-            let non_null_idx = if matches!(new_types[0], AvroSchema::Null) { 1 } else { 0 };
-            new_types[non_null_idx] = apply_properties_to_schema(
-                new_types[non_null_idx].clone(),
-                properties,
-            );
+            let non_null_idx = if matches!(new_types[0], AvroSchema::Null) {
+                1
+            } else {
+                0
+            };
+            new_types[non_null_idx] =
+                apply_properties_to_schema(new_types[non_null_idx].clone(), properties);
             AvroSchema::Union {
                 types: new_types,
                 is_nullable_type: true,
@@ -2218,7 +2246,10 @@ fn apply_properties(schema: AvroSchema, properties: HashMap<String, Value>) -> A
 }
 
 /// Apply properties directly to a single schema node.
-fn apply_properties_to_schema(schema: AvroSchema, properties: HashMap<String, Value>) -> AvroSchema {
+fn apply_properties_to_schema(
+    schema: AvroSchema,
+    properties: HashMap<String, Value>,
+) -> AvroSchema {
     match schema {
         AvroSchema::Record {
             name,
@@ -2787,7 +2818,10 @@ mod tests {
             }
         "#;
         let result = parse_idl(idl);
-        assert!(result.is_ok(), "annotation on primitive type should be accepted");
+        assert!(
+            result.is_ok(),
+            "annotation on primitive type should be accepted"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -2822,7 +2856,11 @@ mod tests {
             }
         "#;
         let result = parse_idl(idl);
-        assert!(result.is_ok(), "valid protocol should be accepted, got: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "valid protocol should be accepted, got: {:?}",
+            result.err()
+        );
     }
 
     // ------------------------------------------------------------------
@@ -2892,8 +2930,14 @@ mod tests {
 
     #[test]
     fn float_infinity() {
-        assert_eq!(parse_float_text("Infinity").expect("Infinity"), f64::INFINITY);
-        assert_eq!(parse_float_text("-Infinity").expect("-Infinity"), f64::NEG_INFINITY);
+        assert_eq!(
+            parse_float_text("Infinity").expect("Infinity"),
+            f64::INFINITY
+        );
+        assert_eq!(
+            parse_float_text("-Infinity").expect("-Infinity"),
+            f64::NEG_INFINITY
+        );
     }
 
     // ------------------------------------------------------------------
@@ -3055,7 +3099,11 @@ mod tests {
             }
         "#;
         let result = parse_idl(idl);
-        assert!(result.is_ok(), "default annotation on record should be accepted, got: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "default annotation on record should be accepted, got: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -3070,7 +3118,11 @@ mod tests {
             }
         "#;
         let result = parse_idl(idl);
-        assert!(result.is_ok(), "version annotation on protocol should be accepted, got: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "version annotation on protocol should be accepted, got: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -3110,7 +3162,11 @@ mod tests {
             }
         "#;
         let result = parse_idl(idl);
-        assert!(result.is_ok(), "custom annotation on protocol should be accepted, got: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "custom annotation on protocol should be accepted, got: {:?}",
+            result.err()
+        );
     }
 
     // ------------------------------------------------------------------
@@ -3119,7 +3175,8 @@ mod tests {
 
     /// Helper: parse an IDL protocol with a single record, return its first field's schema.
     fn parse_first_field_schema(idl: &str) -> AvroSchema {
-        let (_idl_file, decl_items, _warnings) = parse_idl(idl).expect("IDL should parse successfully");
+        let (_idl_file, decl_items, _warnings) =
+            parse_idl(idl).expect("IDL should parse successfully");
         // Find the record among declaration items.
         for item in &decl_items {
             if let DeclItem::Type(AvroSchema::Record { fields, .. }, _) = item {
@@ -3492,7 +3549,10 @@ mod tests {
     fn protocol_name_int_is_rejected() {
         let idl = "protocol `int` { }";
         let result = parse_idl(idl);
-        assert!(result.is_err(), "reserved protocol name 'int' should be rejected");
+        assert!(
+            result.is_err(),
+            "reserved protocol name 'int' should be rejected"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -3511,16 +3571,23 @@ mod tests {
         "#;
         let (_idl_file, decl_items, _warnings) =
             parse_idl(idl).expect("duplicate @namespace should be accepted");
-        let record = decl_items.iter().find_map(|item| {
-            if let DeclItem::Type(schema @ AvroSchema::Record { .. }, _) = item {
-                Some(schema)
-            } else {
-                None
-            }
-        }).expect("should contain a record");
+        let record = decl_items
+            .iter()
+            .find_map(|item| {
+                if let DeclItem::Type(schema @ AvroSchema::Record { .. }, _) = item {
+                    Some(schema)
+                } else {
+                    None
+                }
+            })
+            .expect("should contain a record");
         match record {
             AvroSchema::Record { namespace, .. } => {
-                assert_eq!(namespace.as_deref(), Some("ns2"), "last @namespace should win");
+                assert_eq!(
+                    namespace.as_deref(),
+                    Some("ns2"),
+                    "last @namespace should win"
+                );
             }
             _ => unreachable!(),
         }
@@ -3608,21 +3675,30 @@ mod tests {
     fn default_boolean_int_is_rejected() {
         let idl = r#"protocol P { record R { boolean flag = 42; } }"#;
         let result = parse_idl(idl);
-        assert!(result.is_err(), "boolean with int default should be rejected");
+        assert!(
+            result.is_err(),
+            "boolean with int default should be rejected"
+        );
     }
 
     #[test]
     fn default_string_array_is_rejected() {
         let idl = r#"protocol P { record R { string name = [1, 2, 3]; } }"#;
         let result = parse_idl(idl);
-        assert!(result.is_err(), "string with array default should be rejected");
+        assert!(
+            result.is_err(),
+            "string with array default should be rejected"
+        );
     }
 
     #[test]
     fn default_int_null_is_rejected() {
         let idl = r#"protocol P { record R { int count = null; } }"#;
         let result = parse_idl(idl);
-        assert!(result.is_err(), "non-nullable int with null default should be rejected");
+        assert!(
+            result.is_err(),
+            "non-nullable int with null default should be rejected"
+        );
     }
 
     #[test]
@@ -3636,7 +3712,10 @@ mod tests {
     fn default_int_object_is_rejected() {
         let idl = r#"protocol P { record R { int count = {"key": "value"}; } }"#;
         let result = parse_idl(idl);
-        assert!(result.is_err(), "int with object default should be rejected");
+        assert!(
+            result.is_err(),
+            "int with object default should be rejected"
+        );
     }
 
     #[test]
@@ -3650,7 +3729,10 @@ mod tests {
     fn default_string_int_is_rejected() {
         let idl = r#"protocol P { record R { string name = 42; } }"#;
         let result = parse_idl(idl);
-        assert!(result.is_err(), "string with int default should be rejected");
+        assert!(
+            result.is_err(),
+            "string with int default should be rejected"
+        );
     }
 
     // Valid defaults that should still be accepted:
@@ -3658,61 +3740,91 @@ mod tests {
     #[test]
     fn default_int_valid() {
         let idl = r#"protocol P { record R { int count = 42; } }"#;
-        assert!(parse_idl(idl).is_ok(), "int with int default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "int with int default should be accepted"
+        );
     }
 
     #[test]
     fn default_string_valid() {
         let idl = r#"protocol P { record R { string name = "hello"; } }"#;
-        assert!(parse_idl(idl).is_ok(), "string with string default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "string with string default should be accepted"
+        );
     }
 
     #[test]
     fn default_boolean_valid() {
         let idl = r#"protocol P { record R { boolean flag = true; } }"#;
-        assert!(parse_idl(idl).is_ok(), "boolean with boolean default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "boolean with boolean default should be accepted"
+        );
     }
 
     #[test]
     fn default_double_valid() {
         let idl = r#"protocol P { record R { double value = 3.14; } }"#;
-        assert!(parse_idl(idl).is_ok(), "double with float default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "double with float default should be accepted"
+        );
     }
 
     #[test]
     fn default_double_nan_valid() {
         let idl = r#"protocol P { record R { double value = NaN; } }"#;
-        assert!(parse_idl(idl).is_ok(), "double with NaN default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "double with NaN default should be accepted"
+        );
     }
 
     #[test]
     fn default_float_infinity_valid() {
         let idl = r#"protocol P { record R { float value = -Infinity; } }"#;
-        assert!(parse_idl(idl).is_ok(), "float with -Infinity default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "float with -Infinity default should be accepted"
+        );
     }
 
     #[test]
     fn default_nullable_null_valid() {
         let idl = r#"protocol P { record R { string? name = null; } }"#;
-        assert!(parse_idl(idl).is_ok(), "nullable with null default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "nullable with null default should be accepted"
+        );
     }
 
     #[test]
     fn default_nullable_non_null_valid() {
         let idl = r#"protocol P { record R { string? name = "hello"; } }"#;
-        assert!(parse_idl(idl).is_ok(), "nullable with non-null default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "nullable with non-null default should be accepted"
+        );
     }
 
     #[test]
     fn default_array_empty_valid() {
         let idl = r#"protocol P { record R { array<int> nums = []; } }"#;
-        assert!(parse_idl(idl).is_ok(), "array with empty array default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "array with empty array default should be accepted"
+        );
     }
 
     #[test]
     fn default_map_empty_valid() {
         let idl = r#"protocol P { record R { map<string> m = {}; } }"#;
-        assert!(parse_idl(idl).is_ok(), "map with empty object default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "map with empty object default should be accepted"
+        );
     }
 
     #[test]
@@ -3723,7 +3835,10 @@ mod tests {
                 record R { Color c = "RED"; }
             }
         "#;
-        assert!(parse_idl(idl).is_ok(), "enum with string default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "enum with string default should be accepted"
+        );
     }
 
     #[test]
@@ -3734,7 +3849,10 @@ mod tests {
                 record Outer { Inner inner = {"name": "test"}; }
             }
         "#;
-        assert!(parse_idl(idl).is_ok(), "record with object default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "record with object default should be accepted"
+        );
     }
 
     #[test]
@@ -3744,7 +3862,10 @@ mod tests {
                 record R { union { null, string } field = null; }
             }
         "#;
-        assert!(parse_idl(idl).is_ok(), "union with null first and null default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "union with null first and null default should be accepted"
+        );
     }
 
     #[test]
@@ -3758,19 +3879,28 @@ mod tests {
                 }
             }
         "#;
-        assert!(parse_idl(idl).is_ok(), "union default matching non-first branch should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "union default matching non-first branch should be accepted"
+        );
     }
 
     #[test]
     fn default_logical_date_int_valid() {
         let idl = r#"protocol P { record R { date d = 0; } }"#;
-        assert!(parse_idl(idl).is_ok(), "date with int default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "date with int default should be accepted"
+        );
     }
 
     #[test]
     fn default_annotated_long_int_valid() {
         let idl = r#"protocol P { record R { @foo.bar("baz") long l = 0; } }"#;
-        assert!(parse_idl(idl).is_ok(), "annotated long with int default should be accepted");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "annotated long with int default should be accepted"
+        );
     }
 
     #[test]
@@ -3778,7 +3908,10 @@ mod tests {
         // Message parameters also go through walk_variable, so validation applies.
         let idl = r#"protocol P { int add(int arg1, int arg2 = "bad"); }"#;
         let result = parse_idl(idl);
-        assert!(result.is_err(), "message param with invalid default should be rejected");
+        assert!(
+            result.is_err(),
+            "message param with invalid default should be rejected"
+        );
     }
 
     #[test]
@@ -3791,6 +3924,9 @@ mod tests {
                 enum SomeEnum { VALUE }
             }
         "#;
-        assert!(parse_idl(idl).is_ok(), "forward reference with default should skip validation");
+        assert!(
+            parse_idl(idl).is_ok(),
+            "forward reference with default should skip validation"
+        );
     }
 }

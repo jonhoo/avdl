@@ -116,17 +116,22 @@ fn test_cli_idl2schemata() {
 
     // simple.avdl defines Kind (enum), Status (enum), TestRecord (record),
     // MD5 (fixed), and TestError (error). Each should produce a .avsc file.
-    let expected_files = ["Kind.avsc", "Status.avsc", "TestRecord.avsc", "MD5.avsc", "TestError.avsc"];
+    let expected_files = [
+        "Kind.avsc",
+        "Status.avsc",
+        "TestRecord.avsc",
+        "MD5.avsc",
+        "TestError.avsc",
+    ];
     for filename in &expected_files {
         let path = out_dir.join(filename);
         assert!(
             path.exists(),
             "expected {filename} to exist in output directory, got: {:?}",
-            fs::read_dir(&out_dir)
-                .map(|entries| entries
-                    .filter_map(|e| e.ok())
-                    .map(|e| e.file_name().to_string_lossy().to_string())
-                    .collect::<Vec<_>>())
+            fs::read_dir(&out_dir).map(|entries| entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect::<Vec<_>>())
         );
     }
 }
@@ -135,10 +140,7 @@ fn test_cli_idl2schemata() {
 /// since clap requires the input argument.
 #[test]
 fn test_cli_idl2schemata_missing_input() {
-    avdl_cmd()
-        .args(["idl2schemata"])
-        .assert()
-        .failure();
+    avdl_cmd().args(["idl2schemata"]).assert().failure();
 }
 
 // ==============================================================================
