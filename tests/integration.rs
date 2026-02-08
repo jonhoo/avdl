@@ -1418,3 +1418,331 @@ fn test_builtin_logical_type_with_custom_annotation() {
     assert_eq!(annotated_ts["type"]["logicalType"], "timestamp-millis");
     assert_eq!(annotated_ts["type"]["source"], "external");
 }
+
+// ==============================================================================
+// Additional `idl2schemata` Tests (Gap #2)
+// ==============================================================================
+
+/// Test `idl2schemata` for `interop.avdl`.
+///
+/// The InteropProtocol defines five named types: Foo (record), Kind (enum),
+/// MD5 (fixed), Node (record with self-referential `array<Node>` field), and
+/// Interop (record referencing all others). Verifies correct handling of
+/// self-referential records and that all named types are extracted.
+#[test]
+fn test_idl2schemata_interop() {
+    let schemata = parse_idl2schemata(&input_path("interop.avdl"), &[]);
+
+    let names: Vec<&String> = schemata.keys().collect();
+    assert_eq!(
+        names,
+        vec!["Foo", "Kind", "MD5", "Node", "Interop"],
+        "expected five named schemas from interop.avdl in declaration order"
+    );
+
+    // Foo: simple record with a single string field.
+    let foo = &schemata["Foo"];
+    assert_eq!(foo["type"], "record");
+    assert_eq!(foo["name"], "Foo");
+    let foo_fields = foo["fields"].as_array().expect("Foo should have fields");
+    assert_eq!(foo_fields.len(), 1);
+    assert_eq!(foo_fields[0]["name"], "label");
+
+    // Kind: enum with three symbols (A, B, C).
+    let kind = &schemata["Kind"];
+    assert_eq!(kind["type"], "enum");
+    let kind_symbols = kind["symbols"].as_array().expect("Kind should have symbols");
+    assert_eq!(kind_symbols.len(), 3);
+
+    // MD5: fixed type with size 16.
+    let md5 = &schemata["MD5"];
+    assert_eq!(md5["type"], "fixed");
+    assert_eq!(md5["size"], 16);
+
+    // Node: self-referential record (children field is array<Node>). In
+    // idl2schemata mode, Node is serialized standalone with its own fresh
+    // known_names, so the self-reference should appear as a string "Node"
+    // (not re-inlined).
+    let node = &schemata["Node"];
+    assert_eq!(node["type"], "record");
+    assert_eq!(node["name"], "Node");
+    let node_fields = node["fields"].as_array().expect("Node should have fields");
+    assert_eq!(node_fields.len(), 2);
+    let children_field = &node_fields[1];
+    assert_eq!(children_field["name"], "children");
+    // The children type is an array whose items reference Node by name.
+    let children_type = &children_field["type"];
+    assert_eq!(children_type["type"], "array");
+    assert_eq!(
+        children_type["items"], "Node",
+        "self-referential Node should appear as a string reference, not re-inlined"
+    );
+
+    // Interop: large record referencing all other types. Each type should
+    // be inlined on first occurrence since each schema gets fresh known_names.
+    let interop = &schemata["Interop"];
+    assert_eq!(interop["type"], "record");
+    let interop_fields = interop["fields"]
+        .as_array()
+        .expect("Interop should have fields");
+    assert_eq!(
+        interop_fields.len(),
+        13,
+        "Interop should have 13 fields"
+    );
+}
+
+/// Parse an `.avdl` file that has IDL imports through the `idl2schemata`
+/// pipeline. This is the IDL-import-aware variant of `parse_idl2schemata`.
+///
+/// Returns a map of `SimpleName -> serde_json::Value` for each named schema,
+/// including schemas imported via `import idl`.
+fn parse_idl2schemata_with_idl_imports(
+    avdl_path: &Path,
+    import_dirs: &[&Path],
+) -> indexmap::IndexMap<String, Value> {
+    let input = fs::read_to_string(avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let (idl_file, decl_items, _warnings) =
+        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    let current_dir = avdl_path
+        .parent()
+        .expect("avdl_path should have a parent directory");
+    let search_dirs: Vec<PathBuf> = import_dirs.iter().map(|p| p.to_path_buf()).collect();
+    let mut import_ctx = ImportContext::new(search_dirs);
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+
+    // Mark the current file as imported to prevent cycles.
+    let canonical = avdl_path
+        .canonicalize()
+        .unwrap_or_else(|e| panic!("failed to canonicalize {}: {e}", avdl_path.display()));
+    import_ctx.mark_imported(&canonical);
+
+    // Messages are not needed for idl2schemata, but process_decl_items_test
+    // requires a messages accumulator.
+    let mut messages = indexmap::IndexMap::new();
+
+    process_decl_items_test(
+        &decl_items,
+        &mut registry,
+        &mut import_ctx,
+        current_dir,
+        &mut messages,
+    );
+
+    // Build a lookup table and serialize each named schema individually.
+    let _namespace = match &idl_file {
+        IdlFile::ProtocolFile(protocol) => protocol.namespace.clone(),
+        _ => None,
+    };
+
+    let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
+    let all_lookup = build_lookup(&registry_schemas, None);
+    let mut result = indexmap::IndexMap::new();
+
+    for schema in &registry_schemas {
+        if let Some(simple_name) = schema.name() {
+            let mut known_names = IndexSet::new();
+            let json_value = schema_to_json(schema, &mut known_names, None, &all_lookup);
+            result.insert(simple_name.to_string(), json_value);
+        }
+    }
+
+    result
+}
+
+/// Test `idl2schemata` for `import.avdl`.
+///
+/// The Import protocol has IDL imports that pull in types from
+/// `reservedwords.avdl`, `nestedimport.avdl`, `OnTheClasspath.avdl`,
+/// plus schema and protocol imports. Verifies that imported types
+/// are included in the idl2schemata output alongside locally-defined types.
+#[test]
+fn test_idl2schemata_import() {
+    let input_dir = PathBuf::from(INPUT_DIR);
+    let classpath_dir = PathBuf::from(CLASSPATH_DIR);
+    let schemata = parse_idl2schemata_with_idl_imports(
+        &input_path("import.avdl"),
+        &[&input_dir, &classpath_dir],
+    );
+
+    // The import protocol has many named types from various imports.
+    // At minimum, verify that the locally-defined Bar type is present,
+    // along with several imported types.
+    assert!(
+        schemata.contains_key("Bar"),
+        "locally-defined Bar should be present in idl2schemata output"
+    );
+
+    // Types imported via `import schema "baz.avsc"` and `import schema "foo.avsc"`.
+    assert!(
+        schemata.contains_key("Baz"),
+        "Baz (imported via schema import) should be present"
+    );
+    assert!(
+        schemata.contains_key("Foo"),
+        "Foo (imported via schema import) should be present"
+    );
+
+    // Types from `import idl "OnTheClasspath.avdl"` chain.
+    assert!(
+        schemata.contains_key("NestedType"),
+        "NestedType (from classpath IDL import chain) should be present"
+    );
+
+    // Verify the total count matches what the protocol produces. The
+    // import.avpr has 10 named types in its types array.
+    assert_eq!(
+        schemata.len(),
+        10,
+        "import.avdl idl2schemata should produce 10 named schemas, got: {:?}",
+        schemata.keys().collect::<Vec<_>>()
+    );
+}
+
+// ==============================================================================
+// Import Cycle Detection Tests (Gap #4)
+// ==============================================================================
+
+/// A file that imports itself should be handled gracefully by the cycle
+/// prevention logic in `ImportContext`. The self-import should be silently
+/// skipped (since the file is already marked as imported), producing a
+/// valid protocol with just the locally-defined types.
+#[test]
+fn test_self_import_cycle_handled_gracefully() {
+    let avdl_path = PathBuf::from("tests/testdata/self_import.avdl");
+    let testdata_dir = PathBuf::from("tests/testdata");
+
+    // Use the full IDL import pipeline. The cycle prevention logic should
+    // skip re-importing self_import.avdl when it encounters the self-import.
+    let actual = parse_and_serialize_with_idl_imports(&avdl_path, &[&testdata_dir]);
+
+    // The protocol should parse successfully with the locally-defined Rec type.
+    assert_eq!(actual["protocol"], "SelfImport");
+    let types = actual["types"].as_array().expect("should have types array");
+    assert_eq!(types.len(), 1, "should have one type (Rec)");
+    assert_eq!(types[0]["name"], "Rec");
+}
+
+/// Two files that import each other (A imports B, B imports A) should be
+/// handled gracefully. The cycle prevention logic should skip the circular
+/// import on the second visit, producing a valid protocol with types from
+/// both files.
+#[test]
+fn test_mutual_import_cycle_handled_gracefully() {
+    let avdl_path = PathBuf::from("tests/testdata/cycle_a.avdl");
+    let testdata_dir = PathBuf::from("tests/testdata");
+
+    // Parse cycle_a.avdl, which imports cycle_b.avdl, which tries to import
+    // cycle_a.avdl again. The second import of cycle_a.avdl should be skipped.
+    let actual = parse_and_serialize_with_idl_imports(&avdl_path, &[&testdata_dir]);
+
+    // The protocol should parse successfully. cycle_a defines RecA, and
+    // cycle_b defines RecB. Both should appear in the merged types.
+    assert_eq!(actual["protocol"], "CycleA");
+    let types = actual["types"].as_array().expect("should have types array");
+
+    let type_names: Vec<&str> = types
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+
+    assert!(
+        type_names.contains(&"RecB"),
+        "RecB from cycle_b.avdl should be included via the import, got: {type_names:?}"
+    );
+    assert!(
+        type_names.contains(&"RecA"),
+        "RecA from cycle_a.avdl should be included, got: {type_names:?}"
+    );
+}
+
+// ==============================================================================
+// Doc Comment Warning Tests (Gap #5)
+// ==============================================================================
+
+/// Verify that parsing `comments.avdl` produces exactly 24 out-of-place
+/// documentation comment warnings, matching Java's
+/// `testDocCommentsAndWarnings` assertion count.
+///
+/// The `comments.avdl` file has many intentionally misplaced doc comments
+/// (e.g., between keyword and identifier, between enum symbols, etc.) that
+/// should each produce a warning.
+#[test]
+fn test_comments_warnings_count() {
+    let avdl_path = input_path("comments.avdl");
+    let input = fs::read_to_string(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let (_idl_file, _decl_items, warnings) =
+        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    assert_eq!(
+        warnings.len(),
+        24,
+        "comments.avdl should produce exactly 24 out-of-place doc comment warnings \
+         (matching Java's testDocCommentsAndWarnings), got {}:\n{}",
+        warnings.len(),
+        warnings
+            .iter()
+            .enumerate()
+            .map(|(i, w)| format!("  {}: {}", i + 1, w))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    // Each warning should mention "out-of-place documentation comment".
+    for (i, warning) in warnings.iter().enumerate() {
+        assert!(
+            warning.message.contains("Ignoring out-of-place documentation comment"),
+            "warning {} should mention out-of-place doc comment, got: {}",
+            i + 1,
+            warning
+        );
+    }
+}
+
+// ==============================================================================
+// Java Test Behavior: `idl2schemata` File Count (Gap #9)
+// ==============================================================================
+
+/// Verify that `idl2schemata` on `tools/protocol.avdl` produces exactly 4
+/// named schemas: Kind (enum), MD5 (fixed), TestRecord (record), and
+/// TestError (error record).
+///
+/// This mirrors Java's `TestIdlToSchemataTool.splitIdlIntoSchemata` assertion
+/// that the tool produces exactly 4 `.avsc` files.
+#[test]
+fn test_idl2schemata_tools_protocol() {
+    let avdl_path = PathBuf::from(TOOLS_IDL_DIR).join("protocol.avdl");
+    let schemata = parse_idl2schemata(&avdl_path, &[]);
+
+    let names: Vec<&String> = schemata.keys().collect();
+    assert_eq!(
+        names,
+        vec!["Kind", "MD5", "TestRecord", "TestError"],
+        "tools/protocol.avdl should produce exactly 4 named schemas"
+    );
+
+    // Kind: enum with 3 symbols.
+    let kind = &schemata["Kind"];
+    assert_eq!(kind["type"], "enum");
+    assert_eq!(kind["symbols"].as_array().unwrap().len(), 3);
+
+    // MD5: fixed with size 16.
+    let md5 = &schemata["MD5"];
+    assert_eq!(md5["type"], "fixed");
+    assert_eq!(md5["size"], 16);
+
+    // TestRecord: record type.
+    let test_record = &schemata["TestRecord"];
+    assert_eq!(test_record["type"], "record");
+    assert_eq!(test_record["name"], "TestRecord");
+
+    // TestError: error record.
+    let test_error = &schemata["TestError"];
+    assert_eq!(test_error["type"], "error");
+    assert_eq!(test_error["name"], "TestError");
+}

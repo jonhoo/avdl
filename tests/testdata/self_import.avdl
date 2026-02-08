@@ -1,0 +1,5 @@
+@namespace("test.cycle")
+protocol SelfImport {
+  import idl "self_import.avdl";
+  record Rec { string name; }
+}

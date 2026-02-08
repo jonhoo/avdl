@@ -1,0 +1,5 @@
+@namespace("test.cycle")
+protocol CycleA {
+  import idl "cycle_b.avdl";
+  record RecA { string name; }
+}
