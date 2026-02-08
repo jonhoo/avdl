@@ -283,11 +283,10 @@ fn string_to_schema(s: &str, default_namespace: Option<&str>) -> Result<AvroSche
         type_name => {
             // Named type reference. Split into separate name and namespace
             // so the Reference tracks them independently.
-            if type_name.contains('.') {
-                let pos = type_name.rfind('.').expect("dot presence checked above");
+            if let Some((ns, name)) = type_name.rsplit_once('.') {
                 Ok(AvroSchema::Reference {
-                    name: type_name[pos + 1..].to_string(),
-                    namespace: Some(type_name[..pos].to_string()),
+                    name: name.to_string(),
+                    namespace: Some(ns.to_string()),
                     properties: IndexMap::new(),
                 })
             } else {

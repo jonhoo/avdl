@@ -1250,11 +1250,10 @@ fn walk_nullable_type<'input>(
         // so the Reference carries them separately, enabling correct namespace
         // shortening during JSON serialization.
         let type_name = identifier_text(&ref_ctx);
-        if type_name.contains('.') {
-            let pos = type_name.rfind('.').expect("dot presence checked above");
+        if let Some((ns, name)) = type_name.rsplit_once('.') {
             AvroSchema::Reference {
-                name: type_name[pos + 1..].to_string(),
-                namespace: Some(type_name[..pos].to_string()),
+                name: name.to_string(),
+                namespace: Some(ns.to_string()),
                 properties: IndexMap::new(),
             }
         } else {
@@ -1510,11 +1509,10 @@ fn walk_message<'input>(
         let mut error_schemas = Vec::new();
         for error_id_ctx in &ctx.errors {
             let error_name = identifier_text(error_id_ctx);
-            if error_name.contains('.') {
-                let pos = error_name.rfind('.').expect("dot presence checked above");
+            if let Some((ns, name)) = error_name.rsplit_once('.') {
                 error_schemas.push(AvroSchema::Reference {
-                    name: error_name[pos + 1..].to_string(),
-                    namespace: Some(error_name[..pos].to_string()),
+                    name: name.to_string(),
+                    namespace: Some(ns.to_string()),
                     properties: IndexMap::new(),
                 });
             } else {

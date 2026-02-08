@@ -233,7 +233,8 @@ impl AvroSchema {
             | AvroSchema::Enum { .. }
             | AvroSchema::Fixed { .. }
             | AvroSchema::Reference { .. } => {
-                self.full_name().expect("named type always has full_name")
+                self.full_name()
+                    .expect("match arm restricts to Record/Enum/Fixed/Reference, all have full_name")
             }
 
             // Complex anonymous types: keyed by their structural type name.

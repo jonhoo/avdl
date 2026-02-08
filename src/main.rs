@@ -268,36 +268,36 @@ fn run_idl2schemata(
 /// input file (used for import cycle detection). When reading from stdin, the
 /// canonical path is `None` since there is no file to track.
 fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf, Option<PathBuf>)> {
-    let is_stdin = match input {
-        None => true,
-        Some(s) if s == "-" => true,
-        _ => false,
-    };
+    // Treat `None` and `Some("-")` as stdin; everything else is a file path.
+    let file_path = input.as_deref().filter(|s| *s != "-");
 
-    if is_stdin {
-        let mut source = String::new();
-        io::stdin()
-            .read_to_string(&mut source)
-            .into_diagnostic()
-            .wrap_err("read IDL from stdin")?;
-        let cwd = std::env::current_dir()
-            .into_diagnostic()
-            .wrap_err("determine current directory")?;
-        Ok((source, cwd, None))
-    } else {
-        let path = PathBuf::from(input.as_ref().expect("checked for None above"));
-        let source = fs::read_to_string(&path)
-            .into_diagnostic()
-            .wrap_err_with(|| format!("read {}", path.display()))?;
-        let dir = path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        // Canonicalize the directory so that import cycle detection works
-        // correctly with canonical paths.
-        let dir = dir.canonicalize().unwrap_or(dir);
-        let canonical_path = path.canonicalize().ok();
-        Ok((source, dir, canonical_path))
+    match file_path {
+        None => {
+            let mut source = String::new();
+            io::stdin()
+                .read_to_string(&mut source)
+                .into_diagnostic()
+                .wrap_err("read IDL from stdin")?;
+            let cwd = std::env::current_dir()
+                .into_diagnostic()
+                .wrap_err("determine current directory")?;
+            Ok((source, cwd, None))
+        }
+        Some(file_path) => {
+            let path = PathBuf::from(file_path);
+            let source = fs::read_to_string(&path)
+                .into_diagnostic()
+                .wrap_err_with(|| format!("read {}", path.display()))?;
+            let dir = path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
+            // Canonicalize the directory so that import cycle detection works
+            // correctly with canonical paths.
+            let dir = dir.canonicalize().unwrap_or(dir);
+            let canonical_path = path.canonicalize().ok();
+            Ok((source, dir, canonical_path))
+        }
     }
 }
 
@@ -504,33 +504,33 @@ fn emit_warnings(warnings: &[Warning]) {
 
 /// Write output to a file or stdout.
 fn write_output(output: &Option<String>, content: &str) -> miette::Result<()> {
-    let is_stdout = match output {
-        None => true,
-        Some(s) if s == "-" => true,
-        _ => false,
-    };
+    // Treat `None` and `Some("-")` as stdout; everything else is a file path.
+    let file_path = output.as_deref().filter(|s| *s != "-");
 
-    if is_stdout {
-        // Write to stdout without trailing newline, matching Java behavior.
-        // Handle BrokenPipe gracefully: when output is piped to a command
-        // that closes early (e.g., `avdl idl file.avdl | head -1`), exit
-        // silently instead of panicking, matching Unix CLI conventions.
-        use std::io::Write;
-        if let Err(e) = write!(io::stdout(), "{content}") {
-            if e.kind() == io::ErrorKind::BrokenPipe {
-                return Ok(());
+    match file_path {
+        None => {
+            // Write to stdout without trailing newline, matching Java behavior.
+            // Handle BrokenPipe gracefully: when output is piped to a command
+            // that closes early (e.g., `avdl idl file.avdl | head -1`), exit
+            // silently instead of panicking, matching Unix CLI conventions.
+            use std::io::Write;
+            if let Err(e) = write!(io::stdout(), "{content}") {
+                if e.kind() == io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(e)
+                    .into_diagnostic()
+                    .wrap_err("write to stdout");
             }
-            return Err(e)
-                .into_diagnostic()
-                .wrap_err("write to stdout");
+            Ok(())
         }
-        Ok(())
-    } else {
-        let path = PathBuf::from(output.as_ref().expect("checked for None above"));
-        // Append a trailing newline to match the golden files. Java's
-        // `IdlTool` uses `PrintStream.println()` which adds one.
-        fs::write(&path, format!("{content}\n"))
-            .into_diagnostic()
-            .wrap_err_with(|| format!("write {}", path.display()))
+        Some(file_path) => {
+            let path = PathBuf::from(file_path);
+            // Append a trailing newline to match the golden files. Java's
+            // `IdlTool` uses `PrintStream.println()` which adds one.
+            fs::write(&path, format!("{content}\n"))
+                .into_diagnostic()
+                .wrap_err_with(|| format!("write {}", path.display()))
+        }
     }
 }
