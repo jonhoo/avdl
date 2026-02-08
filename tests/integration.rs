@@ -578,7 +578,13 @@ fn test_idl2schemata_simple() {
     // Kind: enum with three symbols and an alias.
     let kind = &schemata["Kind"];
     assert_eq!(kind["type"], "enum");
-    assert_eq!(kind["symbols"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        kind["symbols"]
+            .as_array()
+            .expect("symbols should be an array")
+            .len(),
+        3
+    );
     assert_eq!(kind["aliases"], serde_json::json!(["org.foo.KindOf"]));
 
     // Status: enum with default.
@@ -677,14 +683,13 @@ fn test_import_nonexistent_file() {
     for item in &decl_items {
         if let DeclItem::Import(import) = item {
             let result = import_ctx.resolve_import(&import.path, Path::new("."));
-            if result.is_err() {
-                saw_resolve_error = true;
-            } else {
+            if let Ok(resolved) = result {
                 // The path resolved, but the file shouldn't exist on disk.
-                let resolved = result.unwrap();
                 if import_schema(&resolved, &mut registry).is_err() {
                     saw_resolve_error = true;
                 }
+            } else {
+                saw_resolve_error = true;
             }
         }
     }
@@ -1729,7 +1734,13 @@ fn test_idl2schemata_tools_protocol() {
     // Kind: enum with 3 symbols.
     let kind = &schemata["Kind"];
     assert_eq!(kind["type"], "enum");
-    assert_eq!(kind["symbols"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        kind["symbols"]
+            .as_array()
+            .expect("symbols should be an array")
+            .len(),
+        3
+    );
 
     // MD5: fixed with size 16.
     let md5 = &schemata["MD5"];

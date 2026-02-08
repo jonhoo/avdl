@@ -259,7 +259,8 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         };
-        reg.register(schema).unwrap();
+        reg.register(schema)
+            .expect("registration of valid named schema succeeds");
         assert!(reg.contains("org.example.Ping"));
         assert!(reg.lookup("org.example.Ping").is_some());
         assert!(!reg.contains("Ping"));
@@ -277,7 +278,8 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         };
-        reg.register(schema.clone()).unwrap();
+        reg.register(schema.clone())
+            .expect("first registration of valid schema succeeds");
         assert!(reg.register(schema).is_err());
     }
 
@@ -293,7 +295,7 @@ mod tests {
                 aliases: vec![],
                 properties: IndexMap::new(),
             })
-            .unwrap();
+            .expect("registration of distinct fixed schemas succeeds");
         }
         let names: Vec<_> = reg
             .schemas()
@@ -326,7 +328,7 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         })
-        .unwrap();
+        .expect("registration of record with reference field succeeds");
         let unresolved = reg.validate_references();
         assert_eq!(unresolved, vec!["Missing"]);
     }
@@ -344,7 +346,7 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         })
-        .unwrap();
+        .expect("registration of Inner record succeeds");
         reg.register(AvroSchema::Record {
             name: "Outer".to_string(),
             namespace: None,
@@ -366,7 +368,7 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         })
-        .unwrap();
+        .expect("registration of Outer record referencing Inner succeeds");
         let unresolved = reg.validate_references();
         assert!(unresolved.is_empty());
     }
@@ -436,7 +438,7 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         })
-        .unwrap();
+        .expect("registration of Container with nested references succeeds");
         let unresolved = reg.validate_references();
         assert_eq!(unresolved, vec!["MissingA", "MissingB", "MissingC"]);
     }
@@ -452,7 +454,7 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         })
-        .unwrap();
+        .expect("registration of Hash into reg1 succeeds");
 
         let mut reg2 = SchemaRegistry::new();
         reg2.register(AvroSchema::Fixed {
@@ -463,7 +465,7 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         })
-        .unwrap();
+        .expect("registration of Hash into reg2 succeeds");
         reg2.register(AvroSchema::Fixed {
             name: "Token".to_string(),
             namespace: None,
@@ -472,7 +474,7 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         })
-        .unwrap();
+        .expect("registration of Token into reg2 succeeds");
 
         reg1.merge(reg2);
         assert!(reg1.contains("Hash"));
@@ -498,7 +500,7 @@ mod tests {
                 aliases: vec![],
                 properties: IndexMap::new(),
             })
-            .unwrap();
+            .expect("registration of distinct fixed schemas succeeds");
         }
         let schemas = reg.into_schemas();
         let names: Vec<_> = schemas.iter().filter_map(|s| s.name()).collect();
@@ -654,7 +656,7 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         })
-        .unwrap();
+        .expect("registration of MyRecord succeeds");
 
         let schema = AvroSchema::Reference {
             name: "MyRecord".to_string(),
@@ -739,7 +741,7 @@ mod tests {
             aliases: vec![],
             properties: IndexMap::new(),
         })
-        .unwrap();
+        .expect("registration of MyRecord under com.other succeeds");
 
         // The reference resolves to `com.example.MyRecord`, but the registry
         // only has `com.other.MyRecord`.
