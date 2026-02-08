@@ -997,9 +997,11 @@ fn walk_variable<'input>(
     // and the default is non-null, reorder to put the non-null type first.
     let final_type = fix_optional_schema(field_type.clone(), &default_value);
 
-    // TODO: implement fixDefaultValue — Java coerces IntNode to LongNode when
-    // the field type is `long`. In practice, serde_json serializes both the
-    // same way, so JSON output is unaffected.
+    // Java's fixDefaultValue coerces IntNode to LongNode when the field type is
+    // `long`. No equivalent is needed here: serde_json::Number uses a single
+    // internal representation (u64/i64/f64), so `to_value(42_i32)` and
+    // `to_value(42_i64)` produce the same Value::Number. The coercion is
+    // implicit and lossless.
 
     // Validate that the default value's JSON type matches the field's Avro type.
     // This catches mismatches like `int count = "hello"` at compile time, matching
