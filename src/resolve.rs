@@ -37,7 +37,7 @@ use crate::model::schema::AvroSchema;
 /// pattern `[_\p{L}][_\p{LD}]*`, which accepts Unicode letters and digits.
 /// We match Java's behavior so that IDL files with Unicode identifiers (like
 /// Cyrillic or CJK names) work correctly.
-fn is_valid_avro_name(name: &str) -> bool {
+pub(crate) fn is_valid_avro_name(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
         // First character must be a Unicode letter or underscore.

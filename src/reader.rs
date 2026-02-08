@@ -38,6 +38,7 @@ use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType};
+use crate::resolve::is_valid_avro_name;
 
 // ==============================================================================
 // ANTLR Error Collection
@@ -500,6 +501,17 @@ fn walk_schema_properties<'input>(
                 let mut aliases = Vec::new();
                 for elem in arr {
                     if let Value::String(s) = elem {
+                        // Validate each alias name segment (aliases can be
+                        // fully-qualified like "com.example.OldName").
+                        for segment in s.split('.') {
+                            if !is_valid_avro_name(segment) {
+                                return Err(make_diagnostic(
+                                    src,
+                                    &**prop,
+                                    format!("invalid alias name: {s}"),
+                                ));
+                            }
+                        }
                         aliases.push(s.clone());
                     } else {
                         return Err(make_diagnostic(
@@ -665,6 +677,15 @@ fn walk_protocol<'input>(
     // identifier contains dots, the part before the last dot is the namespace.
     *namespace = compute_namespace(&raw_identifier, &props.namespace);
     let protocol_name = extract_name(&raw_identifier);
+
+    if INVALID_TYPE_NAMES.contains(&protocol_name.as_str()) {
+        return Err(make_diagnostic(
+            src,
+            &*name_ctx,
+            format!("Illegal name: {protocol_name}"),
+        )
+        .into());
+    }
 
     // Build the protocol properties (custom annotations that aren't namespace/aliases/order).
     let protocol_properties = props.properties;
@@ -951,11 +972,29 @@ fn walk_enum<'input>(
     }
 
     // Get the default symbol if present (via `= symbolName;` after the closing brace).
-    let default_symbol = ctx.enumDefault().and_then(|default_ctx| {
-        default_ctx
-            .identifier()
-            .map(|id_ctx| identifier_text(&id_ctx))
-    });
+    // Validate that it exists in the symbol list (Java's `EnumSchema` constructor
+    // rejects unknown defaults with `SchemaParseException`).
+    let default_symbol = if let Some(default_ctx) = ctx.enumDefault() {
+        if let Some(id_ctx) = default_ctx.identifier() {
+            let sym = identifier_text(&id_ctx);
+            if !symbols.contains(&sym) {
+                return Err(make_diagnostic(
+                    src,
+                    &*id_ctx,
+                    format!(
+                        "The Enum Default: {} is not in the enum symbol set: {:?}",
+                        sym, symbols
+                    ),
+                )
+                .into());
+            }
+            Some(sym)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     Ok(AvroSchema::Enum {
         name: enum_name,
@@ -2144,12 +2183,21 @@ fn try_promote_logical_type(schema: AvroSchema) -> AvroSchema {
             // `decimal` requires a `precision` property. If missing or not a
             // valid integer, the logical type is invalid and we leave the
             // schema as-is (matching Java's "ignore invalid" behavior).
-            let Some(precision) = properties.get("precision").and_then(json_value_as_u32) else {
+            //
+            // Java uses signed 32-bit `int` for precision/scale, so values
+            // exceeding `i32::MAX` (2,147,483,647) are treated as invalid
+            // even though they fit in `u32`. We filter accordingly.
+            let Some(precision) = properties
+                .get("precision")
+                .and_then(json_value_as_u32)
+                .filter(|&v| v <= i32::MAX as u32)
+            else {
                 return AvroSchema::AnnotatedPrimitive { kind, properties };
             };
             let scale = properties
                 .get("scale")
                 .and_then(json_value_as_u32)
+                .filter(|&v| v <= i32::MAX as u32)
                 .unwrap_or(0);
 
             properties.shift_remove("logicalType");
@@ -3111,6 +3159,136 @@ mod tests {
             result.is_ok(),
             "union with different named types should be accepted, got: {:?}",
             result.err()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Enum default symbol validation (issue #1498f786)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn enum_default_not_in_symbols_is_rejected() {
+        let idl = r#"
+            protocol P {
+                enum E { A, B, C } = NONEXISTENT;
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "expected error for invalid enum default");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Enum Default"),
+            "error should mention 'Enum Default', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn enum_default_in_symbols_is_accepted() {
+        let idl = r#"
+            protocol P {
+                enum E { A, B, C } = B;
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(
+            result.is_ok(),
+            "valid enum default should be accepted, got: {:?}",
+            result.err()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Protocol name validation (issue #c5e9c318)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn protocol_name_null_is_rejected() {
+        let idl = "protocol `null` { }";
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "reserved protocol name 'null' should be rejected");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Illegal name"),
+            "error should mention 'Illegal name', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn protocol_name_int_is_rejected() {
+        let idl = "protocol `int` { }";
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "reserved protocol name 'int' should be rejected");
+    }
+
+    // ------------------------------------------------------------------
+    // Alias name validation (issue #24f3d986)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn alias_with_leading_digit_is_rejected() {
+        let idl = r#"
+            protocol P {
+                @aliases(["123bad"])
+                record Foo { string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "invalid alias name should be rejected");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("invalid alias name"),
+            "error should mention 'invalid alias name', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn alias_with_dash_is_rejected() {
+        let idl = r#"
+            protocol P {
+                @aliases(["my-alias"])
+                record Foo { string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "dashed alias name should be rejected");
+    }
+
+    #[test]
+    fn valid_qualified_alias_is_accepted() {
+        let idl = r#"
+            protocol P {
+                @aliases(["org.example.OldFoo"])
+                record Foo { string name; }
+            }
+        "#;
+        let result = parse_idl(idl);
+        assert!(
+            result.is_ok(),
+            "qualified alias should be accepted, got: {:?}",
+            result.err()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Decimal precision overflow (issue #b638adba)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn decimal_precision_overflow_is_not_promoted() {
+        // 3000000000 exceeds i32::MAX. Java does not promote this to a
+        // logical type — the schema should remain an AnnotatedPrimitive.
+        let idl = r#"
+            protocol P {
+                record R {
+                    @logicalType("decimal") @precision(3000000000) @scale(0) bytes field1;
+                }
+            }
+        "#;
+        let schema = parse_first_field_schema(idl);
+        assert!(
+            matches!(schema, AvroSchema::AnnotatedPrimitive { .. }),
+            "decimal with precision > i32::MAX should remain AnnotatedPrimitive, \
+             got: {schema:?}"
         );
     }
 }

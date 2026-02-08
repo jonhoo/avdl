@@ -116,8 +116,25 @@ formatting, or exit codes.
 **Priority: Medium** -- From `TestIdlTool` and `TestIdlToSchemataTool`:
 
 - Stderr warning assertions (e.g., license-header doc comment warning)
-- `idl2schemata` output file count assertion
-- Additional golden-file pairs in `tools/src/test/idl/` directory
+  -- both `TestIdlTool.testWriteIdlAsSchema` and
+  `TestIdlToSchemataTool.splitIdlIntoSchemata` assert that a specific
+  "Ignoring out-of-place documentation comment" warning appears on
+  stderr. Depends on implementing the warning system (gap #5).
+- `idl2schemata` output file count assertion -- Java's
+  `TestIdlToSchemataTool.splitIdlIntoSchemata` asserts that
+  `tools/protocol.avdl` produces exactly 4 `.avsc` files
+  (Kind, MD5, TestRecord, TestError). The Rust tool produces the
+  correct count (verified manually), but no Rust test asserts this.
+- ~~Additional golden-file pairs in `tools/src/test/idl/` directory~~
+  DONE (`test_tools_schema`, `test_tools_protocol`)
+
+From `TestLogicalTypes` (compiler module):
+
+- Invalid decimal precision overflow test -- Java's
+  `incorrectlyAnnotatedBytesFieldHasNoLogicalType` asserts that
+  `@precision(3000000000)` does NOT produce a promoted logical type
+  because the value exceeds `Integer.MAX_VALUE`. The Rust tool
+  currently promotes it as valid. Tracked in issue `b638adba`.
 
 ---
 
@@ -133,4 +150,4 @@ formatting, or exit codes.
 | 6 | ~~Logical type field tests~~                   | ~~Low~~ DONE |
 | 7 | Second `cycle.avdl` variant                    | Low      |
 | 8 | CLI-level integration tests                    | Low      |
-| 9 | Java test behaviors (stderr, file count)       | Medium (tools golden DONE) |
+| 9 | Java test behaviors (stderr, file count, precision) | Medium (tools golden DONE) |

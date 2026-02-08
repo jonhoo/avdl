@@ -244,20 +244,21 @@ pub fn schema_to_json(
                 })
                 .collect();
             obj.insert("fields".to_string(), Value::Array(fields_json));
+            // Java emits properties before aliases for named types.
+            for (k, v) in properties {
+                obj.insert(k.clone(), v.clone());
+            }
             if !aliases.is_empty() {
                 let aliases_json: Vec<Value> =
                     aliases.iter().map(|a| Value::String(a.clone())).collect();
                 obj.insert("aliases".to_string(), Value::Array(aliases_json));
-            }
-            for (k, v) in properties {
-                obj.insert(k.clone(), v.clone());
             }
             indexmap_to_value(obj)
         }
 
         // =====================================================================
         // Enum: key order is type, name, namespace (if different), doc,
-        // symbols, default, aliases, then properties.
+        // symbols, default, properties, then aliases.
         // =====================================================================
         AvroSchema::Enum {
             name,
@@ -306,20 +307,20 @@ pub fn schema_to_json(
             if let Some(def) = default {
                 obj.insert("default".to_string(), Value::String(def.clone()));
             }
+            for (k, v) in properties {
+                obj.insert(k.clone(), v.clone());
+            }
             if !aliases.is_empty() {
                 let aliases_json: Vec<Value> =
                     aliases.iter().map(|a| Value::String(a.clone())).collect();
                 obj.insert("aliases".to_string(), Value::Array(aliases_json));
-            }
-            for (k, v) in properties {
-                obj.insert(k.clone(), v.clone());
             }
             indexmap_to_value(obj)
         }
 
         // =====================================================================
         // Fixed: key order is type, name, namespace (if different), doc,
-        // size, aliases, then properties.
+        // size, properties, then aliases.
         // =====================================================================
         AvroSchema::Fixed {
             name,
@@ -362,13 +363,13 @@ pub fn schema_to_json(
                 obj.insert("doc".to_string(), Value::String(doc.clone()));
             }
             obj.insert("size".to_string(), Value::Number((*size).into()));
+            for (k, v) in properties {
+                obj.insert(k.clone(), v.clone());
+            }
             if !aliases.is_empty() {
                 let aliases_json: Vec<Value> =
                     aliases.iter().map(|a| Value::String(a.clone())).collect();
                 obj.insert("aliases".to_string(), Value::Array(aliases_json));
-            }
-            for (k, v) in properties {
-                obj.insert(k.clone(), v.clone());
             }
             indexmap_to_value(obj)
         }
