@@ -7,18 +7,21 @@
       "Bash(cargo check:*)",
       "Bash(cargo test:*)",
       "Bash(git worktree add:*)",
+      "Bash(gh search code:*)",
       "Bash(git worktree:*)",
       "Bash(grep:*)",
       "Bash(java -version:*)",
       "Bash(jq:*)",
       "Bash(ls:*)",
+      "Bash(scripts/compare-adhoc.sh:*)",
       "Bash(scripts/compare-golden.sh:*)",
       "Bash(scripts/regenerate-antlr.sh:*)",
       "Bash(shellcheck:*)",
       "Bash(test:*)",
       "Bash(uuidgen:*)",
       "Bash(wc:*)",
-      "WebFetch(domain:avro.apache.org)"
+      "WebFetch(domain:avro.apache.org)",
+      "WebFetch(domain:docs.rs)"
     ]
   }
 }
