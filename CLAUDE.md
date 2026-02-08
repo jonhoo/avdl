@@ -278,7 +278,12 @@ semantics.
 - `avro/lang/java/idl/src/test/idl/putOnClassPath/` — files that Java
   resolves via classpath. In our tool, pass this directory via
   `--import-dir` instead. Contains `OnTheClasspath.avdl/avpr/avsc`
-  and a `folder/` subdirectory with relative imports.
+  and a `folder/` subdirectory with relative imports. **Note:** the
+  three `OnTheClasspath.*` files are intentionally different fixtures,
+  not variants of the same file. Each defines a different type name
+  (`FromAfar` in `.avdl`, `VeryFar` in `.avpr`, `FarAway` in `.avsc`)
+  to test the three import mechanisms (`import idl`, `import protocol`,
+  `import schema`). They are NOT expected to be in sync.
 - `avro/lang/java/idl/src/test/idl/extra/` — additional test inputs
   (`protocolSyntax.avdl`, `schemaSyntax.avdl`).
 - `avro/lang/java/tools/src/test/idl/` — additional golden-file
