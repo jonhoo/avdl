@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexMap;
 use serde_json::Value;
 
-use crate::error::{IdlError, Result};
+use miette::Result;
 use crate::model::protocol::Message;
 use crate::model::schema::{AvroSchema, FieldOrder, LogicalType, PrimitiveType};
 use crate::resolve::SchemaRegistry;
@@ -66,10 +66,10 @@ impl ImportContext {
         let relative = current_dir.join(import_file);
         if relative.exists() {
             return relative.canonicalize().map_err(|e| {
-                IdlError::Other(format!(
+                miette::miette!(
                     "canonicalize import path `{import_file}` relative to `{}`: {e}",
                     current_dir.display()
-                ))
+                )
             });
         }
 
@@ -78,19 +78,19 @@ impl ImportContext {
             let candidate = dir.join(import_file);
             if candidate.exists() {
                 return candidate.canonicalize().map_err(|e| {
-                    IdlError::Other(format!(
+                    miette::miette!(
                         "canonicalize import path `{import_file}` in import dir `{}`: {e}",
                         dir.display()
-                    ))
+                    )
                 });
             }
         }
 
-        Err(IdlError::Other(format!(
+        Err(miette::miette!(
             "import not found: {import_file} (searched relative to {} and {} import dir(s))",
             current_dir.display(),
             self.import_dirs.len()
-        )))
+        ))
     }
 
     /// Check if a file has already been imported (cycle prevention).
@@ -166,10 +166,10 @@ pub fn import_protocol(
     registry: &mut SchemaRegistry,
 ) -> Result<IndexMap<String, Message>> {
     let content = std::fs::read_to_string(path).map_err(|e| {
-        IdlError::Other(format!("read protocol file `{}`: {e}", path.display()))
+        miette::miette!("read protocol file `{}`: {e}", path.display())
     })?;
     let json: Value = serde_json::from_str(&content)
-        .map_err(|e| IdlError::Parse(format!("invalid JSON in {}: {e}", path.display())))?;
+        .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
 
     let default_namespace = json.get("namespace").and_then(|n| n.as_str());
     let mut messages = IndexMap::new();
@@ -179,10 +179,10 @@ pub fn import_protocol(
     if let Some(types) = json.get("types").and_then(|t| t.as_array()) {
         for (i, type_json) in types.iter().enumerate() {
             let schema = json_to_schema(type_json, default_namespace).map_err(|e| {
-                IdlError::Other(format!(
+                miette::miette!(
                     "parse type at index {i} in protocol `{}`: {e}",
                     path.display()
-                ))
+                )
             })?;
             register_all_named_types(&schema, registry);
         }
@@ -192,10 +192,10 @@ pub fn import_protocol(
     if let Some(msgs) = json.get("messages").and_then(|m| m.as_object()) {
         for (name, msg_json) in msgs {
             let message = json_to_message(msg_json, default_namespace).map_err(|e| {
-                IdlError::Other(format!(
+                miette::miette!(
                     "parse message `{name}` in protocol `{}`: {e}",
                     path.display()
-                ))
+                )
             })?;
             messages.insert(name.clone(), message);
         }
@@ -217,13 +217,13 @@ pub fn import_protocol(
 /// are registered so that subsequent IDL code can reference them by name.
 pub fn import_schema(path: &Path, registry: &mut SchemaRegistry) -> Result<()> {
     let content = std::fs::read_to_string(path).map_err(|e| {
-        IdlError::Other(format!("read schema file `{}`: {e}", path.display()))
+        miette::miette!("read schema file `{}`: {e}", path.display())
     })?;
     let json: Value = serde_json::from_str(&content)
-        .map_err(|e| IdlError::Parse(format!("invalid JSON in {}: {e}", path.display())))?;
+        .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
 
     let schema = json_to_schema(&json, None).map_err(|e| {
-        IdlError::Other(format!("parse schema from `{}`: {e}", path.display()))
+        miette::miette!("parse schema from `{}`: {e}", path.display())
     })?;
     register_all_named_types(&schema, registry);
 
@@ -265,7 +265,7 @@ fn json_to_schema(json: &Value, default_namespace: Option<&str>) -> Result<AvroS
         // Object = complex type (record, enum, fixed, array, map, or annotated primitive).
         Value::Object(obj) => object_to_schema(obj, default_namespace),
 
-        _ => Err(IdlError::Parse(format!("invalid schema JSON: {json}"))),
+        _ => Err(miette::miette!("invalid schema JSON: {json}")),
     }
 }
 
@@ -309,7 +309,7 @@ fn object_to_schema(
     let type_str = obj
         .get("type")
         .and_then(|t| t.as_str())
-        .ok_or_else(|| IdlError::Parse("schema object missing 'type' field".to_string()))?;
+        .ok_or_else(|| miette::miette!("schema object missing 'type' field"))?;
 
     match type_str {
         "record" | "error" => parse_record(obj, type_str, default_namespace),
@@ -322,7 +322,7 @@ fn object_to_schema(
         prim @ ("null" | "boolean" | "int" | "long" | "float" | "double" | "bytes"
         | "string") => parse_annotated_primitive(obj, prim, default_namespace),
 
-        other => Err(IdlError::Parse(format!("unknown schema type: {other}"))),
+        other => Err(miette::miette!("unknown schema type: {other}")),
     }
 }
 
@@ -352,7 +352,7 @@ fn parse_record(
     let raw_name = obj
         .get("name")
         .and_then(|n| n.as_str())
-        .ok_or_else(|| IdlError::Parse("record missing 'name'".to_string()))?;
+        .ok_or_else(|| miette::miette!("record missing 'name'"))?;
     let (name, inferred_ns) = split_qualified_name(raw_name);
     let namespace = obj
         .get("namespace")
@@ -375,7 +375,7 @@ fn parse_record(
             .enumerate()
             .map(|(i, f)| {
                 json_to_field(f, ns_for_fields).map_err(|e| {
-                    IdlError::Other(format!("parse field at index {i} of record `{name}`: {e}"))
+                    miette::miette!("parse field at index {i} of record `{name}`: {e}")
                 })
             })
             .collect::<Result<Vec<_>>>()?
@@ -408,7 +408,7 @@ fn parse_enum(
     let raw_name = obj
         .get("name")
         .and_then(|n| n.as_str())
-        .ok_or_else(|| IdlError::Parse("enum missing 'name'".to_string()))?;
+        .ok_or_else(|| miette::miette!("enum missing 'name'"))?;
     let (name, inferred_ns) = split_qualified_name(raw_name);
     let namespace = obj
         .get("namespace")
@@ -458,7 +458,7 @@ fn parse_fixed(
     let raw_name = obj
         .get("name")
         .and_then(|n| n.as_str())
-        .ok_or_else(|| IdlError::Parse("fixed missing 'name'".to_string()))?;
+        .ok_or_else(|| miette::miette!("fixed missing 'name'"))?;
     let (name, inferred_ns) = split_qualified_name(raw_name);
     let namespace = obj
         .get("namespace")
@@ -473,9 +473,9 @@ fn parse_fixed(
     let size_u64 = obj
         .get("size")
         .and_then(|s| s.as_u64())
-        .ok_or_else(|| IdlError::Parse("fixed missing 'size'".to_string()))?;
+        .ok_or_else(|| miette::miette!("fixed missing 'size'"))?;
     let size = u32::try_from(size_u64).map_err(|_| {
-        IdlError::Parse(format!("fixed size {size_u64} exceeds maximum ({})", u32::MAX))
+        miette::miette!("fixed size {size_u64} exceeds maximum ({})", u32::MAX)
     })?;
     let aliases = extract_string_array(obj.get("aliases"));
 
@@ -504,9 +504,9 @@ fn parse_array(
 ) -> Result<AvroSchema> {
     let items = obj
         .get("items")
-        .ok_or_else(|| IdlError::Parse("array missing 'items'".to_string()))?;
+        .ok_or_else(|| miette::miette!("array missing 'items'"))?;
     let items_schema = json_to_schema(items, default_namespace)
-        .map_err(|e| IdlError::Other(format!("parse array items schema: {e}")))?;
+        .map_err(|e| miette::miette!("parse array items schema: {e}"))?;
     let properties = collect_extra_properties(obj, &["type", "items"]);
     Ok(AvroSchema::Array {
         items: Box::new(items_schema),
@@ -520,9 +520,9 @@ fn parse_map(
 ) -> Result<AvroSchema> {
     let values = obj
         .get("values")
-        .ok_or_else(|| IdlError::Parse("map missing 'values'".to_string()))?;
+        .ok_or_else(|| miette::miette!("map missing 'values'"))?;
     let values_schema = json_to_schema(values, default_namespace)
-        .map_err(|e| IdlError::Other(format!("parse map values schema: {e}")))?;
+        .map_err(|e| miette::miette!("parse map values schema: {e}"))?;
     let properties = collect_extra_properties(obj, &["type", "values"]);
     Ok(AvroSchema::Map {
         values: Box::new(values_schema),
@@ -555,17 +555,15 @@ fn parse_annotated_primitive(
                 let precision_u64 =
                     obj.get("precision").and_then(|p| p.as_u64()).unwrap_or(0);
                 if precision_u64 < 1 {
-                    return Err(IdlError::Parse(
-                        "decimal precision must be >= 1".to_string(),
-                    ));
+                    miette::bail!("decimal precision must be >= 1");
                 }
                 let precision = u32::try_from(precision_u64).map_err(|_| {
-                    IdlError::Parse("decimal precision too large".to_string())
+                    miette::miette!("decimal precision too large")
                 })?;
                 let scale_u64 =
                     obj.get("scale").and_then(|s| s.as_u64()).unwrap_or(0);
                 let scale = u32::try_from(scale_u64).map_err(|_| {
-                    IdlError::Parse("decimal scale too large".to_string())
+                    miette::miette!("decimal scale too large")
                 })?;
                 LogicalType::Decimal { precision, scale }
             }
@@ -613,7 +611,7 @@ fn primitive_from_str(name: &str) -> Result<AvroSchema> {
         "double" => Ok(AvroSchema::Double),
         "bytes" => Ok(AvroSchema::Bytes),
         "string" => Ok(AvroSchema::String),
-        other => Err(IdlError::Parse(format!("unknown primitive type: {other}"))),
+        other => Err(miette::miette!("unknown primitive type: {other}")),
     }
 }
 
@@ -646,18 +644,18 @@ fn json_to_field(
 ) -> Result<crate::model::schema::Field> {
     let obj = json
         .as_object()
-        .ok_or_else(|| IdlError::Parse("field must be an object".to_string()))?;
+        .ok_or_else(|| miette::miette!("field must be an object"))?;
 
     let name = obj
         .get("name")
         .and_then(|n| n.as_str())
-        .ok_or_else(|| IdlError::Parse("field missing 'name'".to_string()))?
+        .ok_or_else(|| miette::miette!("field missing 'name'"))?
         .to_string();
     let type_json = obj
         .get("type")
-        .ok_or_else(|| IdlError::Parse("field missing 'type'".to_string()))?;
+        .ok_or_else(|| miette::miette!("field missing 'type'"))?;
     let schema = json_to_schema(type_json, default_namespace)
-        .map_err(|e| IdlError::Other(format!("parse type for field `{name}`: {e}")))?;
+        .map_err(|e| miette::miette!("parse type for field `{name}`: {e}"))?;
     let doc = obj
         .get("doc")
         .and_then(|d| d.as_str())
@@ -695,7 +693,7 @@ fn json_to_field(
 fn json_to_message(json: &Value, default_namespace: Option<&str>) -> Result<Message> {
     let obj = json
         .as_object()
-        .ok_or_else(|| IdlError::Parse("message must be an object".to_string()))?;
+        .ok_or_else(|| miette::miette!("message must be an object"))?;
 
     let doc = obj
         .get("doc")
@@ -712,7 +710,7 @@ fn json_to_message(json: &Value, default_namespace: Option<&str>) -> Result<Mess
             .enumerate()
             .map(|(i, p)| {
                 json_to_field(p, default_namespace).map_err(|e| {
-                    IdlError::Other(format!("parse request parameter at index {i}: {e}"))
+                    miette::miette!("parse request parameter at index {i}: {e}")
                 })
             })
             .collect::<Result<Vec<_>>>()?
@@ -722,7 +720,7 @@ fn json_to_message(json: &Value, default_namespace: Option<&str>) -> Result<Mess
 
     let response = if let Some(resp) = obj.get("response") {
         json_to_schema(resp, default_namespace)
-            .map_err(|e| IdlError::Other(format!("parse response type for message: {e}")))?
+            .map_err(|e| miette::miette!("parse response type for message: {e}"))?
     } else {
         AvroSchema::Null
     };
@@ -733,7 +731,7 @@ fn json_to_message(json: &Value, default_namespace: Option<&str>) -> Result<Mess
                 .enumerate()
                 .map(|(i, e)| {
                     json_to_schema(e, default_namespace).map_err(|e| {
-                        IdlError::Other(format!("parse error type at index {i} for message: {e}"))
+                        miette::miette!("parse error type at index {i} for message: {e}")
                     })
                 })
                 .collect::<Result<Vec<_>>>()?,

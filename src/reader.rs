@@ -36,7 +36,8 @@ use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::doc_comments::extract_doc_comment;
-use crate::error::{IdlError, ParseDiagnostic, Result};
+use crate::error::ParseDiagnostic;
+use miette::Result;
 use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
@@ -106,7 +107,7 @@ impl std::fmt::Display for Warning {
 //
 // We replace the default listener with `CollectingErrorListener`, which records
 // each syntax error's line/column/message. After parsing, we check the
-// collected errors and return an `IdlError` if any were found.
+// collected errors and return an error if any were found.
 
 /// An ANTLR error listener that collects syntax errors into a shared `Vec`
 /// instead of printing them to stderr. This lets us detect parse errors after
@@ -224,7 +225,7 @@ pub fn parse_idl_named(
     }));
 
     let tree = parser.idlFile().map_err(|e| {
-        IdlError::Parse(format!("parse IDL source `{source_name}`: {e:?}"))
+        miette::miette!("parse error: parse IDL source `{source_name}`: {e:?}")
     })?;
 
     // Check for ANTLR syntax errors collected during parsing. Any syntax error
@@ -247,7 +248,7 @@ pub fn parse_idl_named(
             }
             msg
         };
-        return Err(IdlError::Parse(error_msg));
+        miette::bail!("parse error: {error_msg}");
     }
     drop(collected_errors);
 
@@ -272,7 +273,7 @@ pub fn parse_idl_named(
         &mut namespace,
         &mut decl_items,
     )
-    .map_err(|e| IdlError::Other(format!("walk IDL parse tree for `{source_name}`: {e}")))?;
+    .map_err(|e| miette::miette!("walk IDL parse tree for `{source_name}`: {e}"))?;
 
     // ==============================================================================
     // Orphaned Doc Comment Detection
@@ -320,8 +321,8 @@ struct SourceInfo<'a> {
     consumed_doc_indices: RefCell<HashSet<isize>>,
 }
 
-/// Construct an `IdlError::Diagnostic` with source location extracted from
-/// an ANTLR parse tree context's start token.
+/// Construct a `miette::Report` wrapping a `ParseDiagnostic` with source
+/// location extracted from an ANTLR parse tree context's start token.
 ///
 /// The start token gives us a byte offset into the original source text. We
 /// use the token's `get_start()` and `get_stop()` to compute a byte-level
@@ -331,7 +332,7 @@ fn make_diagnostic<'input>(
     src: &SourceInfo<'_>,
     ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'input>,
     message: impl Into<String>,
-) -> IdlError {
+) -> miette::Report {
     let start_token = ctx.start();
     let offset = start_token.get_start();
     let stop = start_token.get_stop();
@@ -348,11 +349,12 @@ fn make_diagnostic<'input>(
     };
 
     let message = message.into();
-    IdlError::Diagnostic(ParseDiagnostic {
+    ParseDiagnostic {
         src: miette::NamedSource::new(src.name, src.source.to_string()),
         span: miette::SourceSpan::new(offset.into(), length),
         message,
-    })
+    }
+    .into()
 }
 
 /// Like `make_diagnostic` but takes a raw `Token` reference instead of a
@@ -362,7 +364,7 @@ fn make_diagnostic_from_token(
     src: &SourceInfo<'_>,
     token: &impl Token,
     message: impl Into<String>,
-) -> IdlError {
+) -> miette::Report {
     let offset = token.get_start();
     let stop = token.get_stop();
 
@@ -375,11 +377,12 @@ fn make_diagnostic_from_token(
     };
 
     let message = message.into();
-    IdlError::Diagnostic(ParseDiagnostic {
+    ParseDiagnostic {
         src: miette::NamedSource::new(src.name, src.source.to_string()),
         span: miette::SourceSpan::new(offset.into(), length),
         message,
-    })
+    }
+    .into()
 }
 
 // ==========================================================================
@@ -559,7 +562,7 @@ fn walk_schema_properties<'input>(
             .jsonValue()
             .ok_or_else(|| make_diagnostic(src, &**prop, "missing property value"))?;
         let value = walk_json_value(&value_ctx, token_stream, src).map_err(|e| {
-            IdlError::Other(format!("parse value for schema property `{name}`: {e}"))
+            miette::miette!("parse value for schema property `{name}`: {e}")
         })?;
 
         // Intercept well-known annotations only when the context flags allow it.
@@ -987,7 +990,7 @@ fn walk_variable<'input>(
     // Parse the default value if present.
     let default_value = if let Some(json_ctx) = ctx.jsonValue() {
         Some(walk_json_value(&json_ctx, token_stream, src).map_err(|e| {
-            IdlError::Other(format!("parse default value for field `{field_name}`: {e}"))
+            miette::miette!("parse default value for field `{field_name}`: {e}")
         })?)
     } else {
         None
@@ -1151,7 +1154,7 @@ fn walk_fixed<'input>(
         make_diagnostic(src, ctx, "missing fixed size")
     })?;
     let size = parse_integer_as_u32(size_tok.get_text()).map_err(|e| {
-        IdlError::Other(format!("parse fixed size for `{fixed_name}`: {e}"))
+        miette::miette!("parse fixed size for `{fixed_name}`: {e}")
     })?;
 
     Ok(AvroSchema::Fixed {
@@ -1321,12 +1324,12 @@ fn walk_primitive_type<'input>(
                 make_diagnostic(src, ctx, "decimal type missing precision")
             })?;
             let precision = parse_integer_as_u32(precision_tok.get_text()).map_err(|e| {
-                IdlError::Other(format!("parse decimal precision: {e}"))
+                miette::miette!("parse decimal precision: {e}")
             })?;
 
             let scale = if let Some(scale_tok) = ctx.scale.as_ref() {
                 parse_integer_as_u32(scale_tok.get_text()).map_err(|e| {
-                    IdlError::Other(format!("parse decimal scale: {e}"))
+                    miette::miette!("parse decimal scale: {e}")
                 })?
             } else {
                 0
@@ -1847,24 +1850,24 @@ fn parse_integer_literal(text: &str) -> Result<Value> {
     let long_value: i64 = if number.starts_with("0x") || number.starts_with("0X") {
         let hex = &number[2..];
         i64::from_str_radix(hex, 16)
-            .map_err(|e| IdlError::Other(format!("invalid hex integer literal '{text}': {e}")))?
+            .map_err(|e| miette::miette!("invalid hex integer literal '{text}': {e}"))?
     } else if number.starts_with('-') && (number.starts_with("-0x") || number.starts_with("-0X")) {
         let hex = &number[3..];
         let abs = i64::from_str_radix(hex, 16)
-            .map_err(|e| IdlError::Other(format!("invalid hex integer literal '{text}': {e}")))?;
+            .map_err(|e| miette::miette!("invalid hex integer literal '{text}': {e}"))?;
         -abs
     } else if number.starts_with('0') && number.len() > 1 && !number.contains('.') {
         // Octal.
         i64::from_str_radix(&number, 8)
-            .map_err(|e| IdlError::Other(format!("invalid octal integer literal '{text}': {e}")))?
+            .map_err(|e| miette::miette!("invalid octal integer literal '{text}': {e}"))?
     } else if number.starts_with("-0") && number.len() > 2 && !number.contains('.') {
         let oct = &number[1..];
         let abs = i64::from_str_radix(oct, 8)
-            .map_err(|e| IdlError::Other(format!("invalid octal integer literal '{text}': {e}")))?;
+            .map_err(|e| miette::miette!("invalid octal integer literal '{text}': {e}"))?;
         -abs
     } else {
         number.parse::<i64>().map_err(|e| {
-            IdlError::Other(format!("invalid integer literal '{text}': {e}"))
+            miette::miette!("invalid integer literal '{text}': {e}")
         })?
     };
 
@@ -1872,10 +1875,10 @@ fn parse_integer_literal(text: &str) -> Result<Value> {
     if coerce_to_long || int_value as i64 != long_value {
         // Doesn't fit in i32 or explicitly long -- use i64.
         Ok(serde_json::to_value(long_value)
-            .map_err(|e| IdlError::Other(format!("JSON number error: {e}")))?)
+            .map_err(|e| miette::miette!("JSON number error: {e}"))?)
     } else {
         Ok(serde_json::to_value(int_value)
-            .map_err(|e| IdlError::Other(format!("JSON number error: {e}")))?)
+            .map_err(|e| miette::miette!("JSON number error: {e}"))?)
     }
 }
 
@@ -1951,7 +1954,7 @@ fn parse_float_text(text: &str) -> Result<f64> {
 
     // Standard decimal float — Rust's f64::from_str handles this directly.
     number.parse::<f64>().map_err(|e| {
-        IdlError::Other(format!("invalid floating point literal '{text}': {e}"))
+        miette::miette!("invalid floating point literal '{text}': {e}")
     })
 }
 
@@ -1972,16 +1975,16 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
     let (mantissa_str, exp_str) = hex_body
         .split_once(|c: char| c == 'p' || c == 'P')
         .ok_or_else(|| {
-            IdlError::Other(format!(
+            miette::miette!(
                 "invalid hex float literal '{original}': missing 'p'/'P' exponent"
-            ))
+            )
         })?;
 
     // Parse the binary exponent (decimal integer, possibly signed).
     let exponent: i32 = exp_str.parse().map_err(|e| {
-        IdlError::Other(format!(
+        miette::miette!(
             "invalid hex float exponent in '{original}': {e}"
-        ))
+        )
     })?;
 
     // Parse the hex mantissa, which may contain a '.' decimal point.
@@ -1992,9 +1995,9 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
             0.0
         } else {
             u64::from_str_radix(int_part, 16).map_err(|e| {
-                IdlError::Other(format!(
+                miette::miette!(
                     "invalid hex float mantissa in '{original}': {e}"
-                ))
+                )
             })? as f64
         };
 
@@ -2004,9 +2007,9 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
         let mut place = 1.0_f64 / 16.0;
         for ch in frac_part.chars() {
             let digit = ch.to_digit(16).ok_or_else(|| {
-                IdlError::Other(format!(
+                miette::miette!(
                     "invalid hex digit '{ch}' in float literal '{original}'"
-                ))
+                )
             })? as f64;
             frac_val += digit * place;
             place /= 16.0;
@@ -2016,9 +2019,9 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
     } else {
         // No decimal point — the mantissa is a plain hex integer.
         u64::from_str_radix(mantissa_str, 16).map_err(|e| {
-            IdlError::Other(format!(
+            miette::miette!(
                 "invalid hex float mantissa in '{original}': {e}"
-            ))
+            )
         })? as f64
     };
 
@@ -2030,14 +2033,14 @@ fn parse_integer_as_u32(text: &str) -> Result<u32> {
     let number = text.replace('_', "");
     let value: u32 = if number.starts_with("0x") || number.starts_with("0X") {
         u32::from_str_radix(&number[2..], 16)
-            .map_err(|e| IdlError::Other(format!("invalid integer '{text}': {e}")))?
+            .map_err(|e| miette::miette!("invalid integer '{text}': {e}"))?
     } else if number.starts_with('0') && number.len() > 1 {
         u32::from_str_radix(&number, 8)
-            .map_err(|e| IdlError::Other(format!("invalid integer '{text}': {e}")))?
+            .map_err(|e| miette::miette!("invalid integer '{text}': {e}"))?
     } else {
         number
             .parse()
-            .map_err(|e| IdlError::Other(format!("invalid integer '{text}': {e}")))?
+            .map_err(|e| miette::miette!("invalid integer '{text}': {e}"))?
     };
     Ok(value)
 }

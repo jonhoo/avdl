@@ -234,7 +234,7 @@ src/
   doc_comments.rs        Extracts doc comments from the ANTLR token stream
   import.rs              Import resolution for .avdl, .avpr, .avsc files
   resolve.rs             SchemaRegistry: named type tracking and forward references
-  error.rs               miette-based error types (ParseDiagnostic, IdlError)
+  error.rs               ParseDiagnostic: source-span error for rich miette rendering
   generated/             ANTLR-generated parser/lexer (do not edit by hand)
     mod.rs               #![allow(...)] wrappers for generated code
     idlparser.rs

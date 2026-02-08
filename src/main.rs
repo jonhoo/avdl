@@ -12,9 +12,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use indexmap::{IndexMap, IndexSet};
-use miette::Context;
-
-use avdl::error::IdlError;
+use miette::{Context, IntoDiagnostic};
 use avdl::import::{import_protocol, import_schema, ImportContext};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json, to_string_pretty_java};
 use avdl::model::protocol::Message;
@@ -126,8 +124,7 @@ fn run_idl(
     };
 
     let json_str = to_string_pretty_java(&json_value)
-        .map_err(|e| IdlError::Other(format!("serialize JSON: {e}")))
-        .map_err(miette::Report::new)?;
+        .map_err(|e| miette::miette!("serialize JSON: {e}"))?;
 
     // Validate that all type references resolved before writing output.
     // Unresolved references indicate missing imports, undefined types, or
@@ -158,11 +155,7 @@ fn run_idl(
     unresolved.sort();
     unresolved.dedup();
     if !unresolved.is_empty() {
-        return Err(IdlError::Other(format!(
-            "Undefined name: {}",
-            unresolved.join(", ")
-        )))
-        .map_err(miette::Report::new);
+        miette::bail!("Undefined name: {}", unresolved.join(", "));
     }
 
     write_output(&output, &json_str)?;
@@ -188,8 +181,7 @@ fn run_idl2schemata(
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
     fs::create_dir_all(&output_dir)
-        .map_err(|e| IdlError::Io { source: e })
-        .map_err(miette::Report::new)
+        .into_diagnostic()
         .wrap_err("create output directory")?;
 
     // Build a lookup table from all registered schemas so that references
@@ -222,14 +214,12 @@ fn run_idl2schemata(
         // schemas have no enclosing context to inherit namespace from.
         let json_value = schema_to_json(schema, &mut known_names, None, &all_lookup);
         let json_str = to_string_pretty_java(&json_value)
-            .map_err(|e| IdlError::Other(format!("serialize JSON for {type_name}: {e}")))
-            .map_err(miette::Report::new)?;
+            .map_err(|e| miette::miette!("serialize JSON for {type_name}: {e}"))?;
 
         let file_path = output_dir.join(format!("{simple_name}.avsc"));
         // Append trailing newline to match Java's `PrintStream.println()`.
         fs::write(&file_path, format!("{json_str}\n"))
-            .map_err(|e| IdlError::Io { source: e })
-            .map_err(miette::Report::new)
+            .into_diagnostic()
             .wrap_err_with(|| format!("write {}", file_path.display()))?;
     }
 
@@ -256,11 +246,7 @@ fn run_idl2schemata(
     unresolved.sort();
     unresolved.dedup();
     if !unresolved.is_empty() {
-        return Err(IdlError::Other(format!(
-            "Undefined name: {}",
-            unresolved.join(", ")
-        )))
-        .map_err(miette::Report::new);
+        miette::bail!("Undefined name: {}", unresolved.join(", "));
     }
 
     Ok(())
@@ -292,19 +278,16 @@ fn read_input(input: &Option<String>) -> miette::Result<(String, PathBuf, Option
         let mut source = String::new();
         io::stdin()
             .read_to_string(&mut source)
-            .map_err(|e| IdlError::Io { source: e })
-            .map_err(miette::Report::new)
+            .into_diagnostic()
             .wrap_err("read IDL from stdin")?;
         let cwd = std::env::current_dir()
-            .map_err(|e| IdlError::Io { source: e })
-            .map_err(miette::Report::new)
+            .into_diagnostic()
             .wrap_err("determine current directory")?;
         Ok((source, cwd, None))
     } else {
         let path = PathBuf::from(input.as_ref().expect("checked for None above"));
         let source = fs::read_to_string(&path)
-            .map_err(|e| IdlError::Io { source: e })
-            .map_err(miette::Report::new)
+            .into_diagnostic()
             .wrap_err_with(|| format!("read {}", path.display()))?;
         let dir = path
             .parent()
@@ -334,7 +317,6 @@ fn parse_and_resolve(
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<(IdlFile, SchemaRegistry, Vec<Warning>)> {
     let (idl_file, decl_items, mut warnings) = parse_idl(source)
-        .map_err(miette::Report::new)
         .wrap_err("parse IDL source")?;
 
     let mut registry = SchemaRegistry::new();
@@ -416,8 +398,7 @@ fn process_decl_items(
                     .unwrap_or_else(|| "<unnamed>".to_string());
                 registry
                     .register(schema.clone())
-                    .map_err(IdlError::Other)
-                    .map_err(miette::Report::new)
+                    .map_err(|e| miette::miette!("{e}"))
                     .wrap_err_with(|| format!("register schema `{schema_name}`"))?;
             }
         }
@@ -438,7 +419,6 @@ fn resolve_single_import(
 ) -> miette::Result<()> {
     let resolved_path = import_ctx
         .resolve_import(&import.path, current_dir)
-        .map_err(miette::Report::new)
         .wrap_err_with(|| format!("resolve import `{}`", import.path))?;
 
     // Skip files we've already imported (cycle prevention).
@@ -454,7 +434,6 @@ fn resolve_single_import(
     match import.kind {
         ImportKind::Protocol => {
             let imported_messages = import_protocol(&resolved_path, registry)
-                .map_err(miette::Report::new)
                 .wrap_err_with(|| {
                     format!("import protocol {}", resolved_path.display())
                 })?;
@@ -462,22 +441,19 @@ fn resolve_single_import(
         }
         ImportKind::Schema => {
             import_schema(&resolved_path, registry)
-                .map_err(miette::Report::new)
                 .wrap_err_with(|| {
                     format!("import schema {}", resolved_path.display())
                 })?;
         }
         ImportKind::Idl => {
             let imported_source = fs::read_to_string(&resolved_path)
-                .map_err(|e| IdlError::Io { source: e })
-                .map_err(miette::Report::new)
+                .into_diagnostic()
                 .wrap_err_with(|| {
                     format!("read imported IDL {}", resolved_path.display())
                 })?;
 
             let (imported_idl, nested_decl_items, import_warnings) =
                 parse_idl(&imported_source)
-                    .map_err(miette::Report::new)
                     .wrap_err_with(|| {
                         format!("parse imported IDL {}", resolved_path.display())
                     })?;
@@ -544,8 +520,8 @@ fn write_output(output: &Option<String>, content: &str) -> miette::Result<()> {
             if e.kind() == io::ErrorKind::BrokenPipe {
                 return Ok(());
             }
-            return Err(IdlError::Io { source: e })
-                .map_err(miette::Report::new)
+            return Err(e)
+                .into_diagnostic()
                 .wrap_err("write to stdout");
         }
         Ok(())
@@ -554,8 +530,7 @@ fn write_output(output: &Option<String>, content: &str) -> miette::Result<()> {
         // Append a trailing newline to match the golden files. Java's
         // `IdlTool` uses `PrintStream.println()` which adds one.
         fs::write(&path, format!("{content}\n"))
-            .map_err(|e| IdlError::Io { source: e })
-            .map_err(miette::Report::new)
+            .into_diagnostic()
             .wrap_err_with(|| format!("write {}", path.display()))
     }
 }

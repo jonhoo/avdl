@@ -36,12 +36,13 @@ fn parse_error(input: &str) -> Option<String> {
             let handler = GraphicalReportHandler::new_themed(GraphicalTheme::ascii())
                 .with_width(80);
 
-            // Try to render as a full miette diagnostic first. If the error
-            // carries source_code and labels, this produces the rich output
-            // with underlined spans. Fall back to plain Display if the
-            // diagnostic render fails (e.g., for errors without source info).
-            if e.source_code().is_some() {
-                if handler.render_report(&mut buf, &e).is_ok() {
+            // Try to render as a full miette diagnostic. Only use the
+            // graphical handler when the underlying error carries source code
+            // and labels -- otherwise the graphical output adds noisy prefixes
+            // (`x`, `|`) without any meaningful source context.
+            let diag: &dyn Diagnostic = e.as_ref();
+            if diag.source_code().is_some() {
+                if handler.render_report(&mut buf, diag).is_ok() {
                     return Some(buf);
                 }
             }
