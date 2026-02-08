@@ -156,9 +156,10 @@ After all waves complete:
 
 1. **Update resolved issues**: Remove issue files for fixes that were
    merged. Also close issues that are non-goals (see CLAUDE.md):
-   design-choice differences from Java should be closed rather than
-   carried forward; low-impact domain model gaps with zero effect on
-   JSON output can be closed with a TODO comment in the code. Re-verify
+   design-choice differences from Java should be documented in the
+   "Intentional divergences from Java" section of `README.md` and then
+   closed; low-impact domain model gaps with zero effect on JSON output
+   can be closed with a TODO comment in the code. Re-verify
    remaining open issues against the current code — discovery-filed
    issues go stale quickly as fixes land.
    For a deeper retrospective audit of closed issues (run periodically

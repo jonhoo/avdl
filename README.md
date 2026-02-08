@@ -33,6 +33,17 @@ cargo build
 cargo run -- idl input.avdl
 ```
 
+## Intentional divergences from Java
+
+This tool aims for semantic correctness against the Java `avro-tools`
+output, but deliberately differs in a few ways:
+
+- **JSON formatting is not byte-identical.** Whitespace, key ordering
+  within objects, and array line-breaking style may differ. The output
+  parses to the same logical structure.
+
+<!-- TODO: populate with a full review of intentional divergences -->
+
 ## Attribution
 
 This is a "powercoded" port of the Java Avro tools — meaning it was
