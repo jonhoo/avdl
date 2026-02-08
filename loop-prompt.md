@@ -219,3 +219,14 @@ After each wave merge:
   all directly on main. Iteration 3 fixed 5 issues in a single commit
   without any worktrees or sub-agents, which was significantly faster
   than the multi-agent approach.
+- **Close design-choice issues as "won't fix"**: Issues that document
+  intentional behavior differences from Java (e.g., accepting bare
+  named types) should be closed rather than carried forward indefinitely.
+- **Low-impact domain model gaps can be closed with TODO comments**:
+  When an issue has zero effect on JSON output (e.g., `fixDefaultValue`
+  int-to-long coercion), adding a TODO comment and closing the issue is
+  better than carrying it as open indefinitely.
+- **Sub-agent issue file deletion**: If a sub-agent deletes issue files
+  as part of its commit, the parent doesn't need a separate close
+  commit. This happened in Wave 3 (iteration 5) where the doc comment
+  agent deleted both issue files in its fix commit.
