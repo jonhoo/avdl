@@ -104,50 +104,175 @@ impl ImportContext {
 }
 
 // ==============================================================================
-// Recursive Named Type Registration
+// Schema Flattening and Registration for Imports
 // ==============================================================================
 //
 // When importing `.avsc` or `.avpr` files, named types (record, enum, fixed)
 // can be nested arbitrarily deep inside record fields, union branches, array
-// items, or map values. Java's `JsonSchemaParser.parse()` recursively registers
-// all such nested types via `ParseContext.put()`. We replicate this behavior
-// here so that subsequent IDL code can reference nested types by name.
+// items, or map values. Java's `Schema.parse()` recursively registers all
+// nested named types in a flat `Names` map, and its serialization emits name
+// references for already-known types. We replicate this by *flattening*
+// imported schemas: extracting nested named types into a flat list and
+// replacing inline definitions with `Reference` nodes in the parent schema.
 //
-// This walk follows the same structure as `collect_named_types` in
-// `model/json.rs`, which does the equivalent for JSON serialization lookups.
+// This ensures that:
+// 1. Each nested named type appears as a separate top-level entry in the
+//    protocol's `types` array (inner types before the outer types that
+//    reference them).
+// 2. The parent schema references nested types by name string instead of
+//    containing inline definitions — matching Java's JSON output.
 
-/// Recursively walk an `AvroSchema` tree and register every named type
-/// (record, enum, fixed) found in the `SchemaRegistry`.
+/// Flatten a schema by extracting all nested named types into a separate list.
+///
+/// Returns a list of `(nested_type, modified_schema)` pairs where:
+/// - The returned `Vec` contains all named types found in the tree, in
+///   depth-first order (inner types before outer types that contain them).
+/// - Each named type in the returned list has *itself* been flattened: its
+///   fields reference further-nested types by name, not inline.
+/// - The modified schema has inline named type definitions replaced with
+///   `Reference` nodes.
+///
+/// For a non-named top-level schema (e.g., an array of records), only the
+/// nested named types are extracted — the modified top-level schema is
+/// returned via the second element.
+fn flatten_schema(schema: AvroSchema) -> (Vec<AvroSchema>, AvroSchema) {
+    let mut collected = Vec::new();
+    let flattened = flatten_schema_inner(schema, &mut collected);
+    (collected, flattened)
+}
+
+/// Inner recursive helper for `flatten_schema`. Walks the schema tree,
+/// collects named types into `collected`, and returns the schema with
+/// inline named type definitions replaced by `Reference` nodes.
+fn flatten_schema_inner(
+    schema: AvroSchema,
+    collected: &mut Vec<AvroSchema>,
+) -> AvroSchema {
+    match schema {
+        AvroSchema::Record {
+            name,
+            namespace,
+            doc,
+            fields,
+            is_error,
+            aliases,
+            properties,
+        } => {
+            // First, flatten each field's schema so that any nested named types
+            // within fields are extracted and replaced with references.
+            let flattened_fields: Vec<_> = fields
+                .into_iter()
+                .map(|field| {
+                    let flattened_field_schema =
+                        flatten_schema_inner(field.schema, collected);
+                    crate::model::schema::Field {
+                        schema: flattened_field_schema,
+                        ..field
+                    }
+                })
+                .collect();
+
+            // Build the flattened record (fields now contain references
+            // instead of inline named types).
+            let flattened_record = AvroSchema::Record {
+                name: name.clone(),
+                namespace: namespace.clone(),
+                doc,
+                fields: flattened_fields,
+                is_error,
+                aliases,
+                properties,
+            };
+
+            // Add this record to the collected list.
+            collected.push(flattened_record.clone());
+
+            // Return a Reference to replace the inline definition in the parent.
+            AvroSchema::Reference {
+                name,
+                namespace,
+                properties: IndexMap::new(),
+            }
+        }
+
+        AvroSchema::Enum {
+            ref name,
+            ref namespace,
+            ..
+        } => {
+            // Enums have no nested types to flatten, but they themselves need
+            // to be collected and replaced with a reference.
+            let reference = AvroSchema::Reference {
+                name: name.clone(),
+                namespace: namespace.clone(),
+                properties: IndexMap::new(),
+            };
+            collected.push(schema);
+            reference
+        }
+
+        AvroSchema::Fixed {
+            ref name,
+            ref namespace,
+            ..
+        } => {
+            let reference = AvroSchema::Reference {
+                name: name.clone(),
+                namespace: namespace.clone(),
+                properties: IndexMap::new(),
+            };
+            collected.push(schema);
+            reference
+        }
+
+        AvroSchema::Array { items, properties } => {
+            let flattened_items = flatten_schema_inner(*items, collected);
+            AvroSchema::Array {
+                items: Box::new(flattened_items),
+                properties,
+            }
+        }
+
+        AvroSchema::Map { values, properties } => {
+            let flattened_values = flatten_schema_inner(*values, collected);
+            AvroSchema::Map {
+                values: Box::new(flattened_values),
+                properties,
+            }
+        }
+
+        AvroSchema::Union {
+            types,
+            is_nullable_type,
+        } => {
+            let flattened_types: Vec<_> = types
+                .into_iter()
+                .map(|t| flatten_schema_inner(t, collected))
+                .collect();
+            AvroSchema::Union {
+                types: flattened_types,
+                is_nullable_type,
+            }
+        }
+
+        // Primitives, logical types, annotated primitives, and references
+        // contain no nested named type definitions to extract.
+        other => other,
+    }
+}
+
+/// Flatten a schema and register all extracted named types in the registry.
+///
+/// The flattened types are registered in depth-first order (inner types before
+/// outer types), matching Java's behavior where `Schema.parse()` recursively
+/// registers nested types as it encounters them.
 ///
 /// Duplicate registrations are silently ignored (the first definition wins),
 /// matching Java's behavior for imports.
-fn register_all_named_types(schema: &AvroSchema, registry: &mut SchemaRegistry) {
-    match schema {
-        AvroSchema::Record { fields, .. } => {
-            // Register the record itself first, then recurse into its fields
-            // to pick up any nested named types.
-            let _ = registry.register(schema.clone());
-            for field in fields {
-                register_all_named_types(&field.schema, registry);
-            }
-        }
-        AvroSchema::Enum { .. } | AvroSchema::Fixed { .. } => {
-            let _ = registry.register(schema.clone());
-        }
-        AvroSchema::Array { items, .. } => {
-            register_all_named_types(items, registry);
-        }
-        AvroSchema::Map { values, .. } => {
-            register_all_named_types(values, registry);
-        }
-        AvroSchema::Union { types, .. } => {
-            for t in types {
-                register_all_named_types(t, registry);
-            }
-        }
-        // Primitives, logical types, annotated primitives, and references
-        // contain no nested named type definitions to register.
-        _ => {}
+fn flatten_and_register(schema: AvroSchema, registry: &mut SchemaRegistry) {
+    let (types, _top_level) = flatten_schema(schema);
+    for t in types {
+        let _ = registry.register(t);
     }
 }
 
@@ -174,8 +299,10 @@ pub fn import_protocol(
     let default_namespace = json.get("namespace").and_then(|n| n.as_str());
     let mut messages = IndexMap::new();
 
-    // Extract types from the protocol JSON and register them, including any
-    // nested named types within record fields, union branches, etc.
+    // Extract types from the protocol JSON and register them. Schemas are
+    // flattened so that nested named types (records, enums, fixed) within
+    // record fields, union branches, etc. are promoted to separate top-level
+    // entries in the registry and replaced with Reference nodes.
     if let Some(types) = json.get("types").and_then(|t| t.as_array()) {
         for (i, type_json) in types.iter().enumerate() {
             let schema = json_to_schema(type_json, default_namespace).map_err(|e| {
@@ -184,7 +311,7 @@ pub fn import_protocol(
                     path.display()
                 )
             })?;
-            register_all_named_types(&schema, registry);
+            flatten_and_register(schema, registry);
         }
     }
 
@@ -225,7 +352,7 @@ pub fn import_schema(path: &Path, registry: &mut SchemaRegistry) -> Result<()> {
     let schema = json_to_schema(&json, None).map_err(|e| {
         miette::miette!("parse schema from `{}`: {e}", path.display())
     })?;
-    register_all_named_types(&schema, registry);
+    flatten_and_register(schema, registry);
 
     Ok(())
 }
@@ -1351,7 +1478,7 @@ mod tests {
     }
 
     // =========================================================================
-    // register_all_named_types tests (issue 6fbdd004)
+    // flatten_and_register tests (issues 6fbdd004, f812cf8e)
     // =========================================================================
 
     #[test]
@@ -1377,7 +1504,7 @@ mod tests {
         .expect("parse nested record");
 
         let mut registry = SchemaRegistry::new();
-        register_all_named_types(&schema, &mut registry);
+        flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Outer"), "outer record should be registered");
         assert!(registry.contains("test.nested.Inner"), "nested record should be registered");
@@ -1405,7 +1532,7 @@ mod tests {
         .expect("parse record with nested enum");
 
         let mut registry = SchemaRegistry::new();
-        register_all_named_types(&schema, &mut registry);
+        flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Container"));
         assert!(registry.contains("test.nested.Status"), "nested enum should be registered");
@@ -1433,7 +1560,7 @@ mod tests {
         .expect("parse record with nested fixed");
 
         let mut registry = SchemaRegistry::new();
-        register_all_named_types(&schema, &mut registry);
+        flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Container"));
         assert!(registry.contains("test.nested.MD5"), "nested fixed should be registered");
@@ -1461,7 +1588,7 @@ mod tests {
         .expect("parse record with nested record in union");
 
         let mut registry = SchemaRegistry::new();
-        register_all_named_types(&schema, &mut registry);
+        flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Wrapper"));
         assert!(registry.contains("test.nested.Payload"), "nested record in union should be registered");
@@ -1492,7 +1619,7 @@ mod tests {
         .expect("parse record with nested record in array");
 
         let mut registry = SchemaRegistry::new();
-        register_all_named_types(&schema, &mut registry);
+        flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Collection"));
         assert!(registry.contains("test.nested.Entry"), "nested record in array items should be registered");
@@ -1523,7 +1650,7 @@ mod tests {
         .expect("parse record with nested record in map");
 
         let mut registry = SchemaRegistry::new();
-        register_all_named_types(&schema, &mut registry);
+        flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.nested.Lookup"));
         assert!(registry.contains("test.nested.MapEntry"), "nested record in map values should be registered");
@@ -1562,7 +1689,7 @@ mod tests {
         .expect("parse deeply nested schema");
 
         let mut registry = SchemaRegistry::new();
-        register_all_named_types(&schema, &mut registry);
+        flatten_and_register(schema, &mut registry);
 
         assert!(registry.contains("test.deep.Root"));
         assert!(registry.contains("test.deep.Leaf"), "deeply nested record should be registered");
@@ -1575,7 +1702,274 @@ mod tests {
         // there are no named types to register.
         let schema = json_to_schema(&json!("int"), None).expect("parse int");
         let mut registry = SchemaRegistry::new();
-        register_all_named_types(&schema, &mut registry);
+        flatten_and_register(schema, &mut registry);
         assert_eq!(registry.into_schemas().len(), 0);
+    }
+
+    // =========================================================================
+    // flatten_schema tests (issue f812cf8e)
+    // =========================================================================
+
+    #[test]
+    fn flatten_replaces_nested_record_with_reference() {
+        // After flattening, the outer record's field should contain a Reference
+        // to the inner record instead of an inline definition.
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Outer",
+                "namespace": "test",
+                "fields": [{
+                    "name": "inner",
+                    "type": {
+                        "type": "record",
+                        "name": "Inner",
+                        "fields": [{"name": "x", "type": "int"}]
+                    }
+                }]
+            }),
+            None,
+        )
+        .expect("parse nested record");
+
+        let (collected, top_level) = flatten_schema(schema);
+
+        // The top-level schema should be a Reference to Outer (since Outer
+        // itself is a named type that gets collected).
+        assert!(
+            matches!(&top_level, AvroSchema::Reference { name, .. } if name == "Outer"),
+            "top-level should be a Reference to Outer, got {top_level:?}"
+        );
+
+        // Two types should be collected: Inner first (depth-first), then Outer.
+        assert_eq!(collected.len(), 2, "should collect Inner and Outer");
+
+        let inner = &collected[0];
+        assert!(
+            matches!(inner, AvroSchema::Enum { name, .. } | AvroSchema::Record { name, .. } if name == "Inner"),
+            "first collected type should be Inner, got {inner:?}"
+        );
+
+        let outer = &collected[1];
+        match outer {
+            AvroSchema::Record { name, fields, .. } => {
+                assert_eq!(name, "Outer");
+                // The field's schema should now be a Reference, not an inline Record.
+                assert!(
+                    matches!(&fields[0].schema, AvroSchema::Reference { name, .. } if name == "Inner"),
+                    "Outer's 'inner' field should be a Reference to Inner, got {:?}",
+                    fields[0].schema
+                );
+            }
+            other => panic!("expected Record for Outer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flatten_deeply_nested_produces_correct_order() {
+        // Level1 -> Level2 -> Level3 -> Tag (enum). After flattening, the
+        // collected order should be depth-first: Tag, Level3, Level2, Level1.
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Level1",
+                "namespace": "test",
+                "fields": [{
+                    "name": "l2",
+                    "type": {
+                        "type": "record",
+                        "name": "Level2",
+                        "fields": [{
+                            "name": "l3",
+                            "type": {
+                                "type": "record",
+                                "name": "Level3",
+                                "fields": [{
+                                    "name": "tag",
+                                    "type": {
+                                        "type": "enum",
+                                        "name": "Tag",
+                                        "symbols": ["A", "B"]
+                                    }
+                                }]
+                            }
+                        }]
+                    }
+                }]
+            }),
+            None,
+        )
+        .expect("parse deeply nested schema");
+
+        let (collected, _top_level) = flatten_schema(schema);
+        let names: Vec<_> = collected.iter().filter_map(|s| s.name().map(str::to_string)).collect();
+        assert_eq!(
+            names,
+            vec!["Tag", "Level3", "Level2", "Level1"],
+            "types should be collected depth-first (innermost first)"
+        );
+    }
+
+    #[test]
+    fn flatten_nested_in_union_replaces_with_reference() {
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Container",
+                "namespace": "test",
+                "fields": [{
+                    "name": "payload",
+                    "type": ["null", {
+                        "type": "record",
+                        "name": "Payload",
+                        "fields": [{"name": "data", "type": "bytes"}]
+                    }]
+                }]
+            }),
+            None,
+        )
+        .expect("parse record with nested record in union");
+
+        let (collected, _top_level) = flatten_schema(schema);
+
+        // Find Container in collected types and check its union field.
+        let container = collected.iter().find(|s| s.name() == Some("Container"))
+            .expect("Container should be in collected types");
+        match container {
+            AvroSchema::Record { fields, .. } => {
+                match &fields[0].schema {
+                    AvroSchema::Union { types, .. } => {
+                        assert!(
+                            matches!(&types[1], AvroSchema::Reference { name, .. } if name == "Payload"),
+                            "union branch should be a Reference to Payload, got {:?}",
+                            types[1]
+                        );
+                    }
+                    other => panic!("expected Union, got {other:?}"),
+                }
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flatten_nested_in_array_replaces_with_reference() {
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Collection",
+                "namespace": "test",
+                "fields": [{
+                    "name": "entries",
+                    "type": {
+                        "type": "array",
+                        "items": {
+                            "type": "record",
+                            "name": "Entry",
+                            "fields": [{"name": "key", "type": "string"}]
+                        }
+                    }
+                }]
+            }),
+            None,
+        )
+        .expect("parse record with nested record in array");
+
+        let (collected, _) = flatten_schema(schema);
+        let collection = collected.iter().find(|s| s.name() == Some("Collection"))
+            .expect("Collection should be collected");
+        match collection {
+            AvroSchema::Record { fields, .. } => {
+                match &fields[0].schema {
+                    AvroSchema::Array { items, .. } => {
+                        assert!(
+                            matches!(items.as_ref(), AvroSchema::Reference { name, .. } if name == "Entry"),
+                            "array items should be a Reference to Entry, got {:?}",
+                            items
+                        );
+                    }
+                    other => panic!("expected Array, got {other:?}"),
+                }
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flatten_nested_in_map_replaces_with_reference() {
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Lookup",
+                "namespace": "test",
+                "fields": [{
+                    "name": "entries",
+                    "type": {
+                        "type": "map",
+                        "values": {
+                            "type": "record",
+                            "name": "MapEntry",
+                            "fields": [{"name": "value", "type": "int"}]
+                        }
+                    }
+                }]
+            }),
+            None,
+        )
+        .expect("parse record with nested record in map");
+
+        let (collected, _) = flatten_schema(schema);
+        let lookup = collected.iter().find(|s| s.name() == Some("Lookup"))
+            .expect("Lookup should be collected");
+        match lookup {
+            AvroSchema::Record { fields, .. } => {
+                match &fields[0].schema {
+                    AvroSchema::Map { values, .. } => {
+                        assert!(
+                            matches!(values.as_ref(), AvroSchema::Reference { name, .. } if name == "MapEntry"),
+                            "map values should be a Reference to MapEntry, got {:?}",
+                            values
+                        );
+                    }
+                    other => panic!("expected Map, got {other:?}"),
+                }
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn flatten_enum_replaces_with_reference() {
+        // A standalone enum should be collected and replaced with a reference.
+        let schema = json_to_schema(
+            &json!({
+                "type": "enum",
+                "name": "Color",
+                "namespace": "test",
+                "symbols": ["RED", "GREEN", "BLUE"]
+            }),
+            None,
+        )
+        .expect("parse enum");
+
+        let (collected, top_level) = flatten_schema(schema);
+        assert_eq!(collected.len(), 1);
+        assert!(
+            matches!(&collected[0], AvroSchema::Enum { name, .. } if name == "Color"),
+            "collected should contain the Color enum"
+        );
+        assert!(
+            matches!(&top_level, AvroSchema::Reference { name, .. } if name == "Color"),
+            "top-level should be a Reference to Color"
+        );
+    }
+
+    #[test]
+    fn flatten_primitive_is_unchanged() {
+        // Primitives have nothing to flatten; they pass through unchanged.
+        let schema = AvroSchema::Int;
+        let (collected, result) = flatten_schema(schema);
+        assert!(collected.is_empty());
+        assert_eq!(result, AvroSchema::Int);
     }
 }
