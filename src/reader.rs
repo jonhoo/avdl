@@ -1587,7 +1587,27 @@ fn unescape_java(s: &str) -> String {
                     }
                     let hex: String = chars.by_ref().take(4).collect();
                     if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(code_point) {
+                        // Surrogate pair handling: Java's `StringEscapeUtils.unescapeJava`
+                        // combines a high surrogate (\uD800-\uDBFF) followed immediately
+                        // by a low surrogate (\uDC00-\uDFFF) into a single supplementary
+                        // code point. We replicate that here.
+                        if (0xD800..=0xDBFF).contains(&code_point) {
+                            // High surrogate — peek ahead for a \uXXXX low surrogate.
+                            let combined = try_parse_low_surrogate(&mut chars)
+                                .map(|low| {
+                                    (code_point - 0xD800) * 0x400
+                                        + (low - 0xDC00)
+                                        + 0x10000
+                                });
+                            if let Some(ch) = combined.and_then(char::from_u32) {
+                                result.push(ch);
+                            } else {
+                                // Not followed by a valid low surrogate; emit the
+                                // raw high-surrogate escape as-is.
+                                result.push_str("\\u");
+                                result.push_str(&hex);
+                            }
+                        } else if let Some(ch) = char::from_u32(code_point) {
                             result.push(ch);
                         } else {
                             // Invalid code point; emit the raw escape.
@@ -1649,6 +1669,52 @@ fn unescape_java(s: &str) -> String {
     }
 
     result
+}
+
+/// Try to consume a `\uXXXX` low-surrogate escape from the iterator.
+///
+/// Called after we've already parsed a high surrogate. If the next characters
+/// are `\u` (with optional extra `u`s) followed by four hex digits in the
+/// low-surrogate range (U+DC00..U+DFFF), consumes them and returns the code
+/// point. Otherwise leaves the iterator untouched and returns `None`.
+fn try_parse_low_surrogate(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<u32> {
+    // We need to speculatively consume characters and back out if the
+    // sequence is not a valid low surrogate. Collect consumed chars so we
+    // can push them back (via a small buffer) on failure.
+    //
+    // Peekable only lets us peek one character ahead, so we clone the
+    // iterator to look ahead without consuming from the original.
+    let saved = chars.clone();
+
+    // Expect '\\'.
+    if chars.next() != Some('\\') {
+        *chars = saved;
+        return None;
+    }
+    // Expect 'u' (one or more).
+    if chars.next() != Some('u') {
+        *chars = saved;
+        return None;
+    }
+    // Skip additional 'u' characters (the Java multi-u idiom).
+    while chars.peek() == Some(&'u') {
+        chars.next();
+    }
+    // Read exactly four hex digits.
+    let hex: String = chars.by_ref().take(4).collect();
+    if hex.len() != 4 {
+        *chars = saved;
+        return None;
+    }
+    if let Ok(low) = u32::from_str_radix(&hex, 16) {
+        if (0xDC00..=0xDFFF).contains(&low) {
+            return Some(low);
+        }
+    }
+    // Not a low surrogate — restore the iterator to where we started so
+    // the caller can process these characters normally.
+    *chars = saved;
+    None
 }
 
 /// Parse an integer literal (from a JSON or schema context).
@@ -2348,6 +2414,52 @@ mod tests {
         // \uu0041 and \uuu0041 should both produce 'A'.
         assert_eq!(unescape_java(r"\uu0041"), "A");
         assert_eq!(unescape_java(r"\uuu0041"), "A");
+    }
+
+    // ------------------------------------------------------------------
+    // Unicode surrogate pairs (issue #4d730252)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn surrogate_pair_grinning_face() {
+        // \uD83D\uDE00 is the surrogate pair encoding of U+1F600
+        // (GRINNING FACE). The high surrogate 0xD83D and low surrogate
+        // 0xDE00 must be combined into a single code point.
+        assert_eq!(unescape_java(r"\uD83D\uDE00"), "\u{1F600}");
+    }
+
+    #[test]
+    fn surrogate_pair_with_multi_u() {
+        // The low surrogate can also use the multi-u Java idiom.
+        assert_eq!(unescape_java(r"\uD83D\uuDE00"), "\u{1F600}");
+    }
+
+    #[test]
+    fn lone_high_surrogate_at_end() {
+        // A high surrogate at the end of the string (no following \u)
+        // cannot form a pair. Emit the raw escape unchanged.
+        assert_eq!(unescape_java(r"\uD83D"), "\\uD83D");
+    }
+
+    #[test]
+    fn high_surrogate_followed_by_non_surrogate_escape() {
+        // \uD83D followed by \u0041 — the second escape is not a low
+        // surrogate, so both are decoded independently. The high
+        // surrogate falls through to the raw-escape path, then \u0041
+        // produces 'A'.
+        assert_eq!(unescape_java(r"\uD83D\u0041"), "\\uD83DA");
+    }
+
+    #[test]
+    fn high_surrogate_followed_by_literal_text() {
+        // A high surrogate followed by plain text, not a \u escape.
+        assert_eq!(unescape_java(r"\uD83Dhello"), "\\uD83Dhello");
+    }
+
+    #[test]
+    fn surrogate_pair_musical_symbol_g_clef() {
+        // U+1D11E (MUSICAL SYMBOL G CLEF) = \uD834\uDD1E.
+        assert_eq!(unescape_java(r"\uD834\uDD1E"), "\u{1D11E}");
     }
 
     // ------------------------------------------------------------------
