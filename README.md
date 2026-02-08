@@ -14,7 +14,7 @@ avdl idl input.avdl output.avpr
 avdl idl2schemata input.avdl outdir/
 
 # stdin/stdout
-cat input.avdl | avdl idl
+avdl idl < input.avdl
 
 # additional import search paths
 avdl idl --import-dir ./extra/ input.avdl
@@ -33,14 +33,27 @@ cargo build
 cargo run -- idl input.avdl
 ```
 
+## Testing
+
+```sh
+cargo test
+```
+
+The integration tests parse the same `.avdl` input files shipped in
+the [Apache Avro](https://github.com/apache/avro/) test suite and
+compare output semantically against the expected `.avpr`/`.avsc`
+reference files. All test cases pass, alongside unit tests for
+serialization, error reporting, and edge cases. The tool is functional
+but young — bug reports are welcome.
+
 ## Intentional divergences from Java
 
 This tool aims for semantic correctness against the Java `avro-tools`
 output, but deliberately differs in a few ways:
 
-- **JSON formatting is not byte-identical.** Whitespace, key ordering
-  within objects, and array line-breaking style may differ. The output
-  parses to the same logical structure.
+- **JSON formatting is not byte-identical.** Whitespace and array
+  line-breaking style may differ. The output parses to the same
+  logical structure.
 
 - **Import search paths replace Java classpath.** avro-tools resolves
   `import` paths via the JVM classpath; this tool uses explicit
@@ -86,9 +99,12 @@ Key upstream sources this port is based on:
 - [IdlReader.java](https://github.com/apache/avro/blob/c499eefb48aa2db906c7bca14a047223806f36db/lang/java/idl/src/main/java/org/apache/avro/idl/IdlReader.java) — the Java IDL transformer
 - [Idl.g4](https://github.com/apache/avro/blob/c499eefb48aa2db906c7bca14a047223806f36db/share/idl_grammar/org/apache/avro/idl/Idl.g4) — the ANTLR grammar for Avro IDL
 
-## Origin
+## Background
 
-The initial version of this crate was [implemented live on
-YouTube](https://youtu.be/vmKvw73V394).
-The stream ends at commit
-[`fac28dd`](https://github.com/apache/avro/commit/fac28dd2dcbdf6f6a12abd5a99a2f290fcf29ae6).
+The initial version of this crate was built during a [live stream on
+YouTube](https://youtu.be/vmKvw73V394). The live stream ends at
+commit [`fac28dd`](https://github.com/jonhoo/avdl/commit/fac28dd).
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
