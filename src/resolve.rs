@@ -167,48 +167,72 @@ impl SchemaRegistry {
     pub fn validate_references(&self) -> Vec<String> {
         let mut unresolved = Vec::new();
         for schema in self.schemas.values() {
-            self.collect_unresolved(schema, &mut unresolved);
+            collect_unresolved_refs(schema, &self.schemas, &mut unresolved);
         }
         unresolved.sort();
         unresolved.dedup();
         unresolved
     }
 
-    /// Recursively walk a schema tree and collect any `Reference` names that
-    /// don't correspond to a registered type.
-    fn collect_unresolved(&self, schema: &AvroSchema, unresolved: &mut Vec<String>) {
-        match schema {
-            AvroSchema::Reference {
-                name, namespace, ..
-            } => {
-                let full_name = match namespace {
-                    Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                    _ => name.clone(),
-                };
-                if !self.schemas.contains_key(&full_name) {
-                    unresolved.push(full_name);
-                }
+    /// Validate that all `AvroSchema::Reference` nodes in the given schema
+    /// point to types registered in this registry. Returns a sorted,
+    /// deduplicated list of unresolved names (empty if everything resolves).
+    ///
+    /// This is used to validate schemas that are *not* themselves registered
+    /// in the registry -- specifically, the top-level schema from
+    /// `IdlFile::SchemaFile`, which is stored separately and would otherwise
+    /// escape validation by `validate_references`.
+    pub fn validate_schema(&self, schema: &AvroSchema) -> Vec<String> {
+        let mut unresolved = Vec::new();
+        collect_unresolved_refs(schema, &self.schemas, &mut unresolved);
+        unresolved.sort();
+        unresolved.dedup();
+        unresolved
+    }
+}
+
+/// Recursively walk a schema tree and collect any `Reference` names that
+/// don't correspond to a known type in the provided name set.
+///
+/// This is the core validation logic shared by both `validate_references`
+/// (which checks registered schemas) and `validate_schema` (which checks
+/// an arbitrary schema against the registry).
+fn collect_unresolved_refs(
+    schema: &AvroSchema,
+    known: &IndexMap<String, AvroSchema>,
+    unresolved: &mut Vec<String>,
+) {
+    match schema {
+        AvroSchema::Reference {
+            name, namespace, ..
+        } => {
+            let full_name = match namespace {
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.clone(),
+            };
+            if !known.contains_key(&full_name) {
+                unresolved.push(full_name);
             }
-            AvroSchema::Record { fields, .. } => {
-                for field in fields {
-                    self.collect_unresolved(&field.schema, unresolved);
-                }
-            }
-            AvroSchema::Array { items, .. } => {
-                self.collect_unresolved(items, unresolved);
-            }
-            AvroSchema::Map { values, .. } => {
-                self.collect_unresolved(values, unresolved);
-            }
-            AvroSchema::Union { types, .. } => {
-                for t in types {
-                    self.collect_unresolved(t, unresolved);
-                }
-            }
-            // Primitives, logical types, enums, and fixed types contain no
-            // nested schema references to validate.
-            _ => {}
         }
+        AvroSchema::Record { fields, .. } => {
+            for field in fields {
+                collect_unresolved_refs(&field.schema, known, unresolved);
+            }
+        }
+        AvroSchema::Array { items, .. } => {
+            collect_unresolved_refs(items, known, unresolved);
+        }
+        AvroSchema::Map { values, .. } => {
+            collect_unresolved_refs(values, known, unresolved);
+        }
+        AvroSchema::Union { types, .. } => {
+            for t in types {
+                collect_unresolved_refs(t, known, unresolved);
+            }
+        }
+        // Primitives, logical types, enums, and fixed types contain no
+        // nested schema references to validate.
+        _ => {}
     }
 }
 
@@ -597,5 +621,134 @@ mod tests {
             properties: IndexMap::new(),
         });
         assert!(result.is_ok());
+    }
+
+    // =========================================================================
+    // validate_schema tests (external schema validation)
+    // =========================================================================
+
+    #[test]
+    fn test_validate_schema_detects_top_level_unresolved_reference() {
+        // Simulates `schema DoesNotExist;` -- the top-level schema is a
+        // Reference that is not in the registry.
+        let reg = SchemaRegistry::new();
+        let schema = AvroSchema::Reference {
+            name: "DoesNotExist".to_string(),
+            namespace: Some("com.example".to_string()),
+            properties: IndexMap::new(),
+        };
+        let unresolved = reg.validate_schema(&schema);
+        assert_eq!(unresolved, vec!["com.example.DoesNotExist"]);
+    }
+
+    #[test]
+    fn test_validate_schema_resolves_registered_reference() {
+        // The schema references a type that IS in the registry -- no error.
+        let mut reg = SchemaRegistry::new();
+        reg.register(AvroSchema::Record {
+            name: "MyRecord".to_string(),
+            namespace: Some("com.example".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        })
+        .unwrap();
+
+        let schema = AvroSchema::Reference {
+            name: "MyRecord".to_string(),
+            namespace: Some("com.example".to_string()),
+            properties: IndexMap::new(),
+        };
+        let unresolved = reg.validate_schema(&schema);
+        assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn test_validate_schema_detects_nested_unresolved_in_array() {
+        // Simulates `schema array<DoesNotExist>;`
+        let reg = SchemaRegistry::new();
+        let schema = AvroSchema::Array {
+            items: Box::new(AvroSchema::Reference {
+                name: "DoesNotExist".to_string(),
+                namespace: None,
+                properties: IndexMap::new(),
+            }),
+            properties: IndexMap::new(),
+        };
+        let unresolved = reg.validate_schema(&schema);
+        assert_eq!(unresolved, vec!["DoesNotExist"]);
+    }
+
+    #[test]
+    fn test_validate_schema_detects_nested_unresolved_in_map() {
+        // Simulates `schema map<DoesNotExist>;`
+        let reg = SchemaRegistry::new();
+        let schema = AvroSchema::Map {
+            values: Box::new(AvroSchema::Reference {
+                name: "Missing".to_string(),
+                namespace: Some("org.test".to_string()),
+                properties: IndexMap::new(),
+            }),
+            properties: IndexMap::new(),
+        };
+        let unresolved = reg.validate_schema(&schema);
+        assert_eq!(unresolved, vec!["org.test.Missing"]);
+    }
+
+    #[test]
+    fn test_validate_schema_detects_nested_unresolved_in_union() {
+        // Simulates `schema union { null, DoesNotExist };`
+        let reg = SchemaRegistry::new();
+        let schema = AvroSchema::Union {
+            types: vec![
+                AvroSchema::Null,
+                AvroSchema::Reference {
+                    name: "Missing".to_string(),
+                    namespace: None,
+                    properties: IndexMap::new(),
+                },
+            ],
+            is_nullable_type: false,
+        };
+        let unresolved = reg.validate_schema(&schema);
+        assert_eq!(unresolved, vec!["Missing"]);
+    }
+
+    #[test]
+    fn test_validate_schema_passes_for_primitives() {
+        // Primitives have no references to resolve.
+        let reg = SchemaRegistry::new();
+        assert!(reg.validate_schema(&AvroSchema::Int).is_empty());
+        assert!(reg.validate_schema(&AvroSchema::String).is_empty());
+        assert!(reg.validate_schema(&AvroSchema::Null).is_empty());
+    }
+
+    #[test]
+    fn test_validate_schema_namespace_mismatch() {
+        // Simulates `schema MyRecord;` where MyRecord is registered under a
+        // different namespace than the reference expects.
+        let mut reg = SchemaRegistry::new();
+        reg.register(AvroSchema::Record {
+            name: "MyRecord".to_string(),
+            namespace: Some("com.other".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        })
+        .unwrap();
+
+        // The reference resolves to `com.example.MyRecord`, but the registry
+        // only has `com.other.MyRecord`.
+        let schema = AvroSchema::Reference {
+            name: "MyRecord".to_string(),
+            namespace: Some("com.example".to_string()),
+            properties: IndexMap::new(),
+        };
+        let unresolved = reg.validate_schema(&schema);
+        assert_eq!(unresolved, vec!["com.example.MyRecord"]);
     }
 }

@@ -129,7 +129,29 @@ fn run_idl(
     // cross-namespace references that need fully-qualified names. Java's
     // IdlReader treats these as fatal errors ("Undefined name/schema"),
     // so we do the same.
-    let unresolved = registry.validate_references();
+    let mut unresolved = registry.validate_references();
+
+    // The `SchemaFile` and `NamedSchemasFile` variants store their top-level
+    // schemas outside the registry, so `validate_references` alone misses
+    // unresolved references in them. For example, `schema DoesNotExist;`
+    // produces an unresolved `Reference` that is never registered. We check
+    // these separately to match Java's "Undefined schema" error.
+    match &idl_file {
+        IdlFile::SchemaFile(schema) => {
+            unresolved.extend(registry.validate_schema(schema));
+        }
+        IdlFile::NamedSchemasFile(schemas) => {
+            for schema in schemas {
+                unresolved.extend(registry.validate_schema(schema));
+            }
+        }
+        IdlFile::ProtocolFile(_) => {
+            // Protocol types are already in the registry; no extra check needed.
+        }
+    }
+
+    unresolved.sort();
+    unresolved.dedup();
     if !unresolved.is_empty() {
         return Err(IdlError::Other(format!(
             "Undefined name: {}",
@@ -153,7 +175,7 @@ fn run_idl2schemata(
     import_dirs: Vec<PathBuf>,
 ) -> miette::Result<()> {
     let (source, input_dir, input_path) = read_input(&Some(input))?;
-    let (_idl_file, registry) = parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
+    let (idl_file, registry) = parse_and_resolve(&source, &input_dir, input_path, import_dirs)?;
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
     fs::create_dir_all(&output_dir)
@@ -205,7 +227,25 @@ fn run_idl2schemata(
     // Validate that all type references resolved, matching the `idl`
     // subcommand's behavior. Without this, unresolved references silently
     // produce bare name strings in the output `.avsc` files.
-    let unresolved = registry.validate_references();
+    let mut unresolved = registry.validate_references();
+
+    // Also validate the top-level schema from `SchemaFile` / `NamedSchemasFile`,
+    // which is not registered in the registry and would otherwise escape
+    // validation. See the equivalent check in `run_idl` for details.
+    match &idl_file {
+        IdlFile::SchemaFile(schema) => {
+            unresolved.extend(registry.validate_schema(schema));
+        }
+        IdlFile::NamedSchemasFile(schemas) => {
+            for schema in schemas {
+                unresolved.extend(registry.validate_schema(schema));
+            }
+        }
+        IdlFile::ProtocolFile(_) => {}
+    }
+
+    unresolved.sort();
+    unresolved.dedup();
     if !unresolved.is_empty() {
         return Err(IdlError::Other(format!(
             "Undefined name: {}",
