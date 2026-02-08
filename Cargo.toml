@@ -4,6 +4,7 @@ version = "0.1.0+1.12.1"
 edition = "2024"
 description = "Port of avro-tools' Avro IDL compiler that compiles .avdl files to Avro Protocol JSON (.avpr) or Schema JSON (.avsc)"
 license = "Apache-2.0"
+homepage = "https://github.com/jonhoo/avdl"
 repository = "https://github.com/jonhoo/avdl"
 keywords = ["avro", "idl", "schema", "compiler"]
 categories = ["command-line-utilities", "compilers", "parser-implementations"]
@@ -20,6 +21,11 @@ serde_json = "1"
 
 [profile.release]
 debug = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [dev-dependencies]
 assert_cmd = "2.1.2"
