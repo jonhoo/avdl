@@ -109,26 +109,56 @@ impl std::fmt::Display for Warning {
 // each syntax error's line/column/message. After parsing, we check the
 // collected errors and return an error if any were found.
 
+/// A collected ANTLR syntax error with byte offset information for source
+/// highlighting via miette.
+struct SyntaxError {
+    /// Byte offset of the offending token's start in the source text.
+    offset: usize,
+    /// Byte length of the offending token.
+    length: usize,
+    /// The ANTLR error message (e.g., "mismatched input '}' expecting {';', ','}").
+    message: String,
+}
+
 /// An ANTLR error listener that collects syntax errors into a shared `Vec`
 /// instead of printing them to stderr. This lets us detect parse errors after
 /// `parser.idlFile()` returns and fail with a proper error.
 struct CollectingErrorListener {
-    errors: Rc<RefCell<Vec<String>>>,
+    errors: Rc<RefCell<Vec<SyntaxError>>>,
 }
 
 impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
     fn syntax_error(
         &self,
         _recognizer: &T,
-        _offending_symbol: Option<&<T::TF as TokenFactory<'a>>::Inner>,
+        offending_symbol: Option<&<T::TF as TokenFactory<'a>>::Inner>,
         line: isize,
         column: isize,
         msg: &str,
         _error: Option<&antlr4rust::errors::ANTLRError>,
     ) {
-        self.errors
-            .borrow_mut()
-            .push(format!("line {line}:{column} {msg}"));
+        // Extract byte offsets from the offending token when available. These
+        // give us a precise source span for miette to underline. When the token
+        // is absent (e.g., lexer errors), we fall back to zero-length.
+        let (offset, length) = offending_symbol
+            .map(|tok| {
+                let start = tok.get_start();
+                let stop = tok.get_stop();
+                if start >= 0 && stop >= start {
+                    (start as usize, (stop - start + 1) as usize)
+                } else if start >= 0 {
+                    (start as usize, 1)
+                } else {
+                    (0, 0)
+                }
+            })
+            .unwrap_or((0, 0));
+
+        self.errors.borrow_mut().push(SyntaxError {
+            offset,
+            length,
+            message: format!("line {line}:{column} {msg}"),
+        });
     }
 }
 
@@ -218,7 +248,7 @@ pub fn parse_idl_named(
     // removes the default listener and installs one that throws on any error.
     // We collect instead of throwing because ANTLR's error recovery may still
     // produce a usable parse tree, but we'll fail after parsing completes.
-    let syntax_errors: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let syntax_errors: Rc<RefCell<Vec<SyntaxError>>> = Rc::new(RefCell::new(Vec::new()));
     parser.remove_error_listeners();
     parser.add_error_listener(Box::new(CollectingErrorListener {
         errors: Rc::clone(&syntax_errors),
@@ -232,24 +262,20 @@ pub fn parse_idl_named(
     // Check for ANTLR syntax errors collected during parsing. Any syntax error
     // means the input is malformed, even if ANTLR's error recovery produced a
     // parse tree. This matches Java's behavior of throwing on the first error.
+    //
+    // We report only the first error. Java also fails on the first syntax error,
+    // and ANTLR recovery tends to produce cascading noise after the first real
+    // problem. Multi-error highlighting via miette's `related()` can be added
+    // later if needed.
     let collected_errors = RefCell::borrow(&syntax_errors);
     if !collected_errors.is_empty() {
-        let error_msg = if collected_errors.len() == 1 {
-            format!("{}: {}", source_name, collected_errors[0])
-        } else {
-            let mut msg = format!(
-                "{}: {} syntax errors:\n",
-                source_name,
-                collected_errors.len()
-            );
-            for err in collected_errors.iter() {
-                msg.push_str("  ");
-                msg.push_str(err);
-                msg.push('\n');
-            }
-            msg
-        };
-        miette::bail!("parse error: {error_msg}");
+        let first = &collected_errors[0];
+        return Err(ParseDiagnostic {
+            src: miette::NamedSource::new(source_name, input.to_string()),
+            span: miette::SourceSpan::new(first.offset.into(), first.length),
+            message: first.message.clone(),
+        }
+        .into());
     }
     drop(collected_errors);
 

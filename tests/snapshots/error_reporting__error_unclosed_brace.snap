@@ -1,6 +1,14 @@
 ---
 source: tests/error_reporting.rs
-assertion_line: 103
 expression: error
 ---
-parse error: <input>: line 1:32 extraneous input '<EOF>' expecting {DocComment, 'protocol', 'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', 'error', 'record', 'array', 'map', 'union', 'boolean', 'int', 'long', 'float', 'double', 'string', 'bytes', 'null', 'true', 'false', 'decimal', 'date', 'time_ms', 'timestamp_ms', 'local_timestamp_ms', 'uuid', 'void', 'oneway', 'throws', 'decimal', 'date', 'time_ms', 'timestamp_ms', 'local_timestamp_ms', 'uuid', 'void', '}', '@', IdentifierToken}
+  x line 1:32 extraneous input '<EOF>' expecting {DocComment, 'protocol',
+  | 'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', 'error',
+  | 'record', 'array', 'map', 'union', 'boolean', 'int', 'long', 'float',
+  | 'double', 'string', 'bytes', 'null', 'true', 'false', 'decimal', 'date',
+  | 'time_ms', 'timestamp_ms', 'local_timestamp_ms', 'uuid', 'void', 'oneway',
+  | 'throws', 'decimal', 'date', 'time_ms', 'timestamp_ms',
+  | 'local_timestamp_ms', 'uuid', 'void', '}', '@', IdentifierToken}
+   ,-[<input>:1:33]
+ 1 | protocol P { record R { int x; }
+   `----

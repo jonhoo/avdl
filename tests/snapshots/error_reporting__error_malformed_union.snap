@@ -1,6 +1,15 @@
 ---
 source: tests/error_reporting.rs
-assertion_line: 111
 expression: error
 ---
-parse error: <input>: line 1:37 extraneous input ',' expecting {'protocol', 'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', 'error', 'record', 'array', 'map', 'union', 'boolean', 'int', 'long', 'float', 'double', 'string', 'bytes', 'null', 'true', 'false', 'decimal', 'date', 'time_ms', 'timestamp_ms', 'local_timestamp_ms', 'uuid', 'void', 'oneway', 'throws', '@', IdentifierToken}
+  x line 1:37 extraneous input ',' expecting {'protocol', 'namespace',
+  | 'import', 'idl', 'schema', 'enum', 'fixed', 'error', 'record', 'array',
+  | 'map', 'union', 'boolean', 'int', 'long', 'float', 'double', 'string',
+  | 'bytes', 'null', 'true', 'false', 'decimal', 'date', 'time_ms',
+  | 'timestamp_ms', 'local_timestamp_ms', 'uuid', 'void', 'oneway', 'throws',
+  | '@', IdentifierToken}
+   ,-[<input>:1:38]
+ 1 | protocol P { record R { union { int, , string } x; } }
+   :                                      |
+   :                                      `-- line 1:37 extraneous input ',' expecting {'protocol', 'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', 'error', 'record', 'array', 'map', 'union', 'boolean', 'int', 'long', 'float', 'double', 'string', 'bytes', 'null', 'true', 'false', 'decimal', 'date', 'time_ms', 'timestamp_ms', 'local_timestamp_ms', 'uuid', 'void', 'oneway', 'throws', '@', IdentifierToken}
+   `----
