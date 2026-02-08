@@ -740,23 +740,83 @@ pub fn format_f64_like_java(val: f64) -> String {
         return ryu::Buffer::new().format(val).to_string();
     }
 
-    // Use Rust's {:E} formatter to get scientific notation, then adjust to
-    // match Java's format. Rust produces e.g. "-1E12" or "1.23456E10", but
-    // Java always includes a decimal point in the significand: "-1.0E12".
-    let formatted = format!("{val:E}");
+    // Use `ryu` to get the shortest round-trip decimal representation, matching
+    // Java's `Double.toString()` which also uses the Ryu algorithm (since JDK 12).
+    // Rust's `format!("{val:E}")` uses a different algorithm (Dragon4 family) that
+    // can produce different significands for extreme edge cases like 4.9e-324 and
+    // 1.0000000000000002e15.
+    let mut ryu_buf = ryu::Buffer::new();
+    let ryu_str = ryu_buf.format(val);
 
-    // Find the 'E' separator to split significand and exponent.
-    let e_pos = formatted
-        .find('E')
-        .expect("format {:E} always produces an 'E'");
-    let (significand, exponent_part) = formatted.split_at(e_pos);
+    // Ryu may already use scientific notation (lowercase 'e') for extreme values,
+    // or it may prefer decimal even though Java's thresholds require scientific.
+    // In either case, we convert to uppercase 'E' scientific notation.
+    if let Some(e_pos) = ryu_str.find('e') {
+        // Ryu already chose scientific notation — just uppercase the 'e'.
+        let (significand, exp_with_e) = ryu_str.split_at(e_pos);
+        let exponent = &exp_with_e[1..];
 
-    // If the significand lacks a decimal point, insert ".0" before the E.
-    // For example, "-1E12" becomes "-1.0E12".
-    if significand.contains('.') {
-        formatted
+        // Java always includes a decimal point in the significand (e.g., "1.0E7").
+        if significand.contains('.') {
+            format!("{significand}E{exponent}")
+        } else {
+            format!("{significand}.0E{exponent}")
+        }
     } else {
-        format!("{significand}.0{exponent_part}")
+        // Ryu chose decimal notation (e.g., "1000000000000000.2" or "0.0001")
+        // but Java's thresholds require scientific. Convert ryu's decimal output
+        // to scientific notation, preserving ryu's significant digits rather than
+        // falling back to Rust's {:E} (which uses a different algorithm).
+        decimal_to_scientific(ryu_str)
+    }
+}
+
+/// Convert a ryu decimal string (e.g., `"1000000000000000.2"` or `"0.0001"`)
+/// to uppercase scientific notation (e.g., `"1.0000000000000002E15"` or `"1.0E-4"`).
+///
+/// This preserves ryu's significant digits rather than re-formatting through Rust's
+/// `{:E}`, which uses a different algorithm that can produce different significands
+/// for some edge cases.
+fn decimal_to_scientific(ryu_str: &str) -> String {
+    // Handle negative sign.
+    let (sign, digits_str) = if let Some(rest) = ryu_str.strip_prefix('-') {
+        ("-", rest)
+    } else {
+        ("", ryu_str)
+    };
+
+    // Split into integer and fractional parts. Ryu always includes a decimal point
+    // for values it formats in decimal notation.
+    let (int_part, frac_part) = match digits_str.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (digits_str, ""),
+    };
+
+    // Combine all significant digits (without the decimal point).
+    let all_digits = format!("{int_part}{frac_part}");
+
+    // Find the first non-zero digit to locate the leading significant digit.
+    // For values >= 1.0 the integer part always starts with a non-zero digit;
+    // for values < 1.0 (like "0.0001") there may be leading zeros.
+    let first_nonzero = all_digits
+        .find(|c: char| c != '0')
+        .unwrap_or(0);
+    let significant_digits = &all_digits[first_nonzero..];
+
+    // The exponent is determined by how far the original decimal point is from
+    // the first significant digit. The decimal point sat after `int_part.len()`
+    // digits in `all_digits`.
+    let exponent = int_part.len() as i64 - first_nonzero as i64 - 1;
+
+    // Build the significand: first digit, ".", then remaining digits.
+    // Trim trailing zeros from the fractional part of the significand.
+    let sig_first = &significant_digits[..1];
+    let sig_rest = significant_digits[1..].trim_end_matches('0');
+
+    if sig_rest.is_empty() {
+        format!("{sign}{sig_first}.0E{exponent}")
+    } else {
+        format!("{sign}{sig_first}.{sig_rest}E{exponent}")
     }
 }
 
@@ -2210,5 +2270,83 @@ mod tests {
             json_str.contains("16"),
             "expected 16, got: {json_str}"
         );
+    }
+
+    // =========================================================================
+    // format_f64_like_java: ryu-based scientific notation edge cases
+    //
+    // These test values where Rust's {:E} and the ryu crate produce different
+    // significands. The ryu-based path should match Java's Double.toString()
+    // for all values where the ryu crate agrees with Java's Ryu algorithm.
+    // =========================================================================
+
+    #[test]
+    fn ryu_edge_case_1e15_with_trailing_significand() {
+        // 1.0000000000000002e15: ryu produces "1000000000000000.2" (decimal),
+        // which decimal_to_scientific converts to "1.0000000000000002E15".
+        // Rust's {:E} would produce "1.0000000000000003E15" (different significand).
+        assert_eq!(
+            format_f64_like_java(1.0000000000000002e15),
+            "1.0000000000000002E15"
+        );
+    }
+
+    #[test]
+    fn ryu_edge_case_f64_max() {
+        assert_eq!(
+            format_f64_like_java(f64::MAX),
+            "1.7976931348623157E308"
+        );
+    }
+
+    #[test]
+    fn ryu_edge_case_f64_min_positive() {
+        // The smallest positive normalized f64.
+        assert_eq!(
+            format_f64_like_java(f64::MIN_POSITIVE),
+            "2.2250738585072014E-308"
+        );
+    }
+
+    // =========================================================================
+    // decimal_to_scientific: unit tests for the conversion helper
+    // =========================================================================
+
+    #[test]
+    fn decimal_to_scientific_large_with_fraction() {
+        assert_eq!(
+            decimal_to_scientific("1000000000000000.2"),
+            "1.0000000000000002E15"
+        );
+    }
+
+    #[test]
+    fn decimal_to_scientific_large_integer() {
+        assert_eq!(decimal_to_scientific("1000000000000.0"), "1.0E12");
+    }
+
+    #[test]
+    fn decimal_to_scientific_negative_large() {
+        assert_eq!(decimal_to_scientific("-1000000000000.0"), "-1.0E12");
+    }
+
+    #[test]
+    fn decimal_to_scientific_boundary_1e7() {
+        assert_eq!(decimal_to_scientific("10000000.0"), "1.0E7");
+    }
+
+    #[test]
+    fn decimal_to_scientific_multiple_sig_digits() {
+        assert_eq!(decimal_to_scientific("12345600000.0"), "1.23456E10");
+    }
+
+    #[test]
+    fn decimal_to_scientific_small_positive() {
+        assert_eq!(decimal_to_scientific("0.0001"), "1.0E-4");
+    }
+
+    #[test]
+    fn decimal_to_scientific_small_negative() {
+        assert_eq!(decimal_to_scientific("-0.0000789"), "-7.89E-5");
     }
 }
