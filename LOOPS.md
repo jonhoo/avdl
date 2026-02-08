@@ -31,3 +31,15 @@ batch on main in a single Wave 1 commit — no sub-agents needed.
 **Result**: 5 issues closed, 201 unit + 39 integration tests passing,
 all 18 golden files passing. 7 non-functional issues remain (same set
 as iteration 2 — no new functional issues to find).
+
+## Iteration 4 (2026-02-08)
+
+Phase 1 explored schema mode, messages/imports, and default values.
+Found 2 functional bugs and 1 design-choice difference. Agent A fixed
+schema mode reference validation (unresolved `schema <type>;` now
+errors). Agent B added recursive named-type registration from imported
+`.avsc`/`.avpr` files.
+
+**Result**: 2 functional issues closed, 216 unit + 39 integration
+tests passing, all 18 golden files passing. 8 non-functional/design
+issues remain.
