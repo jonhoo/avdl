@@ -319,3 +319,97 @@ fn test_error_import_nonexistent_file() {
     );
     insta::assert_snapshot!(errors.join("\n"));
 }
+
+// ==============================================================================
+// Mutation Error Tests (Slight Variations of Valid IDL)
+// ==============================================================================
+
+/// Semicolon replaced with a comma in a field declaration. This is a common
+/// typo when switching between languages (e.g., Go struct syntax uses commas).
+#[test]
+fn test_error_semicolon_replaced_with_comma() {
+    let input = "protocol P { record R { int x, } }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Missing semicolon between two field declarations. The parser should detect
+/// that the second field's type name appears where a separator was expected.
+#[test]
+fn test_error_missing_field_separator() {
+    let input = "protocol P { record R { int x int y; } }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Extra closing brace after the protocol. The parser should report that
+/// unexpected input follows the valid protocol definition.
+#[test]
+fn test_error_extra_closing_brace() {
+    let input = "protocol P { record R { int x; } } }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Missing record name — the opening brace appears where a name identifier
+/// is expected.
+#[test]
+fn test_error_missing_record_name() {
+    let input = "protocol P { record { int x; } }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Misspelled `protocol` keyword. The parser should fail because `protocl` is
+/// not a recognized keyword or valid start of a schema/protocol declaration.
+#[test]
+fn test_error_misspelled_keyword() {
+    let input = "protocl P { record R { int x; } }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Missing type for a field — just a bare identifier where a type name should
+/// precede the field name.
+#[test]
+fn test_error_missing_field_type() {
+    let input = "protocol P { record R { x; } }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Enum symbols without commas between them. Avro IDL enums require commas
+/// separating symbols.
+#[test]
+fn test_error_missing_enum_commas() {
+    let input = "protocol P { enum E { A B C } }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Semicolons used instead of commas in enum body — a common mistake when
+/// confusing record field syntax with enum symbol syntax.
+#[test]
+fn test_error_semicolons_in_enum() {
+    let input = "protocol P { enum E { A; B; C } }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Fixed declaration missing the size argument in parentheses. The parser
+/// should report that a `(` or size is expected after the fixed name.
+#[test]
+fn test_error_missing_fixed_size() {
+    let input = "protocol P { fixed F; }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Unclosed parenthesis in a fixed declaration — `(` is opened but `)` is
+/// missing before the semicolon.
+#[test]
+fn test_error_unclosed_paren() {
+    let input = "protocol P { fixed F(16; }";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
