@@ -26,6 +26,8 @@ Launch many sub-agents (blocking, in `main/`) for **open-ended exploration** of 
 - Exploring edge cases, error paths, unusual inputs, and uncommon IDL features for both subcommands
 - Reading the Java source (`IdlReader.java`, `IdlToSchemataTool.java`) to spot behaviors not yet ported
 - Auditing code quality, error handling, and test coverage
+- Scanning for `TODO` comments in `src/` that flag deferred work now
+  worth addressing
 
 Each agent should pursue its own line of investigation autonomously. If it finds a discrepancy, it does first-level triage (identify root cause, affected files) and files an issue under `issues/`.
 
@@ -39,7 +41,7 @@ Each agent should pursue its own line of investigation autonomously. If it finds
 - Avoid modifying `src/` to prevent agents stepping on each others'
   toes — prefer filing issues and using `tmp/` + `examples/`
 - Do not update `SESSION.md`, that will be done by the orchestrating
-  agent. Instead, anything you an agent _would_ have put in `SESSION.md`
+  agent. Instead, anything an agent _would_ have put in `SESSION.md`
   should be reported to the orchestrating agent.
 - **Check existing issues before filing** — read the contents of each
   file in `issues/` to avoid filing duplicates. Also check SESSION.md
@@ -53,11 +55,13 @@ Each agent should pursue its own line of investigation autonomously. If it finds
 section in CLAUDE.md, or use `scripts/compare-golden.sh`.
 
 **After agents complete:**
-1. Review new files in `issues/` — deduplicate against existing issues
+1. Review new files in `issues/` — deduplicate against existing issues.
+   Discovery agents often rediscover the same problems, so budget time
+   for deduplication even when agents check existing issues before filing.
 2. Review SESSION.md for observations that warrant new issues
 3. Clear SESSION.md of anything that's now covered by issues
 4. Commit all new issue entries using `commit-writer` skill
-5. **If no new issues were filed → STOP the loop entirely**
+5. **If no new issues were filed, STOP the loop entirely**
 
 ### Phase 2: Issue Resolution
 
@@ -79,9 +83,12 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
      merging. To minimize conflicts, order merges so that additive
      changes (new tests, new functions) merge before transformative
      changes (refactors, renames).
-   - Small, self-contained fixes to the same file (e.g., `main.rs`
-     one-liners) can often be batched into a single wave and applied
-     sequentially by the parent agent without sub-agents.
+   - **Batch small fixes**: Small, self-contained fixes to the same
+     file (e.g., `main.rs` one-liners) can often be batched into a
+     single wave and applied sequentially by the parent agent without
+     sub-agents. If all issues in a wave are 5-15 line changes to
+     distinct parts of the same files, apply them directly on main —
+     this is significantly faster than the multi-agent approach.
 
 3. **For each wave:**
    a. **Prepare worktrees** (not in sub-agents):
@@ -105,16 +112,23 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
       - Cleans up debug examples
       - Stages changes with `git add <specific-files>`
       - Commits using the `commit-writer` skill
+      - If modifying library code (e.g., `reader.rs`), use
+        `touch src/reader.rs` before `cargo test` if test results
+        seem stale — build caches sometimes miss recompilation.
+      - When fixing a bug in `main.rs`, check whether test helpers
+        (`parse_idl2schemata`, `process_decl_items_test`) have the
+        same bug. Past iterations had divergence from updating
+        `main.rs` without updating the test helper.
 
-      **Sub-agent permission limitations:** Sub-agents launched with
-      `run_in_background` cannot perform interactive operations — `git
-      commit`, writing to `/tmp`, and using skills (like
-      `commit-writer`) are all auto-denied because permission prompts
-      cannot reach the user. Blocking (non-background) sub-agents should
-      be preferred as they CAN do these things since permission prompts
-      are forwarded to the user. However, the parent agent must still
-      prepare the worktree (git checkout) before launching either kind
-      of sub-agent.
+      > **Sub-agent permissions:** Sub-agents launched with
+      > `run_in_background` cannot perform interactive operations —
+      > `git commit`, writing to `/tmp`, and using skills (like
+      > `commit-writer`) are all auto-denied because permission
+      > prompts cannot reach the user. Use blocking (non-background)
+      > sub-agents, which forward permission prompts to the user.
+      > The parent agent must still prepare the worktree (git
+      > checkout) before launching either kind.
+
    c. After each sub-agent completes, the **parent agent**:
       - Checks the worktree's `SESSION.md` for observations the
         sub-agent recorded. Incorporate relevant findings into `main`'s
@@ -126,9 +140,13 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
         ```
    d. Verify: `cargo test` in main
    e. If merge conflicts occur (common when multiple agents in a wave
-      modify the same file), resolve them before proceeding. Prefer
+      modify the same file — especially test files like
+      `integration.rs`), resolve them before proceeding. Prefer
       merging additive changes first to create a clean base for
-      subsequent merges.
+      subsequent merges. For files heavily modified by prior merges
+      (e.g., `reader.rs` test section), consider `git checkout --ours`
+      and manually applying the branch's additions — this is often
+      faster and safer than resolving inline conflict markers.
 
 4. Repeat for each wave until all grouped issues are resolved.
 
@@ -137,7 +155,15 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
 After all waves complete:
 
 1. **Update resolved issues**: Remove issue files for fixes that were
-   merged. Also close any issues that are non-goals (see CLAUDE.md).
+   merged. Also close issues that are non-goals (see CLAUDE.md):
+   design-choice differences from Java should be closed rather than
+   carried forward; low-impact domain model gaps with zero effect on
+   JSON output can be closed with a TODO comment in the code. Re-verify
+   remaining open issues against the current code — discovery-filed
+   issues go stale quickly as fixes land.
+   For a deeper retrospective audit of closed issues (run periodically
+   at the user's request, not every iteration), see
+   `workflow-prompts/closed-issue-audit.md`.
 2. **Update existing issue files**: Enrich remaining issues with any
    new information learned during the iteration (e.g., partially
    addressed gaps, updated priorities).
@@ -151,8 +177,8 @@ After all waves complete:
    was friction during this iteration. Update this file with any
    improvements — better instructions, new tips, corrected
    assumptions. Commit the change.
-6. Append a very very brief summary of the loop to `LOOPS.md` for the
-   user to peruse later.
+6. Append a brief summary of the loop to `agent-logs/LOOPS.md` for
+   the user to peruse later.
 7. **Return to Phase 1** for the next iteration.
 
 ---
@@ -165,40 +191,15 @@ After each wave merge:
 - `scripts/compare-golden.sh idl2schemata` — per-schema output compared
 - For test suite changes: verify new tests pass and cover the intended behavior
 
+See the "Non-goal: byte-identical output" section in CLAUDE.md.
+
 ---
 
-## Tips from Previous Iterations
+## Cross-Cutting Tips from Previous Iterations
 
-- **Batch simple fixes**: When multiple issues only need 1-3 line
-  changes to the same file (e.g., `main.rs`), apply them all in a
-  single worktree or directly on main instead of spawning separate
-  sub-agents. Wave 1 demonstrated this effectively.
-- **Expect merge conflicts in test files**: When two parallel agents
-  both add tests to `integration.rs`, the second merge will conflict.
-  Both test blocks should be kept — the conflict is purely positional.
-- **Discovery agents duplicate effort**: Phase 1 agents often
-  rediscover the same issues. Budget for deduplication time after
-  agents complete. Having agents check existing issues before filing
-  helps but doesn't eliminate duplicates.
 - **`compare-golden.sh` has limitations**: It can't find the Java JAR
   from worktrees (issue `2931799a`). Run comparisons from `main/`
   after merging, not from worktrees.
-- **Build cache staleness**: When a sub-agent modifies library code
-  (e.g., `reader.rs`), the test binary may not recompile. Use
-  `touch src/reader.rs` before `cargo test` if tests seem stale.
-- **Byte-identical output is a non-goal**: See CLAUDE.md. Don't file
-  issues about whitespace differences from the Java tool. Only
-  semantic (structural JSON) correctness matters.
-- **Close stale issues aggressively in Phase 3**: Issues filed by
-  discovery agents can become stale quickly as fixes land. Always
-  re-verify open issues against the current code before starting a
-  new Phase 2. For example, issue #27 (no json.rs unit tests) was
-  stale because 58 unit tests had been added in a previous session.
-- **Test helper vs production divergence**: When fixing a bug in
-  `main.rs`, check whether test helpers (`parse_idl2schemata`,
-  `process_decl_items_test`) have the same bug. The `known_names`
-  shared-vs-fresh divergence (Wave 4) was caused by updating
-  `main.rs` without updating the test helper.
 - **Reserved property sets differ between Java source and JAR**: The
   git submodule Java source may be a different version than the
   avro-tools JAR. Always validate behavior against the JAR, not
@@ -209,24 +210,6 @@ After each wave merge:
   instead fixed a different issue (unresolved refs as warnings instead
   of errors). The parent should recognize and credit this correctly
   when closing issues.
-- **`git checkout --ours` + manual apply for merge conflicts**: When
-  merging a branch that conflicts in a file heavily modified by prior
-  merges (e.g., `reader.rs` test section), take the HEAD version and
-  manually apply the branch's additions. This is faster and safer
-  than resolving inline conflict markers in large files.
-- **Skip sub-agents when all fixes are small**: If all issues in a wave
-  are 5-15 line changes to distinct parts of the same files, apply them
-  all directly on main. Iteration 3 fixed 5 issues in a single commit
-  without any worktrees or sub-agents, which was significantly faster
-  than the multi-agent approach.
-- **Close design-choice issues as "won't fix"**: Issues that document
-  intentional behavior differences from Java (e.g., accepting bare
-  named types) should be closed rather than carried forward indefinitely.
-- **Low-impact domain model gaps can be closed with TODO comments**:
-  When an issue has zero effect on JSON output (e.g., `fixDefaultValue`
-  int-to-long coercion), adding a TODO comment and closing the issue is
-  better than carrying it as open indefinitely.
 - **Sub-agent issue file deletion**: If a sub-agent deletes issue files
   as part of its commit, the parent doesn't need a separate close
-  commit. This happened in Wave 3 (iteration 5) where the doc comment
-  agent deleted both issue files in its fix commit.
+  commit.

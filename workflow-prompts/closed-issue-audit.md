@@ -1,7 +1,9 @@
 # Issue Audit Workflow
 
-Reusable workflow for auditing resolved issues. Run this after closing
-a batch of issues to verify each was truly and completely fixed.
+Periodic audit of previously closed issues to verify each was truly and
+completely fixed. Run this at the user's request — not automatically
+after every batch of closures. It complements the development loop in
+`refinement-loop.md` but is independent of it.
 
 ## 1. Extract deleted issue contents
 
@@ -24,11 +26,14 @@ git log --all --diff-filter=D --name-only --format="COMMIT:%H" -- issues/ \
 echo "Extracted $(ls tmp/deleted-issues/ | wc -l) issue files"
 ```
 
-To limit the audit to issues deleted since a specific commit (e.g.
-only issues closed since the last audit):
+### Incremental audits with `last-audit` branch
+
+To avoid re-auditing issues from previous rounds, maintain a
+lightweight branch bookmark called `last-audit` that points to the
+last commit that was audited. Extract only issues deleted since then:
 
 ```sh
-git log <since-commit>..HEAD --diff-filter=D --name-only --format="COMMIT:%H" -- issues/ \
+git log last-audit..HEAD --diff-filter=D --name-only --format="COMMIT:%H" -- issues/ \
   | awk '/^COMMIT:/{commit=substr($0,8)} /^issues\//{print commit, $0}' \
   | while read commit file; do
       base="$(basename "$file")"
@@ -36,9 +41,16 @@ git log <since-commit>..HEAD --diff-filter=D --name-only --format="COMMIT:%H" --
     done
 ```
 
-After running an audit, record the current HEAD commit hash somewhere
-(e.g. in `SESSION.md`) so the next audit can use it as
-`<since-commit>`.
+After completing the audit, advance the bookmark:
+
+```sh
+git branch -f last-audit HEAD
+```
+
+This approach is durable (survives `SESSION.md` clears), visible in
+`git log --all`, and requires no manual bookkeeping. On the first
+audit, when `last-audit` does not yet exist, use the full-history
+extraction command above instead.
 
 ## 2. Batch issues by code area
 
@@ -175,20 +187,33 @@ Review each newly filed issue for accuracy and completeness.
 
 ## 7. Lessons from the first audit (83 issues, Feb 2026)
 
-- **FIXED-NO-TEST was the most common non-FIXED classification**
-  (~15 of 83 issues). Most were shell script fixes or CLI behavior
-  changes that can't be tested by the Rust test suite.
-- **Agents sometimes filed issues proactively** beyond their audit
-  mandate (e.g. an `expect()` audit issue). Review agent output for
-  unexpected new files.
-- **Duplicate original issues exist.** Two or more deleted issues
-  sometimes describe the same underlying bug from different angles.
-  Agents should recognize these and consolidate into a single
-  re-filed issue.
-- **The `NON-ISSUE` classification is important.** Several issues
-  were intentionally closed as non-goals (e.g. byte-identical JSON
-  formatting) or as upstream bugs. Agents should check `CLAUDE.md`
-  for documented non-goals.
-- **3 agents per wave works well.** Context window usage per agent
-  was 50-100k tokens. Larger batches (12+ issues) risk hitting
-  limits.
+1. **FIXED-NO-TEST was the most common non-FIXED classification**
+   (~15 of 83 issues). Most were shell script fixes or CLI behavior
+   changes outside the Rust test suite's reach. **Takeaway:** accept
+   FIXED-NO-TEST for tooling/script changes; focus regression-test
+   effort on core logic in `src/`.
+
+2. **Agents sometimes filed issues beyond their audit mandate** (e.g.
+   an `expect()` audit issue). **Takeaway:** review all new files
+   agents create, not just the summary table. Unwanted issues should
+   be deleted or moved before committing.
+
+3. **Duplicate original issues are common.** Two or more deleted
+   issues sometimes describe the same underlying bug from different
+   angles. **Takeaway:** instruct agents to search
+   `tmp/deleted-issues/` for related filenames and consolidate into a
+   single re-filed issue rather than re-filing each duplicate
+   separately.
+
+4. **The NON-ISSUE classification prevents unnecessary re-filing.**
+   Several issues were intentionally closed as non-goals (e.g.
+   byte-identical JSON formatting) or as upstream bugs. **Takeaway:**
+   agents should read `CLAUDE.md` for documented non-goals before
+   classifying, and check `upstream-issues/` before re-filing an
+   upstream bug.
+
+5. **3 agents per wave is the practical concurrency limit.** Context
+   window usage per agent was 50-100k tokens. Larger batches (12+
+   issues) risk hitting context limits. **Takeaway:** keep batches at
+   8-12 issues and run at most 3 agents simultaneously. If a batch
+   exceeds 12, split it.
