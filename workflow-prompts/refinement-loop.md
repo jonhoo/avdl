@@ -198,9 +198,6 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
 
 ## Cross-Cutting Tips from Previous Iterations
 
-- **`compare-golden.sh` has limitations**: It can't find the Java JAR
-  from worktrees (issue `2931799a`). Run comparisons from `main/`
-  after merging, not from worktrees.
 - **Reserved property sets differ between Java source and JAR**: The
   git submodule Java source may be a different version than the
   avro-tools JAR. Always validate behavior against the JAR, not
@@ -231,3 +228,9 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
 - **`compare-golden.sh` works from worktrees now**: The JAR-path issue
   (`2931799a`) was fixed in a prior iteration. Sub-agents can and do
   run `scripts/compare-golden.sh` from worktrees successfully.
+- **Focused discovery agents outperform broad ones in later
+  iterations**: In iteration 7, 3 agents with narrow, deep mandates
+  (spec compliance audit, import edge cases, property handling) were
+  more effective than 5 broad agents. They produced thorough
+  SESSION.md audit trails with minimal overlap and one genuine bug.
+  As the codebase matures, prefer fewer, more specialized agents.
