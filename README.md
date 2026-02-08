@@ -42,7 +42,33 @@ output, but deliberately differs in a few ways:
   within objects, and array line-breaking style may differ. The output
   parses to the same logical structure.
 
-<!-- TODO: populate with a full review of intentional divergences -->
+- **Import search paths replace Java classpath.** Java resolves
+  `import` paths via the JVM classpath; this tool uses explicit
+  `--import-dir` flags instead, which serve the same purpose without
+  requiring a JVM.
+
+- **Schema-mode leniency.** The `idl` subcommand accepts `.avdl` files
+  containing bare named type declarations (no `protocol` or `schema`
+  keyword), returning them as a JSON array. Java's `IdlTool` CLI
+  rejects such files, though Java's internal `IdlFile.outputString()`
+  test harness supports the same output.
+
+- **Trailing commas in enums.** `enum E { A, B, C, }` is silently
+  accepted via ANTLR error recovery. Java 1.12.1 crashes on this
+  input.
+
+- **Better error diagnostics.** The Rust tool gives clear error
+  messages in cases where Java 1.12.1 crashes with unchecked
+  exceptions: duplicate message parameter names
+  (`NoSuchElementException` in Java), and reserved type names via
+  backtick escapes like `` record `int` {} `` (`NullPointerException`
+  in Java).
+
+- **Namespace validation covers all segments.** Rust validates every
+  dot-separated segment of namespace names. Java's
+  `IdlReader.namespace()` loop skips the last segment, so a namespace
+  like `org.valid.0bad` passes Java's validation but is correctly
+  rejected by the Rust tool.
 
 ## Attribution
 
