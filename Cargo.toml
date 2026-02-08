@@ -7,6 +7,7 @@ license = "Apache-2.0"
 repository = "https://github.com/jonhoo/avdl"
 keywords = ["avro", "idl", "schema", "compiler"]
 categories = ["command-line-utilities", "compilers", "parser-implementations"]
+include = ["/src/**/*.rs", "/LICENSE", "/README.md"]
 
 [dependencies]
 antlr4rust = "0.5.2"
