@@ -26,8 +26,8 @@ Launch many sub-agents (blocking, in `main/`) for **open-ended exploration** of 
 - Exploring edge cases, error paths, unusual inputs, and uncommon IDL features for both subcommands
 - Reading the Java source (`IdlReader.java`, `IdlToSchemataTool.java`) to spot behaviors not yet ported
 - Auditing code quality, error handling, and test coverage
-- Scanning for `TODO` comments in `src/` that flag deferred work now
-  worth addressing
+- Scanning for `TODO` comments in `src/` that flag deferred work now worth addressing
+- Thinking of ways in which we could improve the test suite more broadly to cover more of the application's surface area and spec coverage
 
 Each agent should pursue its own line of investigation autonomously. If it finds a discrepancy, it does first-level triage (identify root cause, affected files) and files an issue under `issues/`.
 
