@@ -570,13 +570,9 @@ fn walk_schema_properties<'input>(
         // path (and may be rejected as reserved there).
         if pctx.with_namespace && name == "namespace" {
             if let Value::String(s) = &value {
-                if result.namespace.is_some() {
-                    return Err(make_diagnostic(
-                        src,
-                        &**prop,
-                        "duplicate @namespace annotation",
-                    ));
-                }
+                // Last-write-wins for duplicate @namespace, matching Java's
+                // behavior (LinkedHashMap.put overwrites silently) and our
+                // own handling of duplicate @aliases.
                 result.namespace = Some(s.clone());
             } else {
                 return Err(make_diagnostic(
@@ -3491,6 +3487,37 @@ mod tests {
         let idl = "protocol `int` { }";
         let result = parse_idl(idl);
         assert!(result.is_err(), "reserved protocol name 'int' should be rejected");
+    }
+
+    // ------------------------------------------------------------------
+    // Duplicate @namespace — last-write-wins (issue #7dc5ec17)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn duplicate_namespace_uses_last_value() {
+        let idl = r#"
+            @namespace("test.edge")
+            protocol P {
+                @namespace("ns1")
+                @namespace("ns2")
+                record DualNs { string name; }
+            }
+        "#;
+        let (_idl_file, decl_items, _warnings) =
+            parse_idl(idl).expect("duplicate @namespace should be accepted");
+        let record = decl_items.iter().find_map(|item| {
+            if let DeclItem::Type(schema @ AvroSchema::Record { .. }) = item {
+                Some(schema)
+            } else {
+                None
+            }
+        }).expect("should contain a record");
+        match record {
+            AvroSchema::Record { namespace, .. } => {
+                assert_eq!(namespace.as_deref(), Some("ns2"), "last @namespace should win");
+            }
+            _ => unreachable!(),
+        }
     }
 
     // ------------------------------------------------------------------
