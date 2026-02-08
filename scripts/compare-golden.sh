@@ -243,7 +243,13 @@ run_idl() {
 # ==============================================================================
 
 # Files commonly tested with idl2schemata.
-IDL2SCHEMATA_FILES=(echo simple interop namespaces baseball import)
+# All 18 .avdl test inputs. Some produce no named types (so idl2schemata
+# outputs nothing), but running them all ensures we catch regressions.
+IDL2SCHEMATA_FILES=(
+    baseball comments cycle echo forward_ref import interop
+    leading_underscore mr_events namespaces nestedimport reservedwords
+    schema_syntax_schema simple status_schema unicode union uuid
+)
 
 run_idl2schemata() {
     local filter="${1:-}"
@@ -295,6 +301,11 @@ run_idl2schemata() {
             local java_cp
             java_cp="$(java_classpath_for "$AVRO_JAR" "${name}.avdl")"
             if java -cp "$java_cp" org.apache.avro.tool.Main idl2schemata "$input_file" "$java_outdir" 2>/dev/null; then
+                # Enable nullglob so globs expand to nothing when no files match.
+                local prev_nullglob
+                prev_nullglob="$(shopt -p nullglob || true)"
+                shopt -s nullglob
+
                 # Compare each Rust .avsc against Java's.
                 for avsc in "$outdir"/*.avsc; do
                     local avsc_name
@@ -318,6 +329,17 @@ run_idl2schemata() {
                         report_fail "$name/$avsc_name" "Rust did not produce this file (Java did)"
                     fi
                 done
+
+                # Restore previous nullglob state.
+                eval "$prev_nullglob"
+
+                # If both tools produced 0 files, that's still a pass.
+                local rust_count java_count
+                rust_count=$(find "$outdir" -name '*.avsc' 2>/dev/null | wc -l)
+                java_count=$(find "$java_outdir" -name '*.avsc' 2>/dev/null | wc -l)
+                if [ "$rust_count" -eq 0 ] && [ "$java_count" -eq 0 ]; then
+                    report_pass "$name (both produced 0 schemas)"
+                fi
             else
                 echo "  ${YELLOW}INFO${RESET}  Java tool failed for $name — Rust-only results shown"
             fi

@@ -909,6 +909,10 @@ fn walk_variable<'input>(
     // and the default is non-null, reorder to put the non-null type first.
     let final_type = fix_optional_schema(field_type.clone(), &default_value);
 
+    // TODO: implement fixDefaultValue — Java coerces IntNode to LongNode when
+    // the field type is `long`. In practice, serde_json serializes both the
+    // same way, so JSON output is unaffected.
+
     Ok(Field {
         name: field_name,
         schema: final_type,
@@ -2114,6 +2118,8 @@ fn apply_properties_to_schema(schema: AvroSchema, properties: IndexMap<String, V
             }
         }
         // Union and other types that don't carry top-level properties.
+        // TODO: warn when `properties` is non-empty here — annotations on
+        // non-nullable unions are silently dropped (Java also rejects them).
         other => other,
     }
 }
