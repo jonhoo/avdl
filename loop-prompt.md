@@ -151,7 +151,9 @@ After all waves complete:
    was friction during this iteration. Update this file with any
    improvements — better instructions, new tips, corrected
    assumptions. Commit the change.
-6. **Return to Phase 1** for the next iteration.
+6. Append a very very brief summary of the loop to `LOOPS.md` for the
+   user to peruse later.
+7. **Return to Phase 1** for the next iteration.
 
 ---
 
