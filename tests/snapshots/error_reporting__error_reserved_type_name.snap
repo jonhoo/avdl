@@ -1,0 +1,6 @@
+---
+source: tests/error_reporting.rs
+assertion_line: 201
+expression: error
+---
+walk IDL parse tree for `<input>`: Illegal name: int
