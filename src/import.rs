@@ -98,6 +98,54 @@ impl ImportContext {
 }
 
 // ==============================================================================
+// Recursive Named Type Registration
+// ==============================================================================
+//
+// When importing `.avsc` or `.avpr` files, named types (record, enum, fixed)
+// can be nested arbitrarily deep inside record fields, union branches, array
+// items, or map values. Java's `JsonSchemaParser.parse()` recursively registers
+// all such nested types via `ParseContext.put()`. We replicate this behavior
+// here so that subsequent IDL code can reference nested types by name.
+//
+// This walk follows the same structure as `collect_named_types` in
+// `model/json.rs`, which does the equivalent for JSON serialization lookups.
+
+/// Recursively walk an `AvroSchema` tree and register every named type
+/// (record, enum, fixed) found in the `SchemaRegistry`.
+///
+/// Duplicate registrations are silently ignored (the first definition wins),
+/// matching Java's behavior for imports.
+fn register_all_named_types(schema: &AvroSchema, registry: &mut SchemaRegistry) {
+    match schema {
+        AvroSchema::Record { fields, .. } => {
+            // Register the record itself first, then recurse into its fields
+            // to pick up any nested named types.
+            let _ = registry.register(schema.clone());
+            for field in fields {
+                register_all_named_types(&field.schema, registry);
+            }
+        }
+        AvroSchema::Enum { .. } | AvroSchema::Fixed { .. } => {
+            let _ = registry.register(schema.clone());
+        }
+        AvroSchema::Array { items, .. } => {
+            register_all_named_types(items, registry);
+        }
+        AvroSchema::Map { values, .. } => {
+            register_all_named_types(values, registry);
+        }
+        AvroSchema::Union { types, .. } => {
+            for t in types {
+                register_all_named_types(t, registry);
+            }
+        }
+        // Primitives, logical types, annotated primitives, and references
+        // contain no nested named type definitions to register.
+        _ => {}
+    }
+}
+
+// ==============================================================================
 // JSON Protocol Import (.avpr)
 // ==============================================================================
 
@@ -119,15 +167,12 @@ pub fn import_protocol(
     let default_namespace = json.get("namespace").and_then(|n| n.as_str());
     let mut messages = IndexMap::new();
 
-    // Extract types from the protocol JSON and register them.
+    // Extract types from the protocol JSON and register them, including any
+    // nested named types within record fields, union branches, etc.
     if let Some(types) = json.get("types").and_then(|t| t.as_array()) {
         for type_json in types {
             let schema = json_to_schema(type_json, default_namespace)?;
-            if schema.is_named() {
-                // Silently ignore duplicate registration errors from imports;
-                // the first definition wins, matching Java behavior.
-                let _ = registry.register(schema);
-            }
+            register_all_named_types(&schema, registry);
         }
     }
 
@@ -146,10 +191,13 @@ pub fn import_protocol(
 // JSON Schema Import (.avsc)
 // ==============================================================================
 
-/// Import a JSON schema file (.avsc), registering the schema.
+/// Import a JSON schema file (.avsc), registering the schema and any nested
+/// named types it contains.
 ///
-/// The `.avsc` format is the JSON serialization of a single Avro schema. If
-/// the schema is a named type (record, enum, or fixed), it gets registered.
+/// The `.avsc` format is the JSON serialization of a single Avro schema. All
+/// named types (record, enum, fixed) found in the schema tree -- including those
+/// nested inside record fields, union branches, array items, or map values --
+/// are registered so that subsequent IDL code can reference them by name.
 pub fn import_schema(path: &Path, registry: &mut SchemaRegistry) -> Result<()> {
     let content =
         std::fs::read_to_string(path).map_err(|e| IdlError::Io { source: e })?;
@@ -157,10 +205,7 @@ pub fn import_schema(path: &Path, registry: &mut SchemaRegistry) -> Result<()> {
         .map_err(|e| IdlError::Parse(format!("invalid JSON in {}: {e}", path.display())))?;
 
     let schema = json_to_schema(&json, None)?;
-    if schema.is_named() {
-        // Silently ignore duplicates, as with protocol imports.
-        let _ = registry.register(schema);
-    }
+    register_all_named_types(&schema, registry);
 
     Ok(())
 }
@@ -1267,5 +1312,234 @@ mod tests {
             }
             other => panic!("expected Record, got {other:?}"),
         }
+    }
+
+    // =========================================================================
+    // register_all_named_types tests (issue 6fbdd004)
+    // =========================================================================
+
+    #[test]
+    fn register_nested_record_in_field() {
+        // A record with an inline nested record in one of its fields. Both the
+        // outer and inner records should be registered.
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Outer",
+                "namespace": "test.nested",
+                "fields": [{
+                    "name": "inner",
+                    "type": {
+                        "type": "record",
+                        "name": "Inner",
+                        "fields": [{"name": "value", "type": "int"}]
+                    }
+                }]
+            }),
+            None,
+        )
+        .expect("parse nested record");
+
+        let mut registry = SchemaRegistry::new();
+        register_all_named_types(&schema, &mut registry);
+
+        assert!(registry.contains("test.nested.Outer"), "outer record should be registered");
+        assert!(registry.contains("test.nested.Inner"), "nested record should be registered");
+    }
+
+    #[test]
+    fn register_nested_enum_in_field() {
+        // A record with an inline enum in one of its fields.
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Container",
+                "namespace": "test.nested",
+                "fields": [{
+                    "name": "status",
+                    "type": {
+                        "type": "enum",
+                        "name": "Status",
+                        "symbols": ["ACTIVE", "INACTIVE"]
+                    }
+                }]
+            }),
+            None,
+        )
+        .expect("parse record with nested enum");
+
+        let mut registry = SchemaRegistry::new();
+        register_all_named_types(&schema, &mut registry);
+
+        assert!(registry.contains("test.nested.Container"));
+        assert!(registry.contains("test.nested.Status"), "nested enum should be registered");
+    }
+
+    #[test]
+    fn register_nested_fixed_in_field() {
+        // A record with an inline fixed in one of its fields.
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Container",
+                "namespace": "test.nested",
+                "fields": [{
+                    "name": "hash",
+                    "type": {
+                        "type": "fixed",
+                        "name": "MD5",
+                        "size": 16
+                    }
+                }]
+            }),
+            None,
+        )
+        .expect("parse record with nested fixed");
+
+        let mut registry = SchemaRegistry::new();
+        register_all_named_types(&schema, &mut registry);
+
+        assert!(registry.contains("test.nested.Container"));
+        assert!(registry.contains("test.nested.MD5"), "nested fixed should be registered");
+    }
+
+    #[test]
+    fn register_nested_record_in_union() {
+        // A record with a union field containing an inline record.
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Wrapper",
+                "namespace": "test.nested",
+                "fields": [{
+                    "name": "payload",
+                    "type": ["null", {
+                        "type": "record",
+                        "name": "Payload",
+                        "fields": [{"name": "data", "type": "bytes"}]
+                    }]
+                }]
+            }),
+            None,
+        )
+        .expect("parse record with nested record in union");
+
+        let mut registry = SchemaRegistry::new();
+        register_all_named_types(&schema, &mut registry);
+
+        assert!(registry.contains("test.nested.Wrapper"));
+        assert!(registry.contains("test.nested.Payload"), "nested record in union should be registered");
+    }
+
+    #[test]
+    fn register_nested_record_in_array_items() {
+        // A record with an array field whose items are an inline record.
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Collection",
+                "namespace": "test.nested",
+                "fields": [{
+                    "name": "entries",
+                    "type": {
+                        "type": "array",
+                        "items": {
+                            "type": "record",
+                            "name": "Entry",
+                            "fields": [{"name": "key", "type": "string"}]
+                        }
+                    }
+                }]
+            }),
+            None,
+        )
+        .expect("parse record with nested record in array");
+
+        let mut registry = SchemaRegistry::new();
+        register_all_named_types(&schema, &mut registry);
+
+        assert!(registry.contains("test.nested.Collection"));
+        assert!(registry.contains("test.nested.Entry"), "nested record in array items should be registered");
+    }
+
+    #[test]
+    fn register_nested_record_in_map_values() {
+        // A record with a map field whose values are an inline record.
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Lookup",
+                "namespace": "test.nested",
+                "fields": [{
+                    "name": "entries",
+                    "type": {
+                        "type": "map",
+                        "values": {
+                            "type": "record",
+                            "name": "MapEntry",
+                            "fields": [{"name": "value", "type": "int"}]
+                        }
+                    }
+                }]
+            }),
+            None,
+        )
+        .expect("parse record with nested record in map");
+
+        let mut registry = SchemaRegistry::new();
+        register_all_named_types(&schema, &mut registry);
+
+        assert!(registry.contains("test.nested.Lookup"));
+        assert!(registry.contains("test.nested.MapEntry"), "nested record in map values should be registered");
+    }
+
+    #[test]
+    fn register_deeply_nested_types() {
+        // A record with a field containing a union -> array -> record chain.
+        // All named types at every level should be registered.
+        let schema = json_to_schema(
+            &json!({
+                "type": "record",
+                "name": "Root",
+                "namespace": "test.deep",
+                "fields": [{
+                    "name": "data",
+                    "type": ["null", {
+                        "type": "array",
+                        "items": {
+                            "type": "record",
+                            "name": "Leaf",
+                            "fields": [{
+                                "name": "tag",
+                                "type": {
+                                    "type": "enum",
+                                    "name": "Tag",
+                                    "symbols": ["A", "B"]
+                                }
+                            }]
+                        }
+                    }]
+                }]
+            }),
+            None,
+        )
+        .expect("parse deeply nested schema");
+
+        let mut registry = SchemaRegistry::new();
+        register_all_named_types(&schema, &mut registry);
+
+        assert!(registry.contains("test.deep.Root"));
+        assert!(registry.contains("test.deep.Leaf"), "deeply nested record should be registered");
+        assert!(registry.contains("test.deep.Tag"), "deeply nested enum should be registered");
+    }
+
+    #[test]
+    fn register_non_named_schema_is_noop() {
+        // A bare primitive or array schema should not cause errors, even though
+        // there are no named types to register.
+        let schema = json_to_schema(&json!("int"), None).expect("parse int");
+        let mut registry = SchemaRegistry::new();
+        register_all_named_types(&schema, &mut registry);
+        assert_eq!(registry.into_schemas().len(), 0);
     }
 }
