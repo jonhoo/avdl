@@ -15,6 +15,8 @@
 #   --import-dir D   Pass --import-dir to the Rust tool (and add to Java classpath)
 #   --show-output    Print the Rust and Java JSON output for diffs (not just the diff)
 #   --rust-only      Only run the Rust tool (skip Java comparison)
+#   --batch-json     Output JSON array to stdout (for automated processing).
+#                    Runs both idl and idl2schemata for each file.
 #
 # Environment:
 #   AVRO_TOOLS_JAR   Override the path to avro-tools-1.12.1.jar. When unset,
@@ -95,6 +97,8 @@ MODE="idl"
 IMPORT_DIRS=()
 SHOW_OUTPUT=false
 RUST_ONLY=false
+BATCH_JSON=false
+TIMEOUT_SECS=30
 FILES=()
 
 while [ $# -gt 0 ]; do
@@ -114,6 +118,14 @@ while [ $# -gt 0 ]; do
         --rust-only)
             RUST_ONLY=true
             shift
+            ;;
+        --batch-json)
+            BATCH_JSON=true
+            shift
+            ;;
+        --timeout)
+            TIMEOUT_SECS="$2"
+            shift 2
             ;;
         -h|--help)
             sed -n '2,/^$/{ s/^# \?//; p }' "$0"
@@ -305,8 +317,213 @@ compare_idl2schemata() {
 }
 
 # ==============================================================================
+# Batch JSON mode — structured output for automated processing
+# ==============================================================================
+
+# Escape a string for JSON output (handles quotes, backslashes, newlines).
+json_escape() {
+    python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" <<< "$1"
+}
+
+# Run a command with timeout, capturing exit code, stdout, and stderr.
+# Sets: _exit, _stdout, _stderr
+run_with_timeout() {
+    local out_file="$TMPDIR_BASE/_run_stdout"
+    local err_file="$TMPDIR_BASE/_run_stderr"
+    timeout "${TIMEOUT_SECS}s" "$@" >"$out_file" 2>"$err_file"
+    _exit=$?
+    _stdout="$(cat "$out_file")"
+    _stderr="$(cat "$err_file")"
+    # timeout returns 124 on timeout
+    if [ "$_exit" -eq 124 ]; then
+        _stderr="TIMEOUT after ${TIMEOUT_SECS}s"
+    fi
+}
+
+batch_json_one_file() {
+    local input_file="$1"
+    local bn
+    bn="$(basename "$input_file" .avdl)"
+
+    local rust_out="$TMPDIR_BASE/${bn}-rust.json"
+    local java_out="$TMPDIR_BASE/${bn}-java.json"
+
+    # --- idl mode ---
+    local idl_rust_exit=0 idl_java_exit=0
+    local idl_rust_stderr="" idl_java_stderr=""
+    local idl_result="unknown" idl_diff_snippet=""
+
+    # shellcheck disable=SC2086
+    run_with_timeout cargo run --quiet --manifest-path "$REPO_ROOT/Cargo.toml" \
+        -- idl $RUST_FLAGS "$input_file" "$rust_out"
+    idl_rust_exit=$_exit
+    idl_rust_stderr="$_stderr"
+
+    if [ "$idl_rust_exit" -eq 0 ] && [ -z "$AVRO_JAR" ]; then
+        idl_result="rust-pass-java-unavailable"
+    elif [ "$idl_rust_exit" -ne 0 ]; then
+        # Rust failed, try Java to determine result category.
+        if [ -n "$AVRO_JAR" ]; then
+            run_with_timeout java -cp "$JAVA_CP" org.apache.avro.tool.Main idl "$input_file" "$java_out"
+            idl_java_exit=$_exit
+            idl_java_stderr="$_stderr"
+            if [ "$idl_java_exit" -eq 0 ]; then
+                idl_result="rust-fail"
+            else
+                idl_result="both-fail"
+            fi
+        else
+            idl_result="rust-fail"
+        fi
+    else
+        # Rust succeeded. Run Java.
+        if [ -n "$AVRO_JAR" ]; then
+            run_with_timeout java -cp "$JAVA_CP" org.apache.avro.tool.Main idl "$input_file" "$java_out"
+            idl_java_exit=$_exit
+            idl_java_stderr="$_stderr"
+            if [ "$idl_java_exit" -ne 0 ]; then
+                idl_result="java-fail"
+            else
+                # Both succeeded — compare.
+                local rust_sorted="$TMPDIR_BASE/${bn}-rust-s.json"
+                local java_sorted="$TMPDIR_BASE/${bn}-java-s.json"
+                jq -S . "$rust_out" > "$rust_sorted" 2>/dev/null
+                jq -S . "$java_out" > "$java_sorted" 2>/dev/null
+                if diff -q "$rust_sorted" "$java_sorted" > /dev/null 2>&1; then
+                    idl_result="both-pass-match"
+                else
+                    idl_result="both-pass-diff"
+                    idl_diff_snippet="$(diff --unified=3 "$java_sorted" "$rust_sorted" | head -20)"
+                fi
+            fi
+        fi
+    fi
+
+    # --- idl2schemata mode (only if both idl passes succeeded) ---
+    local i2s_result="skipped" i2s_diff_snippet=""
+    local i2s_rust_exit="" i2s_java_exit=""
+    local i2s_rust_stderr="" i2s_java_stderr=""
+
+    if [ "$idl_result" = "both-pass-match" ] || [ "$idl_result" = "both-pass-diff" ]; then
+        local i2s_rust_dir="$TMPDIR_BASE/${bn}-i2s-rust"
+        local i2s_java_dir="$TMPDIR_BASE/${bn}-i2s-java"
+        mkdir -p "$i2s_rust_dir" "$i2s_java_dir"
+
+        # shellcheck disable=SC2086
+        run_with_timeout cargo run --quiet --manifest-path "$REPO_ROOT/Cargo.toml" \
+            -- idl2schemata $RUST_FLAGS "$input_file" "$i2s_rust_dir"
+        i2s_rust_exit=$_exit
+        i2s_rust_stderr="$_stderr"
+
+        if [ "$i2s_rust_exit" -ne 0 ]; then
+            run_with_timeout java -cp "$JAVA_CP" org.apache.avro.tool.Main idl2schemata "$input_file" "$i2s_java_dir"
+            i2s_java_exit=$_exit
+            i2s_java_stderr="$_stderr"
+            if [ "$i2s_java_exit" -eq 0 ]; then
+                i2s_result="rust-fail"
+            else
+                i2s_result="both-fail"
+            fi
+        else
+            run_with_timeout java -cp "$JAVA_CP" org.apache.avro.tool.Main idl2schemata "$input_file" "$i2s_java_dir"
+            i2s_java_exit=$_exit
+            i2s_java_stderr="$_stderr"
+            if [ "$i2s_java_exit" -ne 0 ]; then
+                i2s_result="java-fail"
+            else
+                # Compare all .avsc files.
+                local has_diff=false
+                local combined_diff=""
+                for avsc in "$i2s_rust_dir"/*.avsc "$i2s_java_dir"/*.avsc; do
+                    [ -f "$avsc" ] || continue
+                    local avsc_name
+                    avsc_name="$(basename "$avsc")"
+                    local r="$i2s_rust_dir/$avsc_name"
+                    local j="$i2s_java_dir/$avsc_name"
+                    if [ -f "$r" ] && [ -f "$j" ]; then
+                        local rs="$TMPDIR_BASE/${bn}-i2s-${avsc_name}-rs.json"
+                        local js="$TMPDIR_BASE/${bn}-i2s-${avsc_name}-js.json"
+                        jq -S . "$r" > "$rs" 2>/dev/null
+                        jq -S . "$j" > "$js" 2>/dev/null
+                        if ! diff -q "$rs" "$js" > /dev/null 2>&1; then
+                            has_diff=true
+                            combined_diff+="--- $avsc_name ---"$'\n'
+                            combined_diff+="$(diff --unified=3 "$js" "$rs" | head -10)"$'\n'
+                        fi
+                    elif [ -f "$r" ] && [ ! -f "$j" ]; then
+                        has_diff=true
+                        combined_diff+="Rust-only: $avsc_name"$'\n'
+                    elif [ ! -f "$r" ] && [ -f "$j" ]; then
+                        has_diff=true
+                        combined_diff+="Java-only: $avsc_name"$'\n'
+                    fi
+                done
+                if [ "$has_diff" = true ]; then
+                    i2s_result="both-pass-diff"
+                    i2s_diff_snippet="$(echo "$combined_diff" | head -20)"
+                else
+                    i2s_result="both-pass-match"
+                fi
+            fi
+        fi
+    fi
+
+    # Output JSON object for this file.
+    # Using python3 to build proper JSON avoids quoting issues.
+    python3 -c "
+import json, sys
+obj = {
+    'file': sys.argv[1],
+    'idl_result': sys.argv[2],
+    'idl_rust_exit': int(sys.argv[3]),
+    'idl_java_exit': int(sys.argv[4]),
+    'idl_diff_snippet': sys.argv[5],
+    'idl_rust_stderr': sys.argv[6],
+    'idl_java_stderr': sys.argv[7],
+    'i2s_result': sys.argv[8],
+    'i2s_diff_snippet': sys.argv[9],
+    'i2s_rust_stderr': sys.argv[10],
+    'i2s_java_stderr': sys.argv[11],
+}
+print(json.dumps(obj))
+" \
+        "$input_file" \
+        "$idl_result" \
+        "$idl_rust_exit" \
+        "${idl_java_exit:-0}" \
+        "$idl_diff_snippet" \
+        "$idl_rust_stderr" \
+        "$idl_java_stderr" \
+        "$i2s_result" \
+        "$i2s_diff_snippet" \
+        "${i2s_rust_stderr:-}" \
+        "${i2s_java_stderr:-}"
+}
+
+# ==============================================================================
 # Main loop
 # ==============================================================================
+
+if [ "$BATCH_JSON" = true ]; then
+    # Batch JSON mode: output a JSON array, one object per file.
+    echo "["
+    first=true
+    for file in "${FILES[@]}"; do
+        if [ "$first" = true ]; then
+            first=false
+        else
+            echo ","
+        fi
+        if [ ! -f "$file" ]; then
+            python3 -c "import json; print(json.dumps({'file': '$file', 'idl_result': 'file-not-found', 'idl_rust_exit': -1, 'idl_java_exit': -1, 'idl_diff_snippet': '', 'idl_rust_stderr': 'file not found', 'idl_java_stderr': '', 'i2s_result': 'skipped', 'i2s_diff_snippet': '', 'i2s_rust_stderr': '', 'i2s_java_stderr': ''}))"
+        else
+            batch_json_one_file "$file"
+        fi
+    done
+    echo
+    echo "]"
+    exit 0
+fi
 
 echo "${BOLD}${MODE} comparison — ${#FILES[@]} file(s)${RESET}"
 echo
