@@ -1,0 +1,7 @@
+---
+source: tests/error_reporting.rs
+assertion_line: 262
+expression: "warning_text.join(\"\\n\")"
+---
+Line 6, char 17: Ignoring out-of-place documentation comment.
+Did you mean to use a multiline comment ( /* ... */ ) instead?
