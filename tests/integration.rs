@@ -2198,3 +2198,244 @@ fn test_cycle_test_root() {
     assert_eq!(union[0], "null");
     assert_eq!(union[1], "Record1", "back-reference to Record1 should be a string name");
 }
+
+// ==============================================================================
+// `logicalTypes.avdl` Test (Gap #10)
+// ==============================================================================
+//
+// The test-root `logicalTypes.avdl` exercises all built-in logical type keywords
+// and `@logicalType` annotations in a single file, including an edge case with
+// an oversized `@precision(3000000000)` value. No golden `.avpr` exists, so we
+// verify structural correctness.
+
+/// Parse `logicalTypes.avdl` from the test root directory and verify that all
+/// logical type fields are present with correct types.
+///
+/// This file covers: `date`, `time_ms`, `timestamp_ms`, `local_timestamp_ms`,
+/// `decimal(6,2)`, `uuid`, `@logicalType("timestamp-micros") long`,
+/// `@logicalType("decimal") @precision(6) @scale(2) bytes`, and the oversized
+/// `@logicalType("decimal") @precision(3000000000) @scale(0) bytes`.
+#[test]
+fn test_logical_types_file() {
+    let avdl_path = PathBuf::from(TEST_ROOT_DIR).join("logicalTypes.avdl");
+    let input = fs::read_to_string(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let (idl_file, decl_items, warnings) =
+        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    // Should produce no warnings.
+    assert!(
+        warnings.is_empty(),
+        "logicalTypes.avdl should produce no warnings, got: {:?}",
+        warnings
+    );
+
+    // Should be a protocol file.
+    let protocol = match &idl_file {
+        IdlFile::ProtocolFile(p) => p,
+        other => panic!(
+            "expected ProtocolFile, got {:?}",
+            std::mem::discriminant(other)
+        ),
+    };
+
+    assert_eq!(protocol.name, "LogicalTypeTest");
+    assert_eq!(protocol.namespace.as_deref(), Some("org.apache.avro.test"));
+
+    // Register types and serialize to JSON for field-level assertions.
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+    for item in &decl_items {
+        if let DeclItem::Type(schema) = item {
+            registry
+                .register(schema.clone())
+                .unwrap_or_else(|e| panic!("failed to register type: {e}"));
+        }
+    }
+
+    let json = idl_file_to_json(idl_file, registry);
+    let types = json["types"].as_array().expect("should have types array");
+    assert_eq!(types.len(), 1, "should have one record type: LogicalTypeFields");
+
+    let record = &types[0];
+    assert_eq!(record["name"], "LogicalTypeFields");
+
+    let fields = record["fields"]
+        .as_array()
+        .expect("LogicalTypeFields should have fields");
+    assert_eq!(fields.len(), 9, "LogicalTypeFields should have 9 fields");
+
+    // Field 0: date aDate -> {"type": "int", "logicalType": "date"}
+    assert_eq!(fields[0]["name"], "aDate");
+    assert_eq!(fields[0]["type"]["type"], "int");
+    assert_eq!(fields[0]["type"]["logicalType"], "date");
+
+    // Field 1: time_ms aTime -> {"type": "int", "logicalType": "time-millis"}
+    assert_eq!(fields[1]["name"], "aTime");
+    assert_eq!(fields[1]["type"]["type"], "int");
+    assert_eq!(fields[1]["type"]["logicalType"], "time-millis");
+
+    // Field 2: timestamp_ms aTimestamp -> {"type": "long", "logicalType": "timestamp-millis"}
+    assert_eq!(fields[2]["name"], "aTimestamp");
+    assert_eq!(fields[2]["type"]["type"], "long");
+    assert_eq!(fields[2]["type"]["logicalType"], "timestamp-millis");
+
+    // Field 3: local_timestamp_ms aLocalTimestamp -> {"type": "long", "logicalType": "local-timestamp-millis"}
+    assert_eq!(fields[3]["name"], "aLocalTimestamp");
+    assert_eq!(fields[3]["type"]["type"], "long");
+    assert_eq!(fields[3]["type"]["logicalType"], "local-timestamp-millis");
+
+    // Field 4: decimal(6,2) pocketMoney -> {"type": "bytes", "logicalType": "decimal", "precision": 6, "scale": 2}
+    assert_eq!(fields[4]["name"], "pocketMoney");
+    assert_eq!(fields[4]["type"]["type"], "bytes");
+    assert_eq!(fields[4]["type"]["logicalType"], "decimal");
+    assert_eq!(fields[4]["type"]["precision"], 6);
+    assert_eq!(fields[4]["type"]["scale"], 2);
+
+    // Field 5: uuid identifier -> {"type": "string", "logicalType": "uuid"}
+    assert_eq!(fields[5]["name"], "identifier");
+    assert_eq!(fields[5]["type"]["type"], "string");
+    assert_eq!(fields[5]["type"]["logicalType"], "uuid");
+
+    // Field 6: @logicalType("timestamp-micros") long anotherTimestamp
+    assert_eq!(fields[6]["name"], "anotherTimestamp");
+    assert_eq!(fields[6]["type"]["type"], "long");
+    assert_eq!(fields[6]["type"]["logicalType"], "timestamp-micros");
+
+    // Field 7: @logicalType("decimal") @precision(6) @scale(2) bytes allowance
+    assert_eq!(fields[7]["name"], "allowance");
+    assert_eq!(fields[7]["type"]["type"], "bytes");
+    assert_eq!(fields[7]["type"]["logicalType"], "decimal");
+    assert_eq!(fields[7]["type"]["precision"], 6);
+    assert_eq!(fields[7]["type"]["scale"], 2);
+
+    // Field 8: @logicalType("decimal") @precision(3000000000) @scale(0) bytes byteArray
+    // This is the oversized-precision edge case. The precision value 3000000000
+    // exceeds i32::MAX but fits in u32/i64. It should be preserved as-is.
+    assert_eq!(fields[8]["name"], "byteArray");
+    assert_eq!(fields[8]["type"]["type"], "bytes");
+    assert_eq!(fields[8]["type"]["logicalType"], "decimal");
+    assert_eq!(
+        fields[8]["type"]["precision"],
+        serde_json::json!(3_000_000_000_u64),
+        "oversized precision (3000000000) should be preserved"
+    );
+    assert_eq!(fields[8]["type"]["scale"], 0);
+}
+
+// ==============================================================================
+// Warning Assertion Tests (Gap #11)
+// ==============================================================================
+//
+// These tests verify that the parser produces the correct warnings for files
+// with `/**` doc-comment license headers. Both `protocol.avdl` and `schema.avdl`
+// in the tools test directory have `/**`-style license comments that are
+// out-of-place (they appear before the protocol/namespace declaration rather
+// than before a type or field), producing exactly one warning each.
+
+/// Verify that `tools/protocol.avdl` produces exactly 1 warning about an
+/// out-of-place documentation comment.
+///
+/// The file's `/**`-style license header (line 1) is followed by a second
+/// `/**` doc comment (line 19, the protocol description). Java's TestIdlTool
+/// asserts one warning: "Line 1, char 1: Ignoring out-of-place documentation
+/// comment."
+#[test]
+fn test_tools_protocol_warning() {
+    let avdl_path = PathBuf::from(TOOLS_IDL_DIR).join("protocol.avdl");
+    let input = fs::read_to_string(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let (_idl_file, _decl_items, warnings) =
+        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    assert_eq!(
+        warnings.len(),
+        1,
+        "tools/protocol.avdl should produce exactly 1 warning, got {}:\n{}",
+        warnings.len(),
+        warnings
+            .iter()
+            .enumerate()
+            .map(|(i, w)| format!("  {}: {}", i + 1, w))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    assert!(
+        warnings[0].message.contains("Ignoring out-of-place documentation comment"),
+        "warning should mention out-of-place doc comment, got: {}",
+        warnings[0]
+    );
+}
+
+/// Verify that `tools/schema.avdl` produces exactly 1 warning about an
+/// out-of-place documentation comment.
+///
+/// The file's `/**`-style license header (line 1) is out-of-place because it
+/// appears before the `namespace` declaration. Java's TestIdlToSchemataTool
+/// asserts one warning: "Line 1, char 1: Ignoring out-of-place documentation
+/// comment."
+#[test]
+fn test_tools_schema_warning() {
+    let avdl_path = PathBuf::from(TOOLS_IDL_DIR).join("schema.avdl");
+    let input = fs::read_to_string(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let (_idl_file, _decl_items, warnings) =
+        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    assert_eq!(
+        warnings.len(),
+        1,
+        "tools/schema.avdl should produce exactly 1 warning, got {}:\n{}",
+        warnings.len(),
+        warnings
+            .iter()
+            .enumerate()
+            .map(|(i, w)| format!("  {}: {}", i + 1, w))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    assert!(
+        warnings[0].message.contains("Ignoring out-of-place documentation comment"),
+        "warning should mention out-of-place doc comment, got: {}",
+        warnings[0]
+    );
+}
+
+// ==============================================================================
+// AnnotationOnTypeReference Error Test (Gap #12)
+// ==============================================================================
+//
+// The `AnnotationOnTypeReference.avdl` test file has `@foo("bar") MD5` in a
+// field declaration, which annotates a type reference (MD5 is a fixed type
+// defined earlier). Java's IdlReader rejects this with "Type references may
+// not be annotated" because the annotation target is ambiguous.
+
+/// Verify that `AnnotationOnTypeReference.avdl` fails to parse with an error
+/// about annotated type references.
+///
+/// This file contains `@foo("bar") MD5 hash = "0000000000000000";` where `MD5`
+/// is a previously-defined fixed type. Annotations on type references are
+/// rejected because they are semantically ambiguous (does the annotation apply
+/// to the field or the type?).
+#[test]
+fn test_annotation_on_type_reference_file() {
+    let avdl_path = PathBuf::from(TEST_ROOT_DIR).join("AnnotationOnTypeReference.avdl");
+    let input = fs::read_to_string(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let result = parse_idl(&input);
+    assert!(
+        result.is_err(),
+        "AnnotationOnTypeReference.avdl should fail to parse"
+    );
+
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("Type references may not be annotated"),
+        "error should mention 'Type references may not be annotated', got: {err_msg}"
+    );
+}
