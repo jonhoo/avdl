@@ -28,6 +28,7 @@ Launch many sub-agents (blocking, in `main/`) for **open-ended exploration** of 
 - Auditing code quality, error handling, and test coverage
 - Scanning for `TODO` comments in `src/` that flag deferred work now worth addressing
 - Thinking of ways in which we could improve the test suite more broadly to cover more of the application's surface area and spec coverage
+- Making slight mutations to valid golden `.avdl` files (replace `;` with `,`, omit separators, misspell keywords) and verifying the error output is helpful and includes source location
 
 Each agent should pursue its own line of investigation autonomously. If it finds a discrepancy, it does first-level triage (identify root cause, affected files) and files an issue under `issues/`.
 

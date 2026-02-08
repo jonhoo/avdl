@@ -1,0 +1,6 @@
+---
+source: tests/error_reporting.rs
+assertion_line: 360
+expression: error
+---
+parse error: <input>: line 1:20 no viable alternative at input 'record{'

@@ -1,0 +1,6 @@
+---
+source: tests/error_reporting.rs
+assertion_line: 369
+expression: error
+---
+parse error: <input>: line 1:0 mismatched input 'protocl' expecting {<EOF>, '\u001A', DocComment, 'protocol', 'namespace', 'import', 'schema', 'enum', 'fixed', 'error', 'record', '@'}
