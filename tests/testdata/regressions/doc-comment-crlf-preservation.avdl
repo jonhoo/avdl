@@ -1,0 +1,8 @@
+// Regression: doc comments lose \r\n (CRLF) line endings, normalized to \n
+// Source: https://github.com/kojiromike/XFabricUtil (index #68 from fuzz corpus)
+/**
+ * First line.
+ * Second line.
+ */
+protocol CrlfDocComment {
+}

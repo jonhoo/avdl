@@ -1,0 +1,7 @@
+// Regression: Rust rejects nested unions but Java accepts them (flattening)
+// Source: https://github.com/Takin-Profit/ProtoDef (index #135 from fuzz corpus)
+protocol Test {
+  record Foo {
+    union { union { int } } value;
+  }
+}

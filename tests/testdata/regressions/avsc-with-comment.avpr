@@ -1,0 +1,21 @@
+{
+  "protocol" : "AvscWithComment",
+  "namespace" : "com.example",
+  "doc" : "Regression: import schema with a leading block comment in the .avsc file.\n\nRust fails with \"invalid JSON ... expected value at line 1 column 1\" because\nserde_json rejects the block comment. Java succeeds because Jackson accepts\nC-style comments.\n\nSource: minimized from cloudera/flume flumeconfig.avdl importing\navroflumereport.avsc (which has a license block comment before the JSON).",
+  "types" : [ {
+    "type" : "record",
+    "name" : "Report",
+    "fields" : [ {
+      "name" : "message",
+      "type" : "string"
+    } ]
+  }, {
+    "type" : "record",
+    "name" : "Wrapper",
+    "fields" : [ {
+      "name" : "item",
+      "type" : "Report"
+    } ]
+  } ],
+  "messages" : { }
+}

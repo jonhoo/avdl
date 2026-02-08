@@ -1,0 +1,17 @@
+// Regression: doc comment continuation lines lose leading whitespace
+// Source: https://github.com/tmoerman/adam-fx (index #28 from fuzz corpus)
+//
+// The Rust strip_indents function only strips a literal ASCII space after
+// the star prefix (`strip_prefix(' ')`), while Java's regex uses `\h?`
+// which matches any horizontal whitespace (including tabs). When a doc
+// comment has `*<TAB>text`, Java strips the tab but Rust preserves it.
+//
+// Expected doc (Java): "First line.\nSecond line."
+// Actual doc (Rust):   "\tFirst line.\n\tSecond line."
+protocol T {
+  /**
+   *	First line.
+   *	Second line.
+   */
+  record R { string x; }
+}

@@ -1,0 +1,18 @@
+/**
+ * Regression: .avsc file with a leading block comment.
+ *
+ * Java's Schema.parse() uses Jackson with ALLOW_COMMENTS enabled, so it
+ * silently strips C-style and C++-style comments before parsing JSON.
+ * Our Rust import_schema uses serde_json which requires strict JSON and
+ * rejects any leading non-JSON content.
+ *
+ * Source: cloudera/flume flume-core/src/main/avro/avroflumereport.avsc
+ * (minimized from the original 3-field record to a single field)
+ */
+{
+  "type": "record",
+  "name": "com.example.Report",
+  "fields": [
+    {"name": "message", "type": "string"}
+  ]
+}

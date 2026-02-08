@@ -1,0 +1,2 @@
+# Preserve CRLF line endings for regression tests that depend on them.
+doc-comment-crlf-preservation.avdl -text

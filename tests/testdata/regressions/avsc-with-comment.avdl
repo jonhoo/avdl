@@ -1,0 +1,17 @@
+/**
+ * Regression: import schema with a leading block comment in the .avsc file.
+ *
+ * Rust fails with "invalid JSON ... expected value at line 1 column 1" because
+ * serde_json rejects the block comment. Java succeeds because Jackson accepts
+ * C-style comments.
+ *
+ * Source: minimized from cloudera/flume flumeconfig.avdl importing
+ * avroflumereport.avsc (which has a license block comment before the JSON).
+ */
+@namespace("com.example")
+protocol AvscWithComment {
+  import schema "imports/commented-report.avsc";
+  record Wrapper {
+    Report item;
+  }
+}
