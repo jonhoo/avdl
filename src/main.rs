@@ -10,8 +10,8 @@ use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand};
 use indexmap::{IndexMap, IndexSet};
+use lexopt::prelude::*;
 use miette::{Context, IntoDiagnostic};
 use avdl::import::{import_protocol, import_schema, ImportContext};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json, to_string_pretty_java};
@@ -20,38 +20,121 @@ use avdl::reader::{parse_idl, DeclItem, IdlFile, ImportEntry, ImportKind, Warnin
 use avdl::resolve::SchemaRegistry;
 
 // ==============================================================================
-// CLI Argument Definitions
+// CLI Help Text
 // ==============================================================================
 
-#[derive(Parser)]
-#[command(name = "avdl", about = "Avro IDL compiler")]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
+const MAIN_HELP: &str = "\
+avdl - Avro IDL compiler
+
+Usage: avdl <COMMAND>
+
+Commands:
+  idl           Compile an Avro IDL file to protocol (.avpr) or schema (.avsc) JSON
+  idl2schemata  Extract individual .avsc schema files from an Avro IDL protocol
+
+Options:
+  -h, --help    Print help";
+
+const IDL_HELP: &str = "\
+Usage: avdl idl [OPTIONS] [INPUT] [OUTPUT]
+
+Options:
+      --import-dir <DIR>  Additional directories to search for imports (repeatable)
+  -h, --help              Print help";
+
+const IDL2SCHEMATA_HELP: &str = "\
+Usage: avdl idl2schemata [OPTIONS] INPUT [OUTDIR]
+
+Options:
+      --import-dir <DIR>  Additional directories to search for imports (repeatable)
+  -h, --help              Print help";
+
+// ==============================================================================
+// Argument Parsing
+// ==============================================================================
+
+/// Parsed CLI arguments for the `idl` subcommand.
+struct IdlArgs {
+    input: Option<String>,
+    output: Option<String>,
+    import_dirs: Vec<PathBuf>,
 }
 
-#[derive(Subcommand)]
-enum Command {
-    /// Compile an Avro IDL file to a JSON protocol (.avpr) or schema (.avsc).
-    Idl {
-        /// Input .avdl file (reads from stdin if omitted or `-`).
-        input: Option<String>,
-        /// Output file (writes to stdout if omitted or `-`).
-        output: Option<String>,
-        /// Additional directories to search for imports. May be repeated.
-        #[arg(long = "import-dir")]
-        import_dir: Vec<PathBuf>,
-    },
-    /// Extract individual .avsc schema files from an Avro IDL protocol.
-    Idl2schemata {
-        /// Input .avdl file (required; unlike `idl`, stdin is not supported).
-        input: String,
-        /// Output directory for .avsc files (defaults to current directory).
-        outdir: Option<PathBuf>,
-        /// Additional directories to search for imports. May be repeated.
-        #[arg(long = "import-dir")]
-        import_dir: Vec<PathBuf>,
-    },
+/// Parsed CLI arguments for the `idl2schemata` subcommand.
+struct Idl2schemataArgs {
+    input: String,
+    outdir: Option<PathBuf>,
+    import_dirs: Vec<PathBuf>,
+}
+
+/// Parse `--import-dir` and positional args for the `idl` subcommand.
+fn parse_idl_args(parser: &mut lexopt::Parser) -> Result<IdlArgs, lexopt::Error> {
+    let mut import_dirs = Vec::new();
+    let mut positionals: Vec<String> = Vec::new();
+
+    while let Some(arg) = parser.next()? {
+        match arg {
+            Long("import-dir") => {
+                let val: String = parser.value()?.string()?;
+                import_dirs.push(PathBuf::from(val));
+            }
+            Short('h') | Long("help") => {
+                println!("{IDL_HELP}");
+                std::process::exit(0);
+            }
+            Value(val) => {
+                positionals.push(val.string()?);
+            }
+            _ => return Err(arg.unexpected()),
+        }
+    }
+
+    let input = positionals.first().cloned();
+    let output = positionals.get(1).cloned();
+
+    Ok(IdlArgs {
+        input,
+        output,
+        import_dirs,
+    })
+}
+
+/// Parse `--import-dir` and positional args for the `idl2schemata` subcommand.
+fn parse_idl2schemata_args(
+    parser: &mut lexopt::Parser,
+) -> Result<Idl2schemataArgs, lexopt::Error> {
+    let mut import_dirs = Vec::new();
+    let mut positionals: Vec<String> = Vec::new();
+
+    while let Some(arg) = parser.next()? {
+        match arg {
+            Long("import-dir") => {
+                let val: String = parser.value()?.string()?;
+                import_dirs.push(PathBuf::from(val));
+            }
+            Short('h') | Long("help") => {
+                println!("{IDL2SCHEMATA_HELP}");
+                std::process::exit(0);
+            }
+            Value(val) => {
+                positionals.push(val.string()?);
+            }
+            _ => return Err(arg.unexpected()),
+        }
+    }
+
+    let input = positionals.first().cloned().ok_or_else(|| {
+        lexopt::Error::MissingValue {
+            option: Some("INPUT".to_string()),
+        }
+    })?;
+    let outdir = positionals.get(1).map(PathBuf::from);
+
+    Ok(Idl2schemataArgs {
+        input,
+        outdir,
+        import_dirs,
+    })
 }
 
 // ==============================================================================
@@ -63,19 +146,44 @@ fn main() -> miette::Result<()> {
         Box::new(miette::MietteHandlerOpts::new().build())
     }))?;
 
-    let cli = Cli::parse();
+    let mut parser = lexopt::Parser::from_env();
 
-    match cli.command {
-        Command::Idl {
-            input,
-            output,
-            import_dir,
-        } => run_idl(input, output, import_dir),
-        Command::Idl2schemata {
-            input,
-            outdir,
-            import_dir,
-        } => run_idl2schemata(input, outdir, import_dir),
+    // The first positional value is the subcommand name.
+    let subcommand = match parser.next() {
+        Ok(Some(Value(val))) => val.string().map_err(|e| miette::miette!("{e}"))?,
+        Ok(Some(Short('h') | Long("help"))) => {
+            println!("{MAIN_HELP}");
+            return Ok(());
+        }
+        Ok(Some(other)) => {
+            let err = other.unexpected();
+            eprintln!("error: {err}\n\n{MAIN_HELP}");
+            std::process::exit(2);
+        }
+        Ok(None) => {
+            eprintln!("error: a subcommand is required\n\n{MAIN_HELP}");
+            std::process::exit(2);
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+    };
+
+    match subcommand.as_str() {
+        "idl" => {
+            let args = parse_idl_args(&mut parser).map_err(|e| miette::miette!("{e}"))?;
+            run_idl(args.input, args.output, args.import_dirs)
+        }
+        "idl2schemata" => {
+            let args =
+                parse_idl2schemata_args(&mut parser).map_err(|e| miette::miette!("{e}"))?;
+            run_idl2schemata(args.input, args.outdir, args.import_dirs)
+        }
+        other => {
+            eprintln!("error: unknown subcommand `{other}`\n\n{MAIN_HELP}");
+            std::process::exit(2);
+        }
     }
 }
 
