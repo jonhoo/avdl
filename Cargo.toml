@@ -2,6 +2,11 @@
 name = "avdl"
 version = "0.1.0+1.12.1"
 edition = "2024"
+description = "Port of avro-tools' Avro IDL compiler that compiles .avdl files to Avro Protocol JSON (.avpr) or Schema JSON (.avsc)"
+license = "Apache-2.0"
+repository = "https://github.com/jonhoo/avdl"
+keywords = ["avro", "idl", "schema", "compiler"]
+categories = ["command-line-utilities", "compilers", "parser-implementations"]
 
 [dependencies]
 antlr4rust = "0.5.2"
