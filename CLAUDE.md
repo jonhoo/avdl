@@ -394,6 +394,12 @@ Primitives with annotations (e.g., `@foo("bar") int`) are wrapped in
 the `AnnotatedPrimitive` variant, which serializes as
 `{"type": "int", "foo": "bar"}` instead of a bare `"int"` string.
 
+## Important branches
+
+The `last-audit` branch marks the last commit reviewed by the
+workflow prompt that audits changes. Do not delete this branch when
+pruning worktree branches.
+
 ## Issue tracking
 
 Issues live in `issues/`, one file per issue. Filename format:
