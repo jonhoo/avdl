@@ -27,6 +27,23 @@ use serde_json::{Map, Value};
 use super::protocol::{Message, Protocol};
 use super::schema::{AvroSchema, Field, FieldOrder, LogicalType};
 
+/// Names from Java's `Schema.Type` enum. When a named type's simple name
+/// collides with one of these, the fully-qualified name must always be used
+/// in JSON references and aliases — otherwise a JSON parser would interpret
+/// the bare name as the built-in Avro type rather than as a reference to
+/// the user-defined named type. This mirrors Java's `Name.shouldWriteFull()`
+/// logic in `Schema.java`.
+///
+/// The primitive names (`string`, `bytes`, etc.) are already blocked from
+/// being used as type names by `INVALID_TYPE_NAMES` in `reader.rs`, so in
+/// practice only the complex-type names (`record`, `enum`, `array`, `map`,
+/// `union`, `fixed`) can trigger this code path. We include all of them for
+/// completeness and to stay aligned with the Java implementation.
+const SCHEMA_TYPE_NAMES: &[&str] = &[
+    "record", "enum", "array", "map", "union", "fixed", "string", "bytes", "int", "long", "float",
+    "double", "boolean", "null",
+];
+
 /// A lookup table from full type name to the actual schema definition. This
 /// allows `Reference` nodes to be resolved and inlined at their first use.
 pub type SchemaLookup = IndexMap<String, AvroSchema>;
@@ -249,8 +266,10 @@ pub fn schema_to_json(
                 obj.insert(k.clone(), v.clone());
             }
             if !aliases.is_empty() {
-                let aliases_json: Vec<Value> =
-                    aliases.iter().map(|a| Value::String(a.clone())).collect();
+                let aliases_json: Vec<Value> = aliases
+                    .iter()
+                    .map(|a| Value::String(alias_ref_name(a, namespace.as_deref())))
+                    .collect();
                 obj.insert("aliases".to_string(), Value::Array(aliases_json));
             }
             indexmap_to_value(obj)
@@ -311,8 +330,10 @@ pub fn schema_to_json(
                 obj.insert(k.clone(), v.clone());
             }
             if !aliases.is_empty() {
-                let aliases_json: Vec<Value> =
-                    aliases.iter().map(|a| Value::String(a.clone())).collect();
+                let aliases_json: Vec<Value> = aliases
+                    .iter()
+                    .map(|a| Value::String(alias_ref_name(a, namespace.as_deref())))
+                    .collect();
                 obj.insert("aliases".to_string(), Value::Array(aliases_json));
             }
             indexmap_to_value(obj)
@@ -367,8 +388,10 @@ pub fn schema_to_json(
                 obj.insert(k.clone(), v.clone());
             }
             if !aliases.is_empty() {
-                let aliases_json: Vec<Value> =
-                    aliases.iter().map(|a| Value::String(a.clone())).collect();
+                let aliases_json: Vec<Value> = aliases
+                    .iter()
+                    .map(|a| Value::String(alias_ref_name(a, namespace.as_deref())))
+                    .collect();
                 obj.insert("aliases".to_string(), Value::Array(aliases_json));
             }
             indexmap_to_value(obj)
@@ -622,18 +645,51 @@ fn message_to_json(
 
 /// When referencing a named type, use just the simple name if it shares the same
 /// namespace as the enclosing context; otherwise use the fully qualified name.
+///
+/// If the simple name collides with an Avro `Schema.Type` name (e.g., `record`,
+/// `enum`), the fully-qualified name is always used even when namespaces match.
+/// This mirrors Java's `Name.shouldWriteFull()` logic, which prevents ambiguity
+/// between a user-defined type reference and a built-in Avro type keyword.
 fn schema_ref_name(
     name: &str,
     namespace: Option<&str>,
     enclosing_namespace: Option<&str>,
 ) -> String {
     if namespace == enclosing_namespace {
-        name.to_string()
+        if SCHEMA_TYPE_NAMES.contains(&name) {
+            // Name collides with a built-in type -- must use the full name
+            // to avoid ambiguity in the JSON output.
+            match namespace {
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.to_string(),
+            }
+        } else {
+            name.to_string()
+        }
     } else {
         match namespace {
             Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
             _ => name.to_string(),
         }
+    }
+}
+
+/// Shorten an alias name using the same logic as Java's `Name.shouldWriteFull()`.
+///
+/// Each alias is a potentially fully-qualified name (e.g., `"com.example.OldName"`).
+/// If the alias namespace matches the owning schema's namespace and the simple
+/// name does not collide with a `Schema.Type` name, the alias is shortened to
+/// just the simple name. Otherwise the full name is preserved.
+fn alias_ref_name(alias: &str, schema_namespace: Option<&str>) -> String {
+    // Split at the last '.' to separate namespace from simple name.
+    match alias.rfind('.') {
+        Some(pos) => {
+            let alias_ns = &alias[..pos];
+            let alias_simple = &alias[pos + 1..];
+            schema_ref_name(alias_simple, Some(alias_ns), schema_namespace)
+        }
+        // No dot -- the alias has no namespace; emit it as-is.
+        None => alias.to_string(),
     }
 }
 
@@ -1379,6 +1435,306 @@ mod tests {
             schema_ref_name("Foo", Some("org.example"), None),
             "org.example.Foo"
         );
+    }
+
+    // =========================================================================
+    // schema_ref_name: Schema.Type name collision
+    // =========================================================================
+
+    #[test]
+    fn ref_name_uses_full_name_for_schema_type_collision() {
+        // A type named `record` in namespace `test.kw` must use the full name
+        // even when the enclosing namespace matches.
+        assert_eq!(
+            schema_ref_name("record", Some("test.kw"), Some("test.kw")),
+            "test.kw.record"
+        );
+    }
+
+    #[test]
+    fn ref_name_uses_full_name_for_enum_collision() {
+        assert_eq!(
+            schema_ref_name("enum", Some("test.kw"), Some("test.kw")),
+            "test.kw.enum"
+        );
+    }
+
+    #[test]
+    fn ref_name_uses_full_name_for_fixed_collision() {
+        assert_eq!(
+            schema_ref_name("fixed", Some("test.kw"), Some("test.kw")),
+            "test.kw.fixed"
+        );
+    }
+
+    #[test]
+    fn ref_name_uses_full_name_for_array_collision() {
+        assert_eq!(
+            schema_ref_name("array", Some("test.kw"), Some("test.kw")),
+            "test.kw.array"
+        );
+    }
+
+    #[test]
+    fn ref_name_uses_full_name_for_map_collision() {
+        assert_eq!(
+            schema_ref_name("map", Some("test.kw"), Some("test.kw")),
+            "test.kw.map"
+        );
+    }
+
+    #[test]
+    fn ref_name_uses_full_name_for_union_collision() {
+        assert_eq!(
+            schema_ref_name("union", Some("test.kw"), Some("test.kw")),
+            "test.kw.union"
+        );
+    }
+
+    #[test]
+    fn ref_name_collision_with_no_namespace_returns_bare_name() {
+        // With no namespace on either side, we can only emit the bare name,
+        // even though it collides. (This matches Java's behavior: if
+        // space == null, shouldWriteFull returns true but getQualified just
+        // returns the name portion.)
+        assert_eq!(
+            schema_ref_name("record", None, None),
+            "record"
+        );
+    }
+
+    #[test]
+    fn ref_name_collision_different_namespaces_uses_full() {
+        // Different namespaces -- always full, regardless of collision.
+        assert_eq!(
+            schema_ref_name("record", Some("test.kw"), Some("other.ns")),
+            "test.kw.record"
+        );
+    }
+
+    // =========================================================================
+    // alias_ref_name
+    // =========================================================================
+
+    #[test]
+    fn alias_same_namespace_shortens_to_simple_name() {
+        assert_eq!(
+            alias_ref_name("test.aliases.OldName", Some("test.aliases")),
+            "OldName"
+        );
+    }
+
+    #[test]
+    fn alias_different_namespace_keeps_full_name() {
+        assert_eq!(
+            alias_ref_name("other.ns.DiffNsAlias", Some("test.aliases")),
+            "other.ns.DiffNsAlias"
+        );
+    }
+
+    #[test]
+    fn alias_no_namespace_keeps_simple_name() {
+        assert_eq!(
+            alias_ref_name("NoNs", Some("test.aliases")),
+            "NoNs"
+        );
+    }
+
+    #[test]
+    fn alias_schema_type_collision_keeps_full_name() {
+        // An alias named `record` in the same namespace must not be shortened
+        // to avoid ambiguity with the built-in `record` type.
+        assert_eq!(
+            alias_ref_name("test.kw.record", Some("test.kw")),
+            "test.kw.record"
+        );
+    }
+
+    #[test]
+    fn alias_schema_type_collision_enum_keeps_full_name() {
+        assert_eq!(
+            alias_ref_name("test.kw.enum", Some("test.kw")),
+            "test.kw.enum"
+        );
+    }
+
+    #[test]
+    fn alias_no_collision_same_namespace_shortens() {
+        // A normal alias name (no collision) in the same namespace is shortened.
+        assert_eq!(
+            alias_ref_name("test.kw.NormalAlias", Some("test.kw")),
+            "NormalAlias"
+        );
+    }
+
+    #[test]
+    fn alias_schema_type_collision_different_namespace() {
+        // Different namespace -- always full, regardless of collision.
+        assert_eq!(
+            alias_ref_name("other.ns.record", Some("test.kw")),
+            "other.ns.record"
+        );
+    }
+
+    #[test]
+    fn alias_schema_nil_namespace() {
+        // Schema has no namespace; alias has namespace -- should keep full.
+        assert_eq!(
+            alias_ref_name("some.ns.Alias", None),
+            "some.ns.Alias"
+        );
+    }
+
+    // =========================================================================
+    // Record/Enum/Fixed alias shortening in schema_to_json
+    // =========================================================================
+
+    #[test]
+    fn record_aliases_shortened_in_same_namespace() {
+        let schema = AvroSchema::Record {
+            name: "NewName".to_string(),
+            namespace: Some("test.aliases".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![
+                "test.aliases.SameNs".to_string(),
+                "other.DiffNs".to_string(),
+                "NoNs".to_string(),
+            ],
+            properties: IndexMap::new(),
+        };
+
+        let result = schema_to_json(
+            &schema,
+            &mut IndexSet::new(),
+            Some("test.aliases"),
+            &IndexMap::new(),
+        );
+        assert_eq!(result["aliases"], json!(["SameNs", "other.DiffNs", "NoNs"]));
+    }
+
+    #[test]
+    fn enum_aliases_shortened_in_same_namespace() {
+        let schema = AvroSchema::Enum {
+            name: "NewEnum".to_string(),
+            namespace: Some("test.aliases".to_string()),
+            doc: None,
+            symbols: vec!["A".to_string()],
+            default: None,
+            aliases: vec![
+                "test.aliases.OldEnum".to_string(),
+                "other.ns.ForeignEnum".to_string(),
+            ],
+            properties: IndexMap::new(),
+        };
+
+        let result = schema_to_json(
+            &schema,
+            &mut IndexSet::new(),
+            Some("test.aliases"),
+            &IndexMap::new(),
+        );
+        assert_eq!(result["aliases"], json!(["OldEnum", "other.ns.ForeignEnum"]));
+    }
+
+    #[test]
+    fn fixed_aliases_shortened_in_same_namespace() {
+        let schema = AvroSchema::Fixed {
+            name: "NewFixed".to_string(),
+            namespace: Some("test.aliases".to_string()),
+            doc: None,
+            size: 16,
+            aliases: vec!["test.aliases.OldFixed".to_string()],
+            properties: IndexMap::new(),
+        };
+
+        let result = schema_to_json(
+            &schema,
+            &mut IndexSet::new(),
+            Some("test.aliases"),
+            &IndexMap::new(),
+        );
+        assert_eq!(result["aliases"], json!(["OldFixed"]));
+    }
+
+    #[test]
+    fn record_alias_with_schema_type_collision_not_shortened() {
+        // Alias named `record` in the same namespace must not be shortened.
+        let schema = AvroSchema::Record {
+            name: "MyRecord".to_string(),
+            namespace: Some("test.kw".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![
+                "test.kw.record".to_string(),
+                "test.kw.NormalAlias".to_string(),
+            ],
+            properties: IndexMap::new(),
+        };
+
+        let result = schema_to_json(
+            &schema,
+            &mut IndexSet::new(),
+            Some("test.kw"),
+            &IndexMap::new(),
+        );
+        assert_eq!(result["aliases"], json!(["test.kw.record", "NormalAlias"]));
+    }
+
+    // =========================================================================
+    // Reference with Schema.Type collision uses full name
+    // =========================================================================
+
+    #[test]
+    fn reference_uses_full_name_for_schema_type_collision() {
+        // A type named `record` in namespace `test.kw`. On second occurrence
+        // within the same namespace, it should still use the full name.
+        let record = AvroSchema::Record {
+            name: "record".to_string(),
+            namespace: Some("test.kw".to_string()),
+            doc: None,
+            fields: vec![Field {
+                name: "x".to_string(),
+                schema: AvroSchema::String,
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: IndexMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: IndexMap::new(),
+        };
+
+        let mut lookup = IndexMap::new();
+        lookup.insert("test.kw.record".to_string(), record.clone());
+
+        let reference = AvroSchema::Reference {
+            name: "record".to_string(),
+            namespace: Some("test.kw".to_string()),
+            properties: IndexMap::new(),
+        };
+
+        let mut known = IndexSet::new();
+        // First use inlines the definition.
+        let _ = serialize_schema_tracking(
+            &reference,
+            &mut known,
+            Some("test.kw"),
+            &lookup,
+        );
+        // Second use: even though namespaces match, the name `record` collides
+        // with a Schema.Type name, so the full name must be used.
+        let result = serialize_schema_tracking(
+            &reference,
+            &mut known,
+            Some("test.kw"),
+            &lookup,
+        );
+        assert_eq!(result, json!("test.kw.record"));
     }
 
     // =========================================================================
