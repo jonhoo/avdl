@@ -1669,8 +1669,8 @@ fn test_mutual_import_cycle_handled_gracefully() {
 // ==============================================================================
 
 /// Verify that parsing `comments.avdl` produces exactly 24 out-of-place
-/// documentation comment warnings, matching Java's
-/// `testDocCommentsAndWarnings` assertion count.
+/// documentation comment warnings with the correct (line, column) positions,
+/// matching Java's `testDocCommentsAndWarnings` assertion.
 ///
 /// The `comments.avdl` file has many intentionally misplaced doc comments
 /// (e.g., between keyword and identifier, between enum symbols, etc.) that
@@ -1705,6 +1705,34 @@ fn test_comments_warnings_count() {
             "warning {} should mention out-of-place doc comment, got: {}",
             i + 1,
             warning
+        );
+    }
+
+    // Verify the exact (line, column) positions of each warning, matching the
+    // expected values from Java's TestIdlReader.testDocCommentsAndWarnings.
+    //
+    // Java asserts these 24 (line, char) pairs:
+    //   (21,8), (21,45), (22,5), (23,5), (24,5), (25,5),
+    //   (26,7), (27,7), (28,7), (33,7), (34,7), (35,5),
+    //   (36,5), (37,7), (42,7), (43,7), (46,9), (47,5),
+    //   (54,7), (55,7), (58,9), (59,7), (60,11), (61,11)
+    let expected_positions: &[(u32, u32)] = &[
+        (21, 8), (21, 45), (22, 5), (23, 5), (24, 5), (25, 5),
+        (26, 7), (27, 7), (28, 7), (33, 7), (34, 7), (35, 5),
+        (36, 5), (37, 7), (42, 7), (43, 7), (46, 9), (47, 5),
+        (54, 7), (55, 7), (58, 9), (59, 7), (60, 11), (61, 11),
+    ];
+
+    for (i, (warning, &(expected_line, expected_col))) in
+        warnings.iter().zip(expected_positions.iter()).enumerate()
+    {
+        let expected_prefix = format!("Line {}, char {}:", expected_line, expected_col);
+        assert!(
+            warning.message.starts_with(&expected_prefix),
+            "warning {} position mismatch: expected '{}', got '{}'",
+            i + 1,
+            expected_prefix,
+            warning.message.lines().next().unwrap_or("")
         );
     }
 }
@@ -1756,4 +1784,417 @@ fn test_idl2schemata_tools_protocol() {
     let test_error = &schemata["TestError"];
     assert_eq!(test_error["type"], "error");
     assert_eq!(test_error["name"], "TestError");
+}
+
+// ==============================================================================
+// `idl2schemata` Golden-File Comparison Tests
+// ==============================================================================
+//
+// For each protocol `.avdl` file with a golden `.avpr` output, verify that the
+// `idl2schemata` pipeline extracts the same set of named schemas (matching by
+// type name) with the correct type kind (record/enum/fixed), namespace, and
+// count. This catches regressions in schema extraction and ordering that the
+// structural assertions in individual `test_idl2schemata_*` tests might miss.
+//
+// We cannot compare the full JSON trees because the serialization strategies
+// differ: `.avpr` types arrays use string references after first occurrence,
+// while idl2schemata serializes each schema independently with fresh
+// `known_names`, inlining all referenced types. The type-level metadata
+// (name, kind, namespace, field/symbol count) is comparable.
+
+/// Recursively extract all named type definitions from a JSON value.
+///
+/// Named types (record, enum, fixed, error) can appear both at the top level
+/// of a `.avpr` types array and inlined within field types. This function
+/// collects all of them in the order they first appear (depth-first), matching
+/// the set of types that `idl2schemata` would extract from the registry.
+///
+/// For types without an explicit `"namespace"` key, `inherited_ns` is used
+/// (the enclosing protocol or record namespace).
+fn collect_all_named_types(
+    value: &Value,
+    inherited_ns: Option<&str>,
+    out: &mut Vec<(String, String, Option<String>)>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    match value {
+        Value::Object(obj) => {
+            // Check if this object is a named type definition.
+            if let (Some(name), Some(kind)) = (
+                obj.get("name").and_then(|n| n.as_str()),
+                obj.get("type").and_then(|t| t.as_str()),
+            ) {
+                let is_named = matches!(kind, "record" | "enum" | "fixed" | "error");
+                if is_named && seen.insert(name.to_string()) {
+                    let namespace = obj
+                        .get("namespace")
+                        .and_then(|ns| ns.as_str())
+                        .map(|s| s.to_string())
+                        .or_else(|| inherited_ns.map(|s| s.to_string()));
+                    out.push((name.to_string(), kind.to_string(), namespace.clone()));
+
+                    // For records/errors, recurse into fields to find nested types.
+                    // The effective namespace for nested types is this type's namespace.
+                    let effective_ns = obj
+                        .get("namespace")
+                        .and_then(|ns| ns.as_str())
+                        .or(inherited_ns);
+                    if let Some(fields) = obj.get("fields").and_then(|f| f.as_array()) {
+                        for field in fields {
+                            if let Some(field_type) = field.get("type") {
+                                collect_all_named_types(field_type, effective_ns, out, seen);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Not a named type, but might contain named types (e.g., array items).
+                if let Some(items) = obj.get("items") {
+                    collect_all_named_types(items, inherited_ns, out, seen);
+                }
+                if let Some(values) = obj.get("values") {
+                    collect_all_named_types(values, inherited_ns, out, seen);
+                }
+            }
+        }
+        Value::Array(arr) => {
+            // Could be a union array or the top-level types array.
+            for item in arr {
+                collect_all_named_types(item, inherited_ns, out, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Extract all named type metadata from a golden `.avpr` file, including types
+/// inlined within record fields.
+///
+/// Returns a list of `(simple_name, type_kind, effective_namespace)` tuples
+/// in first-occurrence order.
+fn extract_golden_type_metadata(avpr: &Value) -> Vec<(String, String, Option<String>)> {
+    let protocol_ns = avpr
+        .get("namespace")
+        .and_then(|ns| ns.as_str());
+
+    let types = avpr
+        .get("types")
+        .expect("golden .avpr should have a types key");
+
+    let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    collect_all_named_types(types, protocol_ns, &mut result, &mut seen);
+    result
+}
+
+/// Test `idl2schemata` golden-file comparison for all protocol `.avdl` files.
+///
+/// For each protocol test file that has a golden `.avpr`, run the idl2schemata
+/// pipeline and verify that the extracted schema set matches the set of all
+/// named types defined in the golden `.avpr` (including types inlined in field
+/// definitions). Comparison checks:
+/// - Number of named schemas
+/// - Schema names (as a set)
+/// - Type kinds (record, enum, fixed, error)
+/// - Namespace values
+///
+/// We compare by name (as a set) rather than by position because the `.avpr`
+/// inlines types at first-occurrence which changes their traversal order
+/// relative to the registry's declaration order.
+#[test]
+fn test_idl2schemata_golden_comparison() {
+    /// Compare idl2schemata output against golden `.avpr` metadata.
+    fn compare_schemata(
+        name: &str,
+        schemata: &indexmap::IndexMap<String, Value>,
+        golden: &Value,
+    ) {
+        let golden_metadata = extract_golden_type_metadata(golden);
+
+        // Build a lookup from golden metadata by name.
+        let golden_by_name: std::collections::HashMap<&str, (&str, Option<&str>)> = golden_metadata
+            .iter()
+            .map(|(n, k, ns)| (n.as_str(), (k.as_str(), ns.as_deref())))
+            .collect();
+
+        // Verify the count matches.
+        assert_eq!(
+            schemata.len(),
+            golden_metadata.len(),
+            "{name}.avdl: idl2schemata produced {} schemas, golden .avpr has {} types.\n\
+             idl2schemata names: {:?}\n\
+             golden names: {:?}",
+            schemata.len(),
+            golden_metadata.len(),
+            schemata.keys().collect::<Vec<_>>(),
+            golden_metadata.iter().map(|(n, _, _)| n).collect::<Vec<_>>()
+        );
+
+        // Verify each schema's name, type kind, and namespace match.
+        for (actual_name, actual_json) in schemata {
+            let (golden_kind, golden_ns) = golden_by_name
+                .get(actual_name.as_str())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{name}.avdl: idl2schemata produced schema '{actual_name}' not found in golden .avpr.\n\
+                         golden names: {:?}",
+                        golden_by_name.keys().collect::<Vec<_>>()
+                    )
+                });
+
+            let actual_kind = actual_json
+                .get("type")
+                .and_then(|t| t.as_str())
+                .expect("schema should have a type");
+            assert_eq!(
+                actual_kind, *golden_kind,
+                "{name}.avdl: schema '{actual_name}' type kind mismatch"
+            );
+
+            let actual_ns = actual_json
+                .get("namespace")
+                .and_then(|ns| ns.as_str());
+            assert_eq!(
+                actual_ns, *golden_ns,
+                "{name}.avdl: schema '{actual_name}' namespace mismatch"
+            );
+        }
+    }
+
+    // Protocol files that DO NOT need IDL imports and have golden .avpr output.
+    let simple_files = [
+        "echo", "simple", "comments", "cycle", "forward_ref", "interop",
+        "leading_underscore", "mr_events", "namespaces", "reservedwords",
+        "unicode", "union", "uuid",
+    ];
+
+    for name in &simple_files {
+        let avdl = input_path(&format!("{name}.avdl"));
+        let golden_path = output_path(&format!("{name}.avpr"));
+
+        let schemata = parse_idl2schemata(&avdl, &[]);
+        let golden = load_expected(&golden_path);
+        compare_schemata(name, &schemata, &golden);
+    }
+
+    // Protocol files that need schema/protocol imports (no IDL imports).
+    {
+        let input_dir = PathBuf::from(INPUT_DIR);
+        let avdl = input_path("baseball.avdl");
+        let golden_path = output_path("baseball.avpr");
+        let schemata = parse_idl2schemata(&avdl, &[&input_dir]);
+        let golden = load_expected(&golden_path);
+        compare_schemata("baseball", &schemata, &golden);
+    }
+
+    // Protocol files that need IDL imports.
+    {
+        let input_dir = PathBuf::from(INPUT_DIR);
+        let classpath_dir = PathBuf::from(CLASSPATH_DIR);
+        let avdl = input_path("import.avdl");
+        let golden_path = output_path("import.avpr");
+        let schemata = parse_idl2schemata_with_idl_imports(&avdl, &[&input_dir, &classpath_dir]);
+        let golden = load_expected(&golden_path);
+        compare_schemata("import", &schemata, &golden);
+    }
+
+    {
+        let input_dir = PathBuf::from(INPUT_DIR);
+        let avdl = input_path("nestedimport.avdl");
+        let golden_path = output_path("nestedimport.avpr");
+        let schemata = parse_idl2schemata_with_idl_imports(&avdl, &[&input_dir]);
+        let golden = load_expected(&golden_path);
+        compare_schemata("nestedimport", &schemata, &golden);
+    }
+}
+
+// ==============================================================================
+// `idl2schemata` Error Path Tests
+// ==============================================================================
+
+/// Verify that the `idl2schemata` pipeline detects unresolved type references.
+///
+/// When a protocol contains a field with an undefined type, the schema registry
+/// should flag it via `validate_references()`. This test exercises the full
+/// pipeline (parse -> register -> validate) with invalid input to ensure errors
+/// are surfaced rather than silently producing `.avsc` files with bare string
+/// references.
+#[test]
+fn test_idl2schemata_unresolved_type_detected() {
+    let input = r#"
+        @namespace("test")
+        protocol P {
+            record R {
+                MissingType field;
+            }
+        }
+    "#;
+
+    let (_idl_file, decl_items, _warnings) =
+        parse_idl(input).expect("parsing the IDL text itself should succeed");
+
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+    for item in &decl_items {
+        if let DeclItem::Type(schema) = item {
+            let _ = registry.register(schema.clone());
+        }
+    }
+
+    // The registry should detect the unresolved reference to "MissingType".
+    // In the actual idl2schemata pipeline (main.rs), this check is performed
+    // after all types are registered, and an error is returned if any
+    // references are unresolved.
+    let unresolved = registry.validate_references();
+    assert!(
+        !unresolved.is_empty(),
+        "idl2schemata should detect unresolved type references, got none"
+    );
+    assert!(
+        unresolved.iter().any(|name| name.contains("MissingType")),
+        "unresolved types should include 'MissingType', got: {unresolved:?}"
+    );
+}
+
+// ==============================================================================
+// Test-Root `cycle.avdl` (Gap #7)
+// ==============================================================================
+
+const TEST_ROOT_DIR: &str = "avro/lang/java/idl/src/test/idl";
+
+/// Test the test-root `cycle.avdl` (in `avro/lang/java/idl/src/test/idl/`,
+/// outside the `input/` directory).
+///
+/// This file defines a different cycle pattern from `input/cycle.avdl`:
+/// - `Record1` references `Record3` (forward ref)
+/// - `Record2` references `Record1` (via nullable union)
+/// - `Record3` references `Record2`
+/// - `TestEnum` (enum) and `TestFixed` (fixed) are also defined
+///
+/// Java's `TestCycle.testCycleGeneration` exercises `input/cycle.avdl`, not
+/// this file. However, this test-root file is present in the test suite and
+/// exercises a more complex cycle pattern (three records forming a cycle, plus
+/// forward references to enum and fixed types).
+///
+/// No golden `.avpr` file exists for this variant, so we verify structural
+/// correctness: the protocol parses successfully, produces the expected five
+/// named types, and the forward references resolve correctly.
+#[test]
+fn test_cycle_test_root() {
+    let avdl_path = PathBuf::from(TEST_ROOT_DIR).join("cycle.avdl");
+    let input = fs::read_to_string(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
+
+    let (idl_file, decl_items, warnings) =
+        parse_idl(&input).unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    // Should produce no warnings.
+    assert!(
+        warnings.is_empty(),
+        "test-root cycle.avdl should produce no warnings, got: {:?}",
+        warnings
+    );
+
+    // Should be a protocol file.
+    let protocol = match &idl_file {
+        IdlFile::ProtocolFile(p) => p,
+        other => panic!(
+            "expected ProtocolFile, got {:?}",
+            std::mem::discriminant(other)
+        ),
+    };
+
+    assert_eq!(protocol.name, "Cycle");
+    assert_eq!(protocol.namespace.as_deref(), Some("org.apache.avro.gen.test"));
+
+    // Register all types and verify no unresolved references.
+    let mut registry = avdl::resolve::SchemaRegistry::new();
+    for item in &decl_items {
+        if let DeclItem::Type(schema) = item {
+            registry
+                .register(schema.clone())
+                .unwrap_or_else(|e| panic!("failed to register type: {e}"));
+        }
+    }
+
+    let unresolved = registry.validate_references();
+    assert!(
+        unresolved.is_empty(),
+        "all type references should resolve, got unresolved: {unresolved:?}"
+    );
+
+    // Should have 5 named types: Record1, Record2, Record3, TestEnum, TestFixed.
+    let type_names: Vec<&str> = registry
+        .schemas()
+        .filter_map(|s| s.name())
+        .collect();
+    assert_eq!(
+        type_names,
+        vec!["Record1", "Record2", "Record3", "TestEnum", "TestFixed"],
+        "test-root cycle.avdl should define 5 named types in declaration order"
+    );
+
+    // Serialize the protocol to JSON and verify the structure.
+    let json = idl_file_to_json(idl_file, registry);
+    let types = json["types"].as_array().expect("should have types array");
+
+    // In Avro protocol JSON, named types are inlined on first occurrence and
+    // then referenced by string name afterward. Since Record1 is the first
+    // type and all others (Record3, Record2, TestEnum, TestFixed) are first
+    // referenced transitively from within its fields, they are all inlined
+    // inside Record1. The top-level `types` array contains only Record1.
+    assert_eq!(
+        types.len(),
+        1,
+        "all 5 types are inlined inside Record1 (first occurrence), \
+         so the top-level types array has 1 entry"
+    );
+
+    // Record1: fields are fString (string with default) and rec3 (Record3).
+    let record1 = &types[0];
+    assert_eq!(record1["type"], "record");
+    assert_eq!(record1["name"], "Record1");
+    let r1_fields = record1["fields"].as_array().expect("Record1 should have fields");
+    assert_eq!(r1_fields.len(), 2);
+    assert_eq!(r1_fields[0]["name"], "fString");
+    assert_eq!(r1_fields[1]["name"], "rec3");
+
+    // Record3 is inlined as the type of Record1's `rec3` field.
+    let record3 = &r1_fields[1]["type"];
+    assert_eq!(record3["type"], "record");
+    assert_eq!(record3["name"], "Record3");
+    let r3_fields = record3["fields"].as_array().expect("Record3 should have fields");
+    assert_eq!(r3_fields.len(), 2);
+    assert_eq!(r3_fields[0]["name"], "fEnum");
+    assert_eq!(r3_fields[1]["name"], "rec2");
+
+    // TestEnum is inlined inside Record3's `fEnum` field.
+    let test_enum = &r3_fields[0]["type"];
+    assert_eq!(test_enum["type"], "enum");
+    assert_eq!(test_enum["name"], "TestEnum");
+    let symbols = test_enum["symbols"].as_array().expect("TestEnum should have symbols");
+    assert_eq!(symbols.len(), 2);
+
+    // Record2 is inlined inside Record3's `rec2` field.
+    let record2 = &r3_fields[1]["type"];
+    assert_eq!(record2["type"], "record");
+    assert_eq!(record2["name"], "Record2");
+    let r2_fields = record2["fields"].as_array().expect("Record2 should have fields");
+    assert_eq!(r2_fields.len(), 3);
+    assert_eq!(r2_fields[0]["name"], "fFixed");
+    assert_eq!(r2_fields[1]["name"], "val");
+    assert_eq!(r2_fields[2]["name"], "fRec1");
+
+    // TestFixed is inlined inside Record2's `fFixed` field.
+    let test_fixed = &r2_fields[0]["type"];
+    assert_eq!(test_fixed["type"], "fixed");
+    assert_eq!(test_fixed["name"], "TestFixed");
+    assert_eq!(test_fixed["size"], 16);
+
+    // Record1 is referenced by string name in Record2's `fRec1` nullable union
+    // (since it was already defined at the top level).
+    let f_rec1_type = &r2_fields[2]["type"];
+    let union = f_rec1_type.as_array().expect("fRec1 type should be a union array");
+    assert_eq!(union.len(), 2);
+    assert_eq!(union[0], "null");
+    assert_eq!(union[1], "Record1", "back-reference to Record1 should be a string name");
 }

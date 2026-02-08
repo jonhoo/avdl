@@ -27,13 +27,11 @@ The following gaps from the original issue have been resolved:
 
 ## Remaining work
 
-### Gap 7: Second `cycle.avdl` variant (Low priority)
+### Gap 7: Second `cycle.avdl` variant -- RESOLVED
 
-The test-root `cycle.avdl` (with `Record1`/`Record2`/`Record3`, three
-records referencing each other) is different from `input/cycle.avdl`
-and is not covered by `test_cycle`. It has a more complex cycle pattern.
+Resolved: `test_cycle_test_root` added to `tests/integration.rs`.
 
-### Gap 8: CLI-level integration tests (Low priority)
+### Gap 8: CLI-level integration tests (Low priority, deferred)
 
 All existing integration tests call the library API directly. No tests
 exercise the CLI binary, including stdin/stdout piping, `--import-dir`
@@ -41,13 +39,15 @@ flag parsing, error output formatting, or exit codes. This means the
 broken-pipe fix in `write_output` and the `idl2schemata` required-arg
 change have no dedicated regression tests.
 
+This is deferred as low priority. The library-level integration tests
+cover the parsing and serialization logic thoroughly, and the
+`compare-golden.sh` script exercises the CLI end-to-end.
+
 ## Affected files
 
 - `tests/integration.rs`
 
 ## Reproduction
-
-Gap 7: No test exercises the test-root `cycle.avdl` file.
 
 Gap 8: No test exercises `cargo run -- idl` or `cargo run -- idl2schemata`
 as a subprocess to verify CLI behavior (exit codes, error formatting,
