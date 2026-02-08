@@ -2723,13 +2723,8 @@ mod tests {
                 Msg send(Msg m) oneway;
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for one-way message with non-void return");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("must return void"),
-            "error should mention 'must return void', got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -2760,16 +2755,8 @@ mod tests {
                 }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(
-            result.is_err(),
-            "expected error for annotation on type reference"
-        );
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("may not be annotated"),
-            "error should mention 'may not be annotated', got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -2984,13 +2971,8 @@ mod tests {
                 record R { string name; }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for @doc on protocol");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Can't set reserved property: doc"),
-            "error should mention reserved property, got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3002,13 +2984,8 @@ mod tests {
                 @doc("Record doc") record R { string name; }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for @doc on record");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Can't set reserved property: doc"),
-            "error should mention reserved property, got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3021,13 +2998,8 @@ mod tests {
                 record R { @type("custom") string name; }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for @type on field type");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Can't set reserved property: type"),
-            "error should mention reserved property, got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3039,13 +3011,8 @@ mod tests {
                 record R { string @doc("field doc") name; }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for @doc on field variable");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Can't set reserved property: doc"),
-            "error should mention reserved property, got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3058,13 +3025,8 @@ mod tests {
                 @default("A") enum E { A, B, C }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for @default on enum");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Can't set reserved property: default"),
-            "error should mention reserved property, got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3105,13 +3067,8 @@ mod tests {
                 @doc("message doc") void ping();
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for @doc on message");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Can't set reserved property: doc"),
-            "error should mention reserved property, got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3123,13 +3080,8 @@ mod tests {
                 @response("custom") void ping();
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for @response on message");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Can't set reserved property: response"),
-            "error should mention reserved property, got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3413,13 +3365,8 @@ mod tests {
                 }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for duplicate null in union");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Duplicate in union: null"),
-            "error should mention 'Duplicate in union: null', got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3431,13 +3378,8 @@ mod tests {
                 }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for duplicate string in union");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Duplicate in union: string"),
-            "error should mention 'Duplicate in union: string', got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3450,13 +3392,8 @@ mod tests {
                 }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for duplicate named type in union");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Duplicate in union:"),
-            "error should mention 'Duplicate in union:', got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3506,13 +3443,8 @@ mod tests {
                 enum E { A, B, C } = NONEXISTENT;
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "expected error for invalid enum default");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Enum Default"),
-            "error should mention 'Enum Default', got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3537,13 +3469,8 @@ mod tests {
     #[test]
     fn protocol_name_null_is_rejected() {
         let idl = "protocol `null` { }";
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "reserved protocol name 'null' should be rejected");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Illegal name"),
-            "error should mention 'Illegal name', got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3596,13 +3523,8 @@ mod tests {
                 record Foo { string name; }
             }
         "#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "invalid alias name should be rejected");
-        let err_msg = format!("{:?}", result.unwrap_err());
-        assert!(
-            err_msg.contains("invalid alias name"),
-            "error should mention 'invalid alias name', got: {err_msg}"
-        );
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]
@@ -3663,10 +3585,8 @@ mod tests {
     #[test]
     fn default_int_string_is_rejected() {
         let idl = r#"protocol P { record R { int count = "hello"; } }"#;
-        let result = parse_idl(idl);
-        assert!(result.is_err(), "int with string default should be rejected");
-        let err = format!("{:?}", result.unwrap_err());
-        assert!(err.contains("Invalid default"), "error message should mention invalid default: {err}");
+        let err = parse_idl(idl).unwrap_err();
+        insta::assert_debug_snapshot!(err);
     }
 
     #[test]

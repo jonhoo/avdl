@@ -712,16 +712,8 @@ fn test_nested_union_rejected() {
         }
     "#;
 
-    let result = parse_idl(input);
-    assert!(
-        result.is_err(),
-        "nested unions should be rejected by the parser"
-    );
-    let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(
-        err_msg.contains("Unions may not immediately contain other unions"),
-        "error message should mention nested unions, got: {err_msg}"
-    );
+    let err = parse_idl(input).unwrap_err();
+    insta::assert_debug_snapshot!(err);
 }
 
 /// Type names that collide with Avro built-in types (e.g., `int`, `string`,
@@ -730,16 +722,8 @@ fn test_nested_union_rejected() {
 #[test]
 fn test_reserved_type_name_rejected() {
     let input = r#"record `int` { string value; }"#;
-    let result = parse_idl(input);
-    assert!(
-        result.is_err(),
-        "expected error for record named `int` (reserved type name)"
-    );
-    let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(
-        err_msg.contains("Illegal name"),
-        "error should mention 'Illegal name', got: {err_msg}"
-    );
+    let err = parse_idl(input).unwrap_err();
+    insta::assert_debug_snapshot!(err);
 }
 
 /// Records must not contain duplicate field names. The Java Schema constructor
@@ -756,16 +740,8 @@ fn test_duplicate_field_name_rejected() {
         }
     "#;
 
-    let result = parse_idl(input);
-    assert!(
-        result.is_err(),
-        "duplicate field names should be rejected"
-    );
-    let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(
-        err_msg.contains("duplicate field 'name'"),
-        "error should mention duplicate field, got: {err_msg}"
-    );
+    let err = parse_idl(input).unwrap_err();
+    insta::assert_debug_snapshot!(err);
 }
 
 /// Enum declarations must not contain duplicate symbols. The Java Schema
@@ -779,16 +755,8 @@ fn test_duplicate_enum_symbol_rejected() {
         }
     "#;
 
-    let result = parse_idl(input);
-    assert!(
-        result.is_err(),
-        "duplicate enum symbols should be rejected"
-    );
-    let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(
-        err_msg.contains("duplicate enum symbol: RED"),
-        "error should mention duplicate symbol, got: {err_msg}"
-    );
+    let err = parse_idl(input).unwrap_err();
+    insta::assert_debug_snapshot!(err);
 }
 
 /// When a named type's identifier contains dots (e.g., `com.example.Foo`),
@@ -2427,15 +2395,6 @@ fn test_annotation_on_type_reference_file() {
     let input = fs::read_to_string(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", avdl_path.display()));
 
-    let result = parse_idl(&input);
-    assert!(
-        result.is_err(),
-        "AnnotationOnTypeReference.avdl should fail to parse"
-    );
-
-    let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(
-        err_msg.contains("Type references may not be annotated"),
-        "error should mention 'Type references may not be annotated', got: {err_msg}"
-    );
+    let err = parse_idl(&input).unwrap_err();
+    insta::assert_debug_snapshot!(err);
 }

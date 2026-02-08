@@ -1,0 +1,13 @@
+---
+source: tests/error_reporting.rs
+expression: error
+---
+  x parse `<input>`
+  `-> duplicate parameter 'x' in message 'test'
+   ,-[<input>:5:30]
+ 4 |             record Msg { string text; }
+ 5 |             void test(Msg x, Msg x);
+   :                              ^|^
+   :                               `-- duplicate parameter 'x' in message 'test'
+ 6 |         }
+   `----

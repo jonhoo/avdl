@@ -1,0 +1,9 @@
+---
+source: tests/error_reporting.rs
+expression: error
+---
+  x parse `<input>`
+  `-> IDL file contains neither a protocol nor a schema declaration
+   ,-[<input>:1:14]
+ 1 | /* nothing */
+   `----

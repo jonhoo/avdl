@@ -1,0 +1,21 @@
+---
+source: src/reader.rs
+expression: err
+---
+Error {
+    msg: "parse `<input>`",
+    source: ParseDiagnostic {
+        src: NamedSource {
+            name: "<input>",
+            source: "<redacted>",
+            language: None,
+        ,
+        span: SourceSpan {
+            offset: SourceOffset(
+                9,
+            ),
+            length: 6,
+        },
+        message: "Illegal name: null",
+    },
+}

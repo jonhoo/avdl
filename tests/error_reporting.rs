@@ -452,3 +452,90 @@ fn test_error_unclosed_paren() {
     let error = parse_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
+
+// ==============================================================================
+// Additional Semantic Error Tests
+// ==============================================================================
+
+/// Duplicate parameter names in a message declaration should be rejected.
+#[test]
+fn test_error_duplicate_message_param() {
+    let input = r#"
+        @namespace("test")
+        protocol P {
+            record Msg { string text; }
+            void test(Msg x, Msg x);
+        }
+    "#;
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// An IDL file with no protocol or schema declaration should be rejected.
+#[test]
+fn test_error_empty_idl_file() {
+    let input = "/* nothing */";
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// An invalid `@order` annotation value (not ASCENDING, DESCENDING, or IGNORE)
+/// should be rejected. The `@order` annotation is a field-variable property,
+/// placed between the type and the field name.
+#[test]
+fn test_error_invalid_order_value() {
+    let input = r#"
+        @namespace("test")
+        protocol P {
+            record R {
+                string @order("BAD") x;
+            }
+        }
+    "#;
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// An `@aliases` annotation with a non-array value should be rejected.
+#[test]
+fn test_error_invalid_aliases_type() {
+    let input = r#"
+        @namespace("test")
+        protocol P {
+            @aliases(123) record R { string name; }
+        }
+    "#;
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// A one-way message with a non-void return type should be rejected.
+#[test]
+fn test_error_oneway_nonvoid() {
+    let input = r#"
+        @namespace("test")
+        protocol P {
+            record Msg { string text; }
+            Msg send(Msg m) oneway;
+        }
+    "#;
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}
+
+/// Annotations on type references (bare names of previously-defined types)
+/// should be rejected.
+#[test]
+fn test_error_annotated_type_reference() {
+    let input = r#"
+        @namespace("test")
+        protocol P {
+            fixed MD5(16);
+            record R {
+                @foo("bar") MD5 hash;
+            }
+        }
+    "#;
+    let error = parse_error(input).expect("should produce an error");
+    insta::assert_snapshot!(error);
+}

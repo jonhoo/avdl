@@ -1,0 +1,13 @@
+---
+source: tests/error_reporting.rs
+expression: error
+---
+  x parse `<input>`
+  `-> One-way message 'send' must return void
+   ,-[<input>:5:13]
+ 4 |             record Msg { string text; }
+ 5 |             Msg send(Msg m) oneway;
+   :             ^|^
+   :              `-- One-way message 'send' must return void
+ 6 |         }
+   `----
