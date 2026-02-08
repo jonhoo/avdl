@@ -1,6 +1,13 @@
 ---
 source: tests/error_reporting.rs
-assertion_line: 192
 expression: error
 ---
-walk IDL parse tree for `<input>`: duplicate enum symbol: RED
+  x parse `<input>`
+  `-> duplicate enum symbol: RED
+   ,-[<input>:4:44]
+ 3 |         protocol P {
+ 4 |             enum Color { RED, GREEN, BLUE, RED }
+   :                                            ^|^
+   :                                             `-- duplicate enum symbol: RED
+ 5 |         }
+   `----

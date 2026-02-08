@@ -1,6 +1,13 @@
 ---
 source: tests/error_reporting.rs
-assertion_line: 163
 expression: error
 ---
-walk IDL parse tree for `<input>`: duplicate field 'name' in record 'R'
+  x parse `<input>`
+  `-> duplicate field 'name' in record 'R'
+   ,-[<input>:6:17]
+ 5 |                 string name;
+ 6 |                 int name;
+   :                 ^|^
+   :                  `-- duplicate field 'name' in record 'R'
+ 7 |             }
+   `----

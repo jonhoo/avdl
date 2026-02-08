@@ -1,6 +1,13 @@
 ---
 source: tests/error_reporting.rs
-assertion_line: 179
 expression: error
 ---
-walk IDL parse tree for `<input>`: Unions may not immediately contain other unions
+  x parse `<input>`
+  `-> Unions may not immediately contain other unions
+   ,-[<input>:5:31]
+ 4 |             record Bad {
+ 5 |                 union { null, union { string, int } } nested;
+   :                               ^^|^^
+   :                                 `-- Unions may not immediately contain other unions
+ 6 |             }
+   `----

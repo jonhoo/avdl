@@ -37,7 +37,7 @@ use serde_json::Value;
 
 use crate::doc_comments::extract_doc_comment;
 use crate::error::ParseDiagnostic;
-use miette::Result;
+use miette::{Context, Result};
 use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
@@ -225,8 +225,9 @@ pub fn parse_idl_named(
     }));
 
     let tree = parser.idlFile().map_err(|e| {
-        miette::miette!("parse error: parse IDL source `{source_name}`: {e:?}")
-    })?;
+        miette::miette!("ANTLR parse error: {e:?}")
+    })
+    .wrap_err_with(|| format!("parse `{source_name}`"))?;
 
     // Check for ANTLR syntax errors collected during parsing. Any syntax error
     // means the input is malformed, even if ANTLR's error recovery produced a
@@ -273,7 +274,7 @@ pub fn parse_idl_named(
         &mut namespace,
         &mut decl_items,
     )
-    .map_err(|e| miette::miette!("walk IDL parse tree for `{source_name}`: {e}"))?;
+    .wrap_err_with(|| format!("parse `{source_name}`"))?;
 
     // ==============================================================================
     // Orphaned Doc Comment Detection
@@ -561,9 +562,8 @@ fn walk_schema_properties<'input>(
         let value_ctx = prop
             .jsonValue()
             .ok_or_else(|| make_diagnostic(src, &**prop, "missing property value"))?;
-        let value = walk_json_value(&value_ctx, token_stream, src).map_err(|e| {
-            miette::miette!("parse value for schema property `{name}`: {e}")
-        })?;
+        let value = walk_json_value(&value_ctx, token_stream, src)
+            .wrap_err_with(|| format!("parse value for schema property `{name}`"))?;
 
         // Intercept well-known annotations only when the context flags allow it.
         // When a flag is false, that name falls through to the custom properties
@@ -985,9 +985,8 @@ fn walk_variable<'input>(
 
     // Parse the default value if present.
     let default_value = if let Some(json_ctx) = ctx.jsonValue() {
-        Some(walk_json_value(&json_ctx, token_stream, src).map_err(|e| {
-            miette::miette!("parse default value for field `{field_name}`: {e}")
-        })?)
+        Some(walk_json_value(&json_ctx, token_stream, src)
+            .wrap_err_with(|| format!("parse default value for field `{field_name}`"))?)
     } else {
         None
     };
@@ -1150,7 +1149,11 @@ fn walk_fixed<'input>(
         make_diagnostic(src, ctx, "missing fixed size")
     })?;
     let size = parse_integer_as_u32(size_tok.get_text()).map_err(|e| {
-        miette::miette!("parse fixed size for `{fixed_name}`: {e}")
+        make_diagnostic_from_token(
+            src,
+            &**size_tok,
+            format!("invalid fixed size for `{fixed_name}`: {e}"),
+        )
     })?;
 
     Ok(AvroSchema::Fixed {
@@ -2661,7 +2664,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for one-way message with non-void return");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("must return void"),
             "error should mention 'must return void', got: {err_msg}"
@@ -2701,7 +2704,7 @@ mod tests {
             result.is_err(),
             "expected error for annotation on type reference"
         );
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("may not be annotated"),
             "error should mention 'may not be annotated', got: {err_msg}"
@@ -2922,7 +2925,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for @doc on protocol");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Can't set reserved property: doc"),
             "error should mention reserved property, got: {err_msg}"
@@ -2940,7 +2943,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for @doc on record");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Can't set reserved property: doc"),
             "error should mention reserved property, got: {err_msg}"
@@ -2959,7 +2962,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for @type on field type");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Can't set reserved property: type"),
             "error should mention reserved property, got: {err_msg}"
@@ -2977,7 +2980,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for @doc on field variable");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Can't set reserved property: doc"),
             "error should mention reserved property, got: {err_msg}"
@@ -2996,7 +2999,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for @default on enum");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Can't set reserved property: default"),
             "error should mention reserved property, got: {err_msg}"
@@ -3043,7 +3046,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for @doc on message");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Can't set reserved property: doc"),
             "error should mention reserved property, got: {err_msg}"
@@ -3061,7 +3064,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for @response on message");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Can't set reserved property: response"),
             "error should mention reserved property, got: {err_msg}"
@@ -3351,7 +3354,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for duplicate null in union");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Duplicate in union: null"),
             "error should mention 'Duplicate in union: null', got: {err_msg}"
@@ -3369,7 +3372,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for duplicate string in union");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Duplicate in union: string"),
             "error should mention 'Duplicate in union: string', got: {err_msg}"
@@ -3388,7 +3391,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for duplicate named type in union");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Duplicate in union:"),
             "error should mention 'Duplicate in union:', got: {err_msg}"
@@ -3444,7 +3447,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "expected error for invalid enum default");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Enum Default"),
             "error should mention 'Enum Default', got: {err_msg}"
@@ -3475,7 +3478,7 @@ mod tests {
         let idl = "protocol `null` { }";
         let result = parse_idl(idl);
         assert!(result.is_err(), "reserved protocol name 'null' should be rejected");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("Illegal name"),
             "error should mention 'Illegal name', got: {err_msg}"
@@ -3534,7 +3537,7 @@ mod tests {
         "#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "invalid alias name should be rejected");
-        let err_msg = format!("{}", result.unwrap_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
             err_msg.contains("invalid alias name"),
             "error should mention 'invalid alias name', got: {err_msg}"
@@ -3601,7 +3604,7 @@ mod tests {
         let idl = r#"protocol P { record R { int count = "hello"; } }"#;
         let result = parse_idl(idl);
         assert!(result.is_err(), "int with string default should be rejected");
-        let err = format!("{}", result.unwrap_err());
+        let err = format!("{:?}", result.unwrap_err());
         assert!(err.contains("Invalid default"), "error message should mention invalid default: {err}");
     }
 

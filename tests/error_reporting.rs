@@ -33,7 +33,7 @@ fn parse_error(input: &str) -> Option<String> {
             let mut buf = String::new();
             // Use the ASCII theme for reproducible snapshots (no Unicode box
             // drawing, no ANSI color codes).
-            let handler = GraphicalReportHandler::new_themed(GraphicalTheme::ascii())
+            let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none())
                 .with_width(80);
 
             // Try to render as a full miette diagnostic. Only use the

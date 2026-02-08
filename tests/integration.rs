@@ -717,7 +717,7 @@ fn test_nested_union_rejected() {
         result.is_err(),
         "nested unions should be rejected by the parser"
     );
-    let err_msg = format!("{}", result.unwrap_err());
+    let err_msg = format!("{:?}", result.unwrap_err());
     assert!(
         err_msg.contains("Unions may not immediately contain other unions"),
         "error message should mention nested unions, got: {err_msg}"
@@ -735,7 +735,7 @@ fn test_reserved_type_name_rejected() {
         result.is_err(),
         "expected error for record named `int` (reserved type name)"
     );
-    let err_msg = format!("{}", result.unwrap_err());
+    let err_msg = format!("{:?}", result.unwrap_err());
     assert!(
         err_msg.contains("Illegal name"),
         "error should mention 'Illegal name', got: {err_msg}"
@@ -761,7 +761,7 @@ fn test_duplicate_field_name_rejected() {
         result.is_err(),
         "duplicate field names should be rejected"
     );
-    let err_msg = format!("{}", result.unwrap_err());
+    let err_msg = format!("{:?}", result.unwrap_err());
     assert!(
         err_msg.contains("duplicate field 'name'"),
         "error should mention duplicate field, got: {err_msg}"
@@ -784,7 +784,7 @@ fn test_duplicate_enum_symbol_rejected() {
         result.is_err(),
         "duplicate enum symbols should be rejected"
     );
-    let err_msg = format!("{}", result.unwrap_err());
+    let err_msg = format!("{:?}", result.unwrap_err());
     assert!(
         err_msg.contains("duplicate enum symbol: RED"),
         "error should mention duplicate symbol, got: {err_msg}"
@@ -2433,7 +2433,7 @@ fn test_annotation_on_type_reference_file() {
         "AnnotationOnTypeReference.avdl should fail to parse"
     );
 
-    let err_msg = format!("{}", result.unwrap_err());
+    let err_msg = format!("{:?}", result.unwrap_err());
     assert!(
         err_msg.contains("Type references may not be annotated"),
         "error should mention 'Type references may not be annotated', got: {err_msg}"
