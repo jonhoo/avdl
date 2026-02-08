@@ -40,7 +40,7 @@ use crate::error::{IdlError, ParseDiagnostic, Result};
 use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
-use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType};
+use crate::model::schema::{AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType, validate_default};
 use crate::resolve::is_valid_avro_name;
 
 // ==============================================================================
@@ -1000,6 +1000,19 @@ fn walk_variable<'input>(
     // TODO: implement fixDefaultValue — Java coerces IntNode to LongNode when
     // the field type is `long`. In practice, serde_json serializes both the
     // same way, so JSON output is unaffected.
+
+    // Validate that the default value's JSON type matches the field's Avro type.
+    // This catches mismatches like `int count = "hello"` at compile time, matching
+    // Java's `Schema.Field` constructor behavior with `validate=true`.
+    if let Some(ref default_val) = default_value {
+        if let Some(reason) = validate_default(default_val, &final_type) {
+            return Err(make_diagnostic(
+                src,
+                ctx,
+                format!("Invalid default for field `{field_name}`: {reason}"),
+            ));
+        }
+    }
 
     Ok(Field {
         name: field_name,
@@ -3547,5 +3560,194 @@ mod tests {
             "decimal with precision > i32::MAX should remain AnnotatedPrimitive, \
              got: {schema:?}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Default value type validation (issue #01ee3f73)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn default_int_string_is_rejected() {
+        let idl = r#"protocol P { record R { int count = "hello"; } }"#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "int with string default should be rejected");
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("Invalid default"), "error message should mention invalid default: {err}");
+    }
+
+    #[test]
+    fn default_boolean_int_is_rejected() {
+        let idl = r#"protocol P { record R { boolean flag = 42; } }"#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "boolean with int default should be rejected");
+    }
+
+    #[test]
+    fn default_string_array_is_rejected() {
+        let idl = r#"protocol P { record R { string name = [1, 2, 3]; } }"#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "string with array default should be rejected");
+    }
+
+    #[test]
+    fn default_int_null_is_rejected() {
+        let idl = r#"protocol P { record R { int count = null; } }"#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "non-nullable int with null default should be rejected");
+    }
+
+    #[test]
+    fn default_int_float_is_rejected() {
+        let idl = r#"protocol P { record R { int count = 3.14; } }"#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "int with float default should be rejected");
+    }
+
+    #[test]
+    fn default_int_object_is_rejected() {
+        let idl = r#"protocol P { record R { int count = {"key": "value"}; } }"#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "int with object default should be rejected");
+    }
+
+    #[test]
+    fn default_bytes_int_is_rejected() {
+        let idl = r#"protocol P { record R { bytes data = 42; } }"#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "bytes with int default should be rejected");
+    }
+
+    #[test]
+    fn default_string_int_is_rejected() {
+        let idl = r#"protocol P { record R { string name = 42; } }"#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "string with int default should be rejected");
+    }
+
+    // Valid defaults that should still be accepted:
+
+    #[test]
+    fn default_int_valid() {
+        let idl = r#"protocol P { record R { int count = 42; } }"#;
+        assert!(parse_idl(idl).is_ok(), "int with int default should be accepted");
+    }
+
+    #[test]
+    fn default_string_valid() {
+        let idl = r#"protocol P { record R { string name = "hello"; } }"#;
+        assert!(parse_idl(idl).is_ok(), "string with string default should be accepted");
+    }
+
+    #[test]
+    fn default_boolean_valid() {
+        let idl = r#"protocol P { record R { boolean flag = true; } }"#;
+        assert!(parse_idl(idl).is_ok(), "boolean with boolean default should be accepted");
+    }
+
+    #[test]
+    fn default_double_valid() {
+        let idl = r#"protocol P { record R { double value = 3.14; } }"#;
+        assert!(parse_idl(idl).is_ok(), "double with float default should be accepted");
+    }
+
+    #[test]
+    fn default_double_nan_valid() {
+        let idl = r#"protocol P { record R { double value = NaN; } }"#;
+        assert!(parse_idl(idl).is_ok(), "double with NaN default should be accepted");
+    }
+
+    #[test]
+    fn default_float_infinity_valid() {
+        let idl = r#"protocol P { record R { float value = -Infinity; } }"#;
+        assert!(parse_idl(idl).is_ok(), "float with -Infinity default should be accepted");
+    }
+
+    #[test]
+    fn default_nullable_null_valid() {
+        let idl = r#"protocol P { record R { string? name = null; } }"#;
+        assert!(parse_idl(idl).is_ok(), "nullable with null default should be accepted");
+    }
+
+    #[test]
+    fn default_nullable_non_null_valid() {
+        let idl = r#"protocol P { record R { string? name = "hello"; } }"#;
+        assert!(parse_idl(idl).is_ok(), "nullable with non-null default should be accepted");
+    }
+
+    #[test]
+    fn default_array_empty_valid() {
+        let idl = r#"protocol P { record R { array<int> nums = []; } }"#;
+        assert!(parse_idl(idl).is_ok(), "array with empty array default should be accepted");
+    }
+
+    #[test]
+    fn default_map_empty_valid() {
+        let idl = r#"protocol P { record R { map<string> m = {}; } }"#;
+        assert!(parse_idl(idl).is_ok(), "map with empty object default should be accepted");
+    }
+
+    #[test]
+    fn default_enum_string_valid() {
+        let idl = r#"
+            protocol P {
+                enum Color { RED, GREEN, BLUE }
+                record R { Color c = "RED"; }
+            }
+        "#;
+        assert!(parse_idl(idl).is_ok(), "enum with string default should be accepted");
+    }
+
+    #[test]
+    fn default_record_object_valid() {
+        let idl = r#"
+            protocol P {
+                record Inner { string name; }
+                record Outer { Inner inner = {"name": "test"}; }
+            }
+        "#;
+        assert!(parse_idl(idl).is_ok(), "record with object default should be accepted");
+    }
+
+    #[test]
+    fn default_union_null_first_valid() {
+        let idl = r#"
+            protocol P {
+                record R { union { null, string } field = null; }
+            }
+        "#;
+        assert!(parse_idl(idl).is_ok(), "union with null first and null default should be accepted");
+    }
+
+    #[test]
+    fn default_logical_date_int_valid() {
+        let idl = r#"protocol P { record R { date d = 0; } }"#;
+        assert!(parse_idl(idl).is_ok(), "date with int default should be accepted");
+    }
+
+    #[test]
+    fn default_annotated_long_int_valid() {
+        let idl = r#"protocol P { record R { @foo.bar("baz") long l = 0; } }"#;
+        assert!(parse_idl(idl).is_ok(), "annotated long with int default should be accepted");
+    }
+
+    #[test]
+    fn default_message_param_validated() {
+        // Message parameters also go through walk_variable, so validation applies.
+        let idl = r#"protocol P { int add(int arg1, int arg2 = "bad"); }"#;
+        let result = parse_idl(idl);
+        assert!(result.is_err(), "message param with invalid default should be rejected");
+    }
+
+    #[test]
+    fn default_forward_reference_skips_validation() {
+        // Forward references cannot be validated because the type is not yet resolved.
+        // This should not error even though the default might not match.
+        let idl = r#"
+            protocol P {
+                record R { SomeEnum e = "VALUE"; }
+                enum SomeEnum { VALUE }
+            }
+        "#;
+        assert!(parse_idl(idl).is_ok(), "forward reference with default should skip validation");
     }
 }
