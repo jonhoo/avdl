@@ -1,5 +1,7 @@
 # avdl
 
+[![codecov](https://codecov.io/gh/jonhoo/avdl/graph/badge.svg?token=WP4ZHFDYVO)](https://codecov.io/gh/jonhoo/avdl)
+
 A Rust port of Apache Avro's `avro-tools idl` and `idl2schemata`
 commands. Compiles [Avro IDL](https://avro.apache.org/docs/1.12.0/idl-language/)
 (`.avdl`) files to Avro Protocol JSON (`.avpr`) or Schema JSON (`.avsc`).
