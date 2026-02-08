@@ -251,9 +251,17 @@ For batch conversion, launch one sub-agent per issue:
 
 ## Apache JIRA conventions
 
-These are extracted from the Apache contribution guidelines for
-reference. The `.jira.md` files are drafts — final JIRA tickets may
-need minor formatting adjustments when filed.
+These are distilled from the Apache contribution guidelines. Read
+the originals before filing your first ticket:
+
+- [How To Contribute (Avro-specific)](https://cwiki.apache.org/confluence/display/AVRO/How+To+Contribute)
+- [Apache contributor guide](https://infra.apache.org/contributors.html)
+- [Bug writing guide](https://infra.apache.org/bug-writing-guide.html)
+  — the most relevant of the three; covers what makes a good bug
+  report (minimal reproduction, four-element structure, specificity)
+
+The `.jira.md` files are drafts — final JIRA tickets may need minor
+formatting adjustments when filed.
 
 - **Project key:** AVRO
 - **Title:** Specific and descriptive. Bad: "Bug in parser." Good:
