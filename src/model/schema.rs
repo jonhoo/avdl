@@ -1,3 +1,4 @@
+use miette::SourceSpan;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -151,6 +152,10 @@ pub enum AvroSchema {
         name: std::string::String,
         namespace: Option<std::string::String>,
         properties: HashMap<std::string::String, Value>,
+        /// Source location of this reference in the `.avdl` input, used for
+        /// error diagnostics when the reference cannot be resolved. `None` for
+        /// references created from JSON imports (no source location available).
+        span: Option<SourceSpan>,
     },
 }
 
@@ -969,6 +974,7 @@ mod tests {
             name: "SomeType".to_string(),
             namespace: None,
             properties: HashMap::new(),
+            span: None,
         };
         // References skip validation because the type is not yet resolved.
         assert!(is_valid_default(&json!(42), &schema));
@@ -1058,6 +1064,7 @@ mod tests {
                 name: "Inner".to_string(),
                 namespace: Some("org.test".to_string()),
                 properties: HashMap::new(),
+                span: None,
             },
             json!("not a record"),
         );
@@ -1079,6 +1086,7 @@ mod tests {
                 name: "Inner".to_string(),
                 namespace: Some("org.test".to_string()),
                 properties: HashMap::new(),
+                span: None,
             },
             json!(42),
         );
@@ -1100,6 +1108,7 @@ mod tests {
                 name: "Inner".to_string(),
                 namespace: Some("org.test".to_string()),
                 properties: HashMap::new(),
+                span: None,
             },
             json!({"name": "valid"}),
         );
@@ -1117,6 +1126,7 @@ mod tests {
                 name: "NotYetDefined".to_string(),
                 namespace: Some("org.test".to_string()),
                 properties: HashMap::new(),
+                span: None,
             },
             json!("this would be invalid for a record, but we don't know that yet"),
         );
@@ -1136,6 +1146,7 @@ mod tests {
                 name: "Inner".to_string(),
                 namespace: Some("org.test".to_string()),
                 properties: HashMap::new(),
+                span: None,
             },
             json!([1, 2, 3]),
         );
@@ -1157,6 +1168,7 @@ mod tests {
                 name: "Inner".to_string(),
                 namespace: Some("org.test".to_string()),
                 properties: HashMap::new(),
+                span: None,
             },
             json!(null),
         );
@@ -1189,6 +1201,7 @@ mod tests {
                     name: "Inner".to_string(),
                     namespace: Some("org.test".to_string()),
                     properties: HashMap::new(),
+                    span: None,
                 },
                 doc: None,
                 default: None,
@@ -1216,6 +1229,7 @@ mod tests {
                         name: "Inner".to_string(),
                         namespace: Some("org.test".to_string()),
                         properties: HashMap::new(),
+                        span: None,
                     },
                 ],
                 is_nullable_type: true,
@@ -1238,6 +1252,7 @@ mod tests {
                         name: "Inner".to_string(),
                         namespace: Some("org.test".to_string()),
                         properties: HashMap::new(),
+                        span: None,
                     },
                 ],
                 is_nullable_type: true,

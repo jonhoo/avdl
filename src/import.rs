@@ -197,6 +197,7 @@ fn flatten_schema_inner(schema: AvroSchema, collected: &mut Vec<AvroSchema>) -> 
                 name,
                 namespace,
                 properties: HashMap::new(),
+                span: None,
             }
         }
 
@@ -211,6 +212,7 @@ fn flatten_schema_inner(schema: AvroSchema, collected: &mut Vec<AvroSchema>) -> 
                 name: name.clone(),
                 namespace: namespace.clone(),
                 properties: HashMap::new(),
+                span: None,
             };
             collected.push(schema);
             reference
@@ -225,6 +227,7 @@ fn flatten_schema_inner(schema: AvroSchema, collected: &mut Vec<AvroSchema>) -> 
                 name: name.clone(),
                 namespace: namespace.clone(),
                 properties: HashMap::new(),
+                span: None,
             };
             collected.push(schema);
             reference
@@ -417,12 +420,14 @@ fn string_to_schema(s: &str, default_namespace: Option<&str>) -> Result<AvroSche
                     name: name.to_string(),
                     namespace: Some(ns.to_string()),
                     properties: HashMap::new(),
+                    span: None,
                 })
             } else {
                 Ok(AvroSchema::Reference {
                     name: type_name.to_string(),
                     namespace: default_namespace.map(|s| s.to_string()),
                     properties: HashMap::new(),
+                    span: None,
                 })
             }
         }
@@ -961,6 +966,7 @@ mod tests {
                 name: "Foo".to_string(),
                 namespace: Some("org.example".to_string()),
                 properties: HashMap::new(),
+                span: None,
             }
         );
     }
@@ -975,6 +981,7 @@ mod tests {
                 name: "Bar".to_string(),
                 namespace: Some("com.other".to_string()),
                 properties: HashMap::new(),
+                span: None,
             }
         );
     }
