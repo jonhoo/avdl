@@ -2011,8 +2011,7 @@ mod tests {
     #[test]
     fn preserve_strings_containing_comment_syntax() {
         let input = r#"{"type": "string", "doc": "use // for comments or /* block */"}"#;
-        let value =
-            parse_json_with_comments(input).expect("should preserve comment-like strings");
+        let value = parse_json_with_comments(input).expect("should preserve comment-like strings");
         assert_eq!(value["doc"], "use // for comments or /* block */");
     }
 

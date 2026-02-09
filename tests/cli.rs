@@ -47,10 +47,13 @@ fn test_cli_idl_file_to_stdout() {
         .expect("run avdl idl");
     assert!(output.status.success(), "avdl idl should exit 0");
 
-    let actual: Value = serde_json::from_slice(&output.stdout)
-        .expect("stdout should be valid JSON");
+    let actual: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
     let expected = load_golden("simple.avpr");
-    assert_eq!(actual, expected, "CLI stdout should match golden simple.avpr");
+    assert_eq!(
+        actual, expected,
+        "CLI stdout should match golden simple.avpr"
+    );
 }
 
 /// Run `avdl idl` writing to a temp output file, then verify the file is
@@ -71,10 +74,12 @@ fn test_cli_idl_file_to_file() {
         .success();
 
     let content = fs::read_to_string(&out_path).expect("read output file");
-    let actual: Value =
-        serde_json::from_str(&content).expect("output file should be valid JSON");
+    let actual: Value = serde_json::from_str(&content).expect("output file should be valid JSON");
     let expected = load_golden("simple.avpr");
-    assert_eq!(actual, expected, "output file should match golden simple.avpr");
+    assert_eq!(
+        actual, expected,
+        "output file should match golden simple.avpr"
+    );
 }
 
 /// Run `avdl idl` on `import.avdl` with `--import-dir` flags for both the input
@@ -99,10 +104,13 @@ fn test_cli_idl_import_dir() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let actual: Value = serde_json::from_slice(&output.stdout)
-        .expect("stdout should be valid JSON");
+    let actual: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
     let expected = load_golden("import.avpr");
-    assert_eq!(actual, expected, "CLI stdout should match golden import.avpr");
+    assert_eq!(
+        actual, expected,
+        "CLI stdout should match golden import.avpr"
+    );
 }
 
 /// Run `avdl idl` on a nonexistent file and verify a non-zero exit code with
@@ -158,8 +166,8 @@ fn test_cli_idl2schemata() {
                 .collect::<Vec<_>>())
         );
         // Each file should contain valid JSON.
-        let content = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("failed to read {filename}: {e}"));
+        let content =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {filename}: {e}"));
         let json: Value = serde_json::from_str(&content)
             .unwrap_or_else(|e| panic!("{filename} should be valid JSON: {e}"));
         // Every schema file should have a "type" key and a "name" key.

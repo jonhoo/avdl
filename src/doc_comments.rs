@@ -106,12 +106,14 @@ where
 /// Validation pattern for single-star prefix: the comment starts with `*` and
 /// all subsequent lines start with `*` after optional horizontal whitespace.
 /// Empty lines are allowed (they don't need a star).
-static STAR_1_VALIDATE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^\*[^\r\n]*(?:\r?\n[\t ]*\*[^\r\n]*|\r?\n[\t ]*)*$").unwrap());
+static STAR_1_VALIDATE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)^\*[^\r\n]*(?:\r?\n[\t ]*\*[^\r\n]*|\r?\n[\t ]*)*$").unwrap()
+});
 
 /// Validation pattern for double-star prefix: same as above but with `**`.
-static STAR_2_VALIDATE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)^\*\*[^\r\n]*(?:\r?\n[\t ]*\*\*[^\r\n]*|\r?\n[\t ]*)*$").unwrap());
+static STAR_2_VALIDATE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)^\*\*[^\r\n]*(?:\r?\n[\t ]*\*\*[^\r\n]*|\r?\n[\t ]*)*$").unwrap()
+});
 
 /// Replacement pattern for single-star: matches start-of-string or
 /// (newline + horizontal whitespace) followed by `*` and optional trailing

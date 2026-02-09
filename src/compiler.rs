@@ -115,11 +115,7 @@ impl Idl {
 
     /// Compile an IDL source string to JSON with a custom source name for
     /// diagnostics.
-    pub fn convert_str_named(
-        &mut self,
-        source: &str,
-        name: &str,
-    ) -> miette::Result<IdlOutput> {
+    pub fn convert_str_named(&mut self, source: &str, name: &str) -> miette::Result<IdlOutput> {
         let cwd = std::env::current_dir()
             .map_err(|e| miette::miette!("{e}"))
             .context("determine current directory")?;
@@ -502,9 +498,7 @@ fn process_decl_items(
                     registry.lookup(full_name).cloned()
                 });
                 if let Some((field_name, reason)) = errors.into_iter().next() {
-                    let type_name = schema
-                        .full_name()
-                        .unwrap_or(Cow::Borrowed("<unknown>"));
+                    let type_name = schema.full_name().unwrap_or(Cow::Borrowed("<unknown>"));
                     let msg = format!(
                         "Invalid default for field `{field_name}` in `{type_name}`: {reason}"
                     );
@@ -566,28 +560,38 @@ fn resolve_single_import(
     match import.kind {
         ImportKind::Protocol => {
             let imported_messages = import_protocol(&resolved_path, registry).map_err(|e| {
-                wrap_import_error(e, import.span, source, source_name, &resolved_path, "protocol")
+                wrap_import_error(
+                    e,
+                    import.span,
+                    source,
+                    source_name,
+                    &resolved_path,
+                    "protocol",
+                )
             })?;
             messages.extend(imported_messages);
         }
         ImportKind::Schema => {
             import_schema(&resolved_path, registry).map_err(|e| {
-                wrap_import_error(e, import.span, source, source_name, &resolved_path, "schema")
+                wrap_import_error(
+                    e,
+                    import.span,
+                    source,
+                    source_name,
+                    &resolved_path,
+                    "schema",
+                )
             })?;
         }
         ImportKind::Idl => {
             let imported_source = fs::read_to_string(&resolved_path)
                 .map_err(|e| miette::miette!("{e}"))
-                .with_context(|| {
-                    format!("read imported IDL {}", resolved_path.display())
-                })?;
+                .with_context(|| format!("read imported IDL {}", resolved_path.display()))?;
 
             let imported_name = resolved_path.display().to_string();
             let (imported_idl, nested_decl_items, import_warnings) =
                 parse_idl_named(&imported_source, &imported_name)
-                    .with_context(|| {
-                        format!("parse imported IDL {}", resolved_path.display())
-                    })?;
+                    .with_context(|| format!("parse imported IDL {}", resolved_path.display()))?;
 
             // Propagate warnings from the imported file.
             let import_file_name = resolved_path
@@ -615,10 +619,7 @@ fn resolve_single_import(
                 &imported_name,
             )
             .with_context(|| {
-                format!(
-                    "resolve nested imports from `{}`",
-                    resolved_path.display()
-                )
+                format!("resolve nested imports from `{}`", resolved_path.display())
             })?;
         }
     }
@@ -753,9 +754,7 @@ mod tests {
 
         assert_eq!(output.json["protocol"], "Svc");
         assert_eq!(output.json["namespace"], "org.example");
-        let types = output.json["types"]
-            .as_array()
-            .expect("should have types");
+        let types = output.json["types"].as_array().expect("should have types");
         assert_eq!(types.len(), 1);
         assert_eq!(types[0]["name"], "User");
     }
@@ -788,10 +787,7 @@ mod tests {
 
     #[test]
     fn convert_str_named_custom_source_name() {
-        let result = Idl::new().convert_str_named(
-            r#"protocol { }"#,
-            "my-test.avdl",
-        );
+        let result = Idl::new().convert_str_named(r#"protocol { }"#, "my-test.avdl");
         // This should fail because protocol requires a name. The error should
         // reference the custom source name.
         assert!(result.is_err());

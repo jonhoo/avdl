@@ -211,8 +211,8 @@ fn run_idl(
         eprintln!("Warning: {w}");
     }
 
-    let json_str = to_json_string(&idl_output.json)
-        .map_err(|e| miette::miette!("serialize JSON: {e}"))?;
+    let json_str =
+        to_json_string(&idl_output.json).map_err(|e| miette::miette!("serialize JSON: {e}"))?;
 
     write_output(&output, &json_str)?;
 
@@ -241,8 +241,7 @@ fn run_idl2schemata(
     }
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
-    fs::create_dir_all(&output_dir)
-        .map_err(|e| miette::miette!("{e}: create output directory"))?;
+    fs::create_dir_all(&output_dir).map_err(|e| miette::miette!("{e}: create output directory"))?;
 
     for named_schema in &schemata_output.schemas {
         let json_str = to_json_string(&named_schema.schema)

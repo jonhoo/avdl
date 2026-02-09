@@ -39,17 +39,17 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
 
 /// Parse an `.avdl` file through the `Idl2Schemata` builder and return a map
 /// of `SimpleName -> serde_json::Value` for each named schema.
-fn parse_idl2schemata(
-    avdl_path: &Path,
-    import_dirs: &[&Path],
-) -> HashMap<String, Value> {
+fn parse_idl2schemata(avdl_path: &Path, import_dirs: &[&Path]) -> HashMap<String, Value> {
     let mut builder = Idl2Schemata::new();
     for dir in import_dirs {
         builder.import_dir(dir);
     }
-    let output = builder
-        .extract(avdl_path)
-        .unwrap_or_else(|e| panic!("failed to extract schemas from {}: {e}", avdl_path.display()));
+    let output = builder.extract(avdl_path).unwrap_or_else(|e| {
+        panic!(
+            "failed to extract schemas from {}: {e}",
+            avdl_path.display()
+        )
+    });
     output
         .schemas
         .into_iter()
@@ -189,10 +189,7 @@ fn test_baseball() {
 #[test]
 fn test_schema_syntax() {
     let input_dir = PathBuf::from(INPUT_DIR);
-    let actual = parse_and_serialize(
-        &input_path("schema_syntax_schema.avdl"),
-        &[&input_dir],
-    );
+    let actual = parse_and_serialize(&input_path("schema_syntax_schema.avdl"), &[&input_dir]);
     let expected = load_expected(&output_path("schema_syntax.avsc"));
     assert_eq!(actual, expected);
 }
@@ -304,7 +301,10 @@ fn test_duplicate_type_definition() {
         }
     "#,
     );
-    assert!(result.is_err(), "duplicate type names should produce an error");
+    assert!(
+        result.is_err(),
+        "duplicate type names should produce an error"
+    );
 }
 
 /// Importing a nonexistent file should produce an error.
@@ -319,7 +319,10 @@ fn test_import_nonexistent_file() {
         }
     "#,
     );
-    assert!(result.is_err(), "importing a nonexistent file should produce an error");
+    assert!(
+        result.is_err(),
+        "importing a nonexistent file should produce an error"
+    );
 }
 
 /// Nested unions should be rejected during parsing.
@@ -478,10 +481,7 @@ const CLASSPATH_DIR: &str = "avro/lang/java/idl/src/test/idl/putOnClassPath";
 fn test_import() {
     let input_dir = PathBuf::from(INPUT_DIR);
     let classpath_dir = PathBuf::from(CLASSPATH_DIR);
-    let actual = parse_and_serialize(
-        &input_path("import.avdl"),
-        &[&input_dir, &classpath_dir],
-    );
+    let actual = parse_and_serialize(&input_path("import.avdl"), &[&input_dir, &classpath_dir]);
     let expected = load_expected(&output_path("import.avpr"));
     assert_eq!(actual, expected);
 }
@@ -549,10 +549,12 @@ fn test_extra_protocol_syntax() {
     assert_eq!(output.json["protocol"], "Parrot");
     assert_eq!(output.json["namespace"], "communication");
 
-    let types = output.json["types"]
-        .as_array()
-        .expect("missing types");
-    assert_eq!(types.len(), 1, "protocolSyntax.avdl should define exactly one named type");
+    let types = output.json["types"].as_array().expect("missing types");
+    assert_eq!(
+        types.len(),
+        1,
+        "protocolSyntax.avdl should define exactly one named type"
+    );
     assert_eq!(types[0]["name"], "Message");
     // The type's namespace is omitted from JSON when it matches the enclosing
     // protocol namespace — this is the expected serialization behavior.
@@ -562,7 +564,10 @@ fn test_extra_protocol_syntax() {
         .as_object()
         .expect("missing messages");
     assert_eq!(messages.len(), 1);
-    assert!(messages.contains_key("echo"), "protocol should have an 'echo' message");
+    assert!(
+        messages.contains_key("echo"),
+        "protocol should have an 'echo' message"
+    );
 }
 
 #[test]
@@ -736,10 +741,7 @@ fn test_idl2schemata_interop() {
 
     let mut names: Vec<&String> = schemata.keys().collect();
     names.sort();
-    assert_eq!(
-        names,
-        vec!["Foo", "Interop", "Kind", "MD5", "Node"],
-    );
+    assert_eq!(names, vec!["Foo", "Interop", "Kind", "MD5", "Node"],);
 
     let node = &schemata["Node"];
     assert_eq!(node["type"], "record");
@@ -759,10 +761,7 @@ fn test_idl2schemata_interop() {
 fn test_idl2schemata_import() {
     let input_dir = PathBuf::from(INPUT_DIR);
     let classpath_dir = PathBuf::from(CLASSPATH_DIR);
-    let schemata = parse_idl2schemata(
-        &input_path("import.avdl"),
-        &[&input_dir, &classpath_dir],
-    );
+    let schemata = parse_idl2schemata(&input_path("import.avdl"), &[&input_dir, &classpath_dir]);
 
     assert!(schemata.contains_key("Bar"));
     assert!(schemata.contains_key("Baz"));
@@ -844,14 +843,37 @@ fn test_comments_warnings_count() {
     }
 
     let expected_positions: &[(u32, u32)] = &[
-        (21, 8), (21, 45), (22, 5), (23, 5), (24, 5), (25, 5),
-        (26, 7), (27, 7), (28, 7), (33, 7), (34, 7), (35, 5),
-        (36, 5), (37, 7), (42, 7), (43, 7), (46, 9), (47, 5),
-        (54, 7), (55, 7), (58, 9), (59, 7), (60, 11), (61, 11),
+        (21, 8),
+        (21, 45),
+        (22, 5),
+        (23, 5),
+        (24, 5),
+        (25, 5),
+        (26, 7),
+        (27, 7),
+        (28, 7),
+        (33, 7),
+        (34, 7),
+        (35, 5),
+        (36, 5),
+        (37, 7),
+        (42, 7),
+        (43, 7),
+        (46, 9),
+        (47, 5),
+        (54, 7),
+        (55, 7),
+        (58, 9),
+        (59, 7),
+        (60, 11),
+        (61, 11),
     ];
 
-    for (i, (warning, &(expected_line, expected_col))) in
-        output.warnings.iter().zip(expected_positions.iter()).enumerate()
+    for (i, (warning, &(expected_line, expected_col))) in output
+        .warnings
+        .iter()
+        .zip(expected_positions.iter())
+        .enumerate()
     {
         let expected_prefix = format!("Line {}, char {}:", expected_line, expected_col);
         assert!(
@@ -875,10 +897,7 @@ fn test_idl2schemata_tools_protocol() {
 
     let mut names: Vec<&String> = schemata.keys().collect();
     names.sort();
-    assert_eq!(
-        names,
-        vec!["Kind", "MD5", "TestError", "TestRecord"],
-    );
+    assert_eq!(names, vec!["Kind", "MD5", "TestError", "TestRecord"],);
 }
 
 // ==============================================================================
@@ -925,9 +944,19 @@ fn load_golden_schemata(test_name: &str) -> HashMap<String, Value> {
 fn test_idl2schemata_golden_comparison() {
     // Files with no import dirs needed.
     let simple_files = [
-        "echo", "simple", "comments", "cycle", "forward_ref", "interop",
-        "leading_underscore", "mr_events", "namespaces", "reservedwords",
-        "unicode", "union", "uuid",
+        "echo",
+        "simple",
+        "comments",
+        "cycle",
+        "forward_ref",
+        "interop",
+        "leading_underscore",
+        "mr_events",
+        "namespaces",
+        "reservedwords",
+        "unicode",
+        "union",
+        "uuid",
     ];
 
     // Files that need specific import directories.
@@ -957,13 +986,9 @@ fn test_idl2schemata_golden_comparison() {
 
         // Compare each schema's full JSON content.
         for (schema_name, actual_json) in schemata {
-            let golden_json = golden
-                .get(schema_name)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{name}.avdl: schema '{schema_name}' not found in golden .avsc files"
-                    )
-                });
+            let golden_json = golden.get(schema_name).unwrap_or_else(|| {
+                panic!("{name}.avdl: schema '{schema_name}' not found in golden .avsc files")
+            });
             assert_eq!(
                 actual_json, golden_json,
                 "{name}.avdl: schema '{schema_name}' content mismatch"
@@ -1027,7 +1052,9 @@ fn test_cycle_test_root() {
 
     assert!(output.warnings.is_empty());
 
-    let types = output.json["types"].as_array().expect("should have types array");
+    let types = output.json["types"]
+        .as_array()
+        .expect("should have types array");
 
     // All 5 types are inlined inside Record1 (first occurrence), so the
     // top-level types array has 1 entry.
@@ -1036,12 +1063,16 @@ fn test_cycle_test_root() {
     let record1 = &types[0];
     assert_eq!(record1["type"], "record");
     assert_eq!(record1["name"], "Record1");
-    let r1_fields = record1["fields"].as_array().expect("Record1 should have fields");
+    let r1_fields = record1["fields"]
+        .as_array()
+        .expect("Record1 should have fields");
     assert_eq!(r1_fields.len(), 2);
 
     let record3 = &r1_fields[1]["type"];
     assert_eq!(record3["name"], "Record3");
-    let r3_fields = record3["fields"].as_array().expect("Record3 should have fields");
+    let r3_fields = record3["fields"]
+        .as_array()
+        .expect("Record3 should have fields");
 
     let test_enum = &r3_fields[0]["type"];
     assert_eq!(test_enum["type"], "enum");
@@ -1049,14 +1080,18 @@ fn test_cycle_test_root() {
 
     let record2 = &r3_fields[1]["type"];
     assert_eq!(record2["name"], "Record2");
-    let r2_fields = record2["fields"].as_array().expect("Record2 should have fields");
+    let r2_fields = record2["fields"]
+        .as_array()
+        .expect("Record2 should have fields");
 
     let test_fixed = &r2_fields[0]["type"];
     assert_eq!(test_fixed["type"], "fixed");
     assert_eq!(test_fixed["size"], 16);
 
     let f_rec1_type = &r2_fields[2]["type"];
-    let union = f_rec1_type.as_array().expect("fRec1 type should be a union array");
+    let union = f_rec1_type
+        .as_array()
+        .expect("fRec1 type should be a union array");
     assert_eq!(union[0], "null");
     assert_eq!(union[1], "Record1");
 }
@@ -1074,7 +1109,9 @@ fn test_logical_types_file() {
 
     assert!(output.warnings.is_empty());
 
-    let types = output.json["types"].as_array().expect("should have types array");
+    let types = output.json["types"]
+        .as_array()
+        .expect("should have types array");
     assert_eq!(types.len(), 1);
 
     let fields = types[0]["fields"]

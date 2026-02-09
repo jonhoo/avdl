@@ -82,7 +82,10 @@ impl Warning {
         token_stop: isize,
     ) -> Self {
         let (offset, length) = if token_start >= 0 && token_stop >= token_start {
-            (token_start as usize, (token_stop - token_start + 1) as usize)
+            (
+                token_start as usize,
+                (token_stop - token_start + 1) as usize,
+            )
         } else if token_start >= 0 {
             (token_start as usize, 1)
         } else {
@@ -144,10 +147,7 @@ impl miette::Diagnostic for Warning {
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         let span = self.span?;
         Some(Box::new(std::iter::once(
-            miette::LabeledSpan::new_with_span(
-                Some("out-of-place doc comment".to_string()),
-                span,
-            ),
+            miette::LabeledSpan::new_with_span(Some("out-of-place doc comment".to_string()), span),
         )))
     }
 }
@@ -217,9 +217,7 @@ fn enrich_antlr_error(msg: &str) -> Option<String> {
     // `(` being expected, but doesn't explain WHY -- the user may not
     // realize annotations require parenthesized values.
     if msg.contains("expecting '('") && msg.contains("mismatched input") {
-        return Some(format!(
-            "{msg} (annotations require `@name(value)` syntax)"
-        ));
+        return Some(format!("{msg} (annotations require `@name(value)` syntax)"));
     }
 
     None
@@ -547,8 +545,11 @@ pub fn parse_idl_named(
     // a warning for each DocComment token in the gap between the previous call's
     // position and the current call's position that isn't the actual doc comment
     // for the current node.
-    let warnings =
-        collect_orphaned_doc_comment_warnings(token_stream, &src.consumed_doc_indices.borrow(), &src);
+    let warnings = collect_orphaned_doc_comment_warnings(
+        token_stream,
+        &src.consumed_doc_indices.borrow(),
+        &src,
+    );
 
     Ok((idl_file, decl_items, warnings))
 }
@@ -4268,8 +4269,7 @@ mod tests {
     fn enrich_no_viable_alternative_with_preceding_valid_annotation() {
         // When a valid `@namespace(...)` precedes a bare `@version`, ANTLR
         // merges everything: `@namespace("com.example")@versionprotocol`.
-        let msg =
-            "no viable alternative at input '@namespace(\"com.example\")@versionprotocol'";
+        let msg = "no viable alternative at input '@namespace(\"com.example\")@versionprotocol'";
         let enriched = enrich_antlr_error(msg).expect("should match");
         assert!(
             enriched.contains("@version"),
@@ -4309,28 +4309,19 @@ mod tests {
 
     #[test]
     fn extract_annotation_name_simple() {
-        assert_eq!(
-            extract_annotation_name("@betarecord"),
-            Some("beta"),
-        );
+        assert_eq!(extract_annotation_name("@betarecord"), Some("beta"),);
     }
 
     #[test]
     fn extract_annotation_name_with_enum_keyword() {
-        assert_eq!(
-            extract_annotation_name("@unstableenum"),
-            Some("unstable"),
-        );
+        assert_eq!(extract_annotation_name("@unstableenum"), Some("unstable"),);
     }
 
     #[test]
     fn extract_annotation_name_no_keyword_suffix() {
         // When no known keyword is found at the end, the full ident is
         // returned. This is the best we can do without source access.
-        assert_eq!(
-            extract_annotation_name("@foobar"),
-            Some("foobar"),
-        );
+        assert_eq!(extract_annotation_name("@foobar"), Some("foobar"),);
     }
 
     #[test]
