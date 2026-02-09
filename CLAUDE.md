@@ -55,6 +55,10 @@ java -jar ../avro-tools-1.12.1.jar idl $INPUT_DIR/foo.avdl tmp/foo-java.avpr
 diff <(jq -S . tmp/foo.avpr) <(jq -S . $OUTPUT_DIR/foo.avpr)
 ```
 
+The canonical correctness check is `cargo test`, which runs semantic
+JSON comparison against golden files for both `idl` (18 `.avpr` files)
+and `idl2schemata` (61 `.avsc` files across 17 test inputs).
+
 For ad-hoc debugging, create a temporary Rust example in `examples/`
 and run it with `cargo run --example <name>`. Remove the example
 after use.
@@ -64,27 +68,6 @@ artifacts, not `/tmp`. This keeps outputs discoverable and
 project-scoped. The `tmp/` directory is gitignored.
 
 ### Helper scripts
-
-`scripts/compare-golden.sh` compares Rust `idl` and `idl2schemata`
-output against the golden test files. It handles import-dir flags,
-golden file name mapping, and concurrent-safe temp directories. The
-script works from both the main checkout and git worktrees — it
-locates the avro-tools JAR by searching relative to the repo root,
-then falling back to the main worktree root.
-
-```sh
-scripts/compare-golden.sh idl              # all 18 .avdl files
-scripts/compare-golden.sh idl simple       # single file
-scripts/compare-golden.sh idl2schemata     # key idl2schemata files
-scripts/compare-golden.sh types import     # show type names in order
-
-# Override the JAR path if needed:
-AVRO_TOOLS_JAR=/path/to/avro-tools.jar scripts/compare-golden.sh idl
-```
-
-Sub-agents should use this script instead of writing ad-hoc comparison
-scripts. If the script is insufficient, they should file an issue in
-`issues/` about the shortcoming before writing an ad-hoc script.
 
 `scripts/compare-adhoc.sh` compares Rust output against Java
 avro-tools output for arbitrary `.avdl` files written to `tmp/`.
@@ -135,7 +118,7 @@ echo "abc" | grep "abc";
 This affects pipes (`|`), process substitution (`<(...)`), and any
 command that connects stdout of one process to stdin of another.
 Direct command invocations without piping (e.g., `cargo run`,
-`java -jar`, `scripts/compare-golden.sh`) work fine under sandbox.
+`java -jar`) work fine under sandbox.
 
 [cc-16305]: https://github.com/anthropics/claude-code/issues/16305
 

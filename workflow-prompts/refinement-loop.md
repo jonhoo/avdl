@@ -33,8 +33,9 @@ Launch many sub-agents (blocking, in `main/`) for **open-ended exploration** of 
 Each agent should pursue its own line of investigation autonomously. If it finds a discrepancy, it does first-level triage (identify root cause, affected files) and files an issue under `issues/`.
 
 **Agent rules:**
-- Use `scripts/compare-golden.sh` for output comparisons instead of
-  writing ad-hoc comparison scripts (see CLAUDE.md for usage)
+- Use `cargo test` for output verification. Use
+  `scripts/compare-adhoc.sh` for manual Java-vs-Rust comparison of
+  arbitrary `.avdl` files beyond the golden test suite
 - Follow the conventions in CLAUDE.md for temp files (`tmp/`),
   issue filing (`issues/`), debug examples, and JSON comparison
 - Do first-level triage: symptom, root cause, affected files,
@@ -48,12 +49,13 @@ Each agent should pursue its own line of investigation autonomously. If it finds
   file in `issues/` to avoid filing duplicates. Also check SESSION.md
   for previously investigated items.
 - **Recommend tooling improvements**: If a helper script
-  (`scripts/compare-golden.sh`, `scripts/compare-adhoc.sh`, etc.)
-  is insufficient or could be improved, file an issue describing the
-  shortcoming rather than writing ad-hoc workarounds.
+  (`scripts/compare-adhoc.sh`, etc.) is insufficient or could be
+  improved, file an issue describing the shortcoming rather than
+  writing ad-hoc workarounds.
 
-**Comparison commands:** See the "Comparing against the Java tool"
-section in CLAUDE.md, or use `scripts/compare-golden.sh`.
+**Comparison commands:** `cargo test` is the canonical correctness
+check. For ad-hoc Java comparison, see `scripts/compare-adhoc.sh`
+in CLAUDE.md.
 
 **After agents complete:**
 1. Review new files in `issues/` — deduplicate against existing issues.
@@ -118,7 +120,7 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
    b. Launch one **blocking** sub-agent per worktree. Each agent:
       - Reads the issue file for full context
       - Implements the fix
-      - Uses `scripts/compare-golden.sh` to verify output correctness
+      - Runs `cargo test` to verify output correctness
       - Creates debug example in `examples/` to verify (`cargo run --example`)
       - Runs `cargo test` to check for regressions
       - Cleans up debug examples
@@ -199,9 +201,7 @@ After all waves complete:
 ## Verification
 
 After each wave merge:
-- `cargo test` — all tests pass
-- `scripts/compare-golden.sh idl` — all 18 files report results
-- `scripts/compare-golden.sh idl2schemata` — per-schema output compared
+- `cargo test` covers both `idl` (18 `.avpr` golden comparisons) and `idl2schemata` (61 `.avsc` golden comparisons)
 - For test suite changes: verify new tests pass and cover the intended behavior
 
 See the "Non-goal: byte-identical output" section in CLAUDE.md.
@@ -237,9 +237,6 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   overlapping. Budget time after Phase 1 to clean SESSION.md of items
   now tracked as issues, and verify that newly filed issues don't
   overlap with each other or with existing issues.
-- **`compare-golden.sh` works from worktrees now**: The JAR-path issue
-  (`2931799a`) was fixed in a prior iteration. Sub-agents can and do
-  run `scripts/compare-golden.sh` from worktrees successfully.
 - **Focused discovery agents outperform broad ones in later
   iterations**: In iteration 7, 3 agents with narrow, deep mandates
   (spec compliance audit, import edge cases, property handling) were
