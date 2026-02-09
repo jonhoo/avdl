@@ -165,10 +165,10 @@ pub fn strip_indents(doc_comment: &str) -> String {
     // Try common whitespace indent. We find the common indent prefix manually
     // (since Rust regex doesn't support backreferences) and then build a
     // replacement regex from it.
-    if WS_INDENT_VALIDATE.is_match(doc_comment) {
-        if let Some(result) = try_strip_ws_indent(doc_comment) {
-            return result;
-        }
+    if WS_INDENT_VALIDATE.is_match(doc_comment)
+        && let Some(result) = try_strip_ws_indent(doc_comment)
+    {
+        return result;
     }
 
     doc_comment.to_string()

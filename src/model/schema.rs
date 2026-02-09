@@ -455,10 +455,10 @@ where
         // Non-Reference types are already validated at parse time by
         // `walk_variable` in reader.rs.
         let resolved_schema = resolve_for_validation(&field.schema, &resolver);
-        if let Some(ref resolved) = resolved_schema {
-            if let Some(reason) = validate_default(default_val, resolved) {
-                errors.push((field.name.clone(), reason));
-            }
+        if let Some(ref resolved) = resolved_schema
+            && let Some(reason) = validate_default(default_val, resolved)
+        {
+            errors.push((field.name.clone(), reason));
         }
         // If resolve_for_validation returns None, the reference could not be
         // resolved (true forward reference), so we skip validation.

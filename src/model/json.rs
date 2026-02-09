@@ -60,10 +60,10 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
     obj.insert("protocol".to_string(), Value::String(protocol.name.clone()));
     // Java treats an empty namespace as equivalent to no namespace and omits
     // the key entirely from the JSON output. We match that behavior.
-    if let Some(ns) = &protocol.namespace {
-        if !ns.is_empty() {
-            obj.insert("namespace".to_string(), Value::String(ns.clone()));
-        }
+    if let Some(ns) = &protocol.namespace
+        && !ns.is_empty()
+    {
+        obj.insert("namespace".to_string(), Value::String(ns.clone()));
     }
     if let Some(doc) = &protocol.doc {
         obj.insert("doc".to_string(), Value::String(doc.clone()));

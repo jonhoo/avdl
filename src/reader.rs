@@ -201,13 +201,13 @@ fn enrich_antlr_error(msg: &str) -> Option<String> {
     // annotation name with subsequent tokens into a single error string
     // like `@betarecord`. We split the merged text at known keyword
     // boundaries to recover the annotation name.
-    if let Some(input) = extract_no_viable_input(msg) {
-        if let Some(anno_name) = extract_annotation_name(input) {
-            return Some(format!(
-                "annotation `@{anno_name}` is missing its value -- \
+    if let Some(input) = extract_no_viable_input(msg)
+        && let Some(anno_name) = extract_annotation_name(input)
+    {
+        return Some(format!(
+            "annotation `@{anno_name}` is missing its value -- \
                  use `@{anno_name}(\"value\")` syntax"
-            ));
-        }
+        ));
     }
 
     // Pattern 2: "mismatched input '<token>' expecting '('"
