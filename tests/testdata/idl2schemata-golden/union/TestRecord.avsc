@@ -1,0 +1,23 @@
+{
+  "type" : "record",
+  "name" : "TestRecord",
+  "namespace" : "org.apache.avro.gen",
+  "fields" : [ {
+    "name" : "unionField",
+    "type" : [ {
+      "type" : "record",
+      "name" : "SR1",
+      "fields" : [ {
+        "name" : "field",
+        "type" : "string"
+      } ]
+    }, {
+      "type" : "record",
+      "name" : "SR2",
+      "fields" : [ {
+        "name" : "field",
+        "type" : "string"
+      } ]
+    } ]
+  } ]
+}

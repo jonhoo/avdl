@@ -1,0 +1,8 @@
+{
+  "type" : "enum",
+  "name" : "Kind",
+  "namespace" : "org.apache.avro.test",
+  "doc" : "A kind of record.",
+  "symbols" : [ "FOO", "BAR", "BAZ" ],
+  "aliases" : [ "org.foo.KindOf" ]
+}

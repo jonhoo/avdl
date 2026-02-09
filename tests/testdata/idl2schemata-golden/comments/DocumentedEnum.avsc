@@ -1,0 +1,8 @@
+{
+  "type" : "enum",
+  "name" : "DocumentedEnum",
+  "namespace" : "testing",
+  "doc" : "Documented Enum",
+  "symbols" : [ "A", "B", "C" ],
+  "default" : "A"
+}

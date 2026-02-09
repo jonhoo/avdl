@@ -1,0 +1,9 @@
+{
+  "type" : "error",
+  "name" : "TestError",
+  "namespace" : "org.apache.avro.test",
+  "fields" : [ {
+    "name" : "message",
+    "type" : "string"
+  } ]
+}

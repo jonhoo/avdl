@@ -1,0 +1,6 @@
+{
+  "type" : "fixed",
+  "name" : "FixedInOtherNamespace",
+  "namespace" : "avro.test.fixed",
+  "size" : 16
+}

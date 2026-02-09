@@ -1,0 +1,6 @@
+{
+  "type" : "record",
+  "name" : "RecordInOtherNamespace",
+  "namespace" : "avro.test.record",
+  "fields" : [ ]
+}

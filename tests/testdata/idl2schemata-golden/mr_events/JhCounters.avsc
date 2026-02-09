@@ -1,0 +1,44 @@
+{
+  "type" : "record",
+  "name" : "JhCounters",
+  "namespace" : "org.apache.hadoop.mapreduce.jobhistory",
+  "fields" : [ {
+    "name" : "name",
+    "type" : "string"
+  }, {
+    "name" : "groups",
+    "type" : {
+      "type" : "array",
+      "items" : {
+        "type" : "record",
+        "name" : "JhCounterGroup",
+        "fields" : [ {
+          "name" : "name",
+          "type" : "string"
+        }, {
+          "name" : "displayName",
+          "type" : "string"
+        }, {
+          "name" : "counts",
+          "type" : {
+            "type" : "array",
+            "items" : {
+              "type" : "record",
+              "name" : "JhCounter",
+              "fields" : [ {
+                "name" : "name",
+                "type" : "string"
+              }, {
+                "name" : "displayName",
+                "type" : "string"
+              }, {
+                "name" : "value",
+                "type" : "long"
+              } ]
+            }
+          }
+        } ]
+      }
+    }
+  } ]
+}

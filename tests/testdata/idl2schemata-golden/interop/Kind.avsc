@@ -1,0 +1,6 @@
+{
+  "type" : "enum",
+  "name" : "Kind",
+  "namespace" : "org.apache.avro",
+  "symbols" : [ "A", "B", "C" ]
+}

@@ -1,0 +1,6 @@
+{
+  "type" : "enum",
+  "name" : "UndocumentedEnum",
+  "namespace" : "testing",
+  "symbols" : [ "D", "E" ]
+}

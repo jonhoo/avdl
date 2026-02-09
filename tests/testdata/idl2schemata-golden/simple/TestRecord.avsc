@@ -1,0 +1,112 @@
+{
+  "type" : "record",
+  "name" : "TestRecord",
+  "namespace" : "org.apache.avro.test",
+  "doc" : "A TestRecord.",
+  "fields" : [ {
+    "name" : "name",
+    "type" : {
+      "type" : "string",
+      "avro.java.string" : "String"
+    },
+    "default" : "foo",
+    "order" : "ignore"
+  }, {
+    "name" : "kind",
+    "type" : {
+      "type" : "enum",
+      "name" : "Kind",
+      "doc" : "A kind of record.",
+      "symbols" : [ "FOO", "BAR", "BAZ" ],
+      "aliases" : [ "org.foo.KindOf" ]
+    },
+    "doc" : "The kind of record.",
+    "order" : "descending"
+  }, {
+    "name" : "status",
+    "type" : {
+      "type" : "enum",
+      "name" : "Status",
+      "symbols" : [ "A", "B", "C" ],
+      "default" : "C"
+    },
+    "doc" : "The status of the record.",
+    "default" : "A"
+  }, {
+    "name" : "hash",
+    "type" : {
+      "type" : "fixed",
+      "name" : "MD5",
+      "doc" : "An MD5 hash.",
+      "size" : 16
+    },
+    "default" : "0000000000000000"
+  }, {
+    "name" : "nullableHash",
+    "type" : [ "null", "MD5" ],
+    "default" : null,
+    "aliases" : [ "hash", "hsh" ]
+  }, {
+    "name" : "value",
+    "type" : "double",
+    "default" : "NaN"
+  }, {
+    "name" : "average",
+    "type" : "float",
+    "default" : "-Infinity"
+  }, {
+    "name" : "d",
+    "type" : {
+      "type" : "int",
+      "logicalType" : "date"
+    },
+    "default" : 0
+  }, {
+    "name" : "t",
+    "type" : [ {
+      "type" : "int",
+      "logicalType" : "time-millis"
+    }, "null" ],
+    "default" : 0
+  }, {
+    "name" : "l",
+    "type" : {
+      "type" : "long",
+      "foo.bar" : "bar.foo"
+    },
+    "default" : 0
+  }, {
+    "name" : "a",
+    "type" : {
+      "type" : "array",
+      "items" : "string",
+      "foo.bar.bar" : "foo.bar2"
+    },
+    "default" : [ ]
+  }, {
+    "name" : "prop",
+    "type" : [ "null", {
+      "type" : "string",
+      "foo.foo.bar" : 42,
+      "foo.foo.foo" : "3foo"
+    } ],
+    "default" : null
+  }, {
+    "name" : "numbers",
+    "type" : {
+      "type" : "array",
+      "items" : "int"
+    },
+    "default" : [ ]
+  }, {
+    "name" : "dictionary",
+    "type" : {
+      "type" : "map",
+      "values" : "string"
+    },
+    "default" : { }
+  } ],
+  "my-property" : {
+    "key" : 3
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "type" : "enum",
+  "name" : "Status",
+  "namespace" : "org.apache.avro.test",
+  "symbols" : [ "A", "B", "C" ],
+  "default" : "C"
+}

@@ -1,0 +1,9 @@
+{
+  "type" : "record",
+  "name" : "UndocumentedRecord",
+  "namespace" : "testing",
+  "fields" : [ {
+    "name" : "description",
+    "type" : "string"
+  } ]
+}

@@ -1,0 +1,37 @@
+{
+  "type" : "record",
+  "name" : "SamplePair",
+  "namespace" : "org.apache.avro.gen",
+  "fields" : [ {
+    "name" : "method",
+    "type" : {
+      "type" : "record",
+      "name" : "Method",
+      "fields" : [ {
+        "name" : "declaringClass",
+        "type" : "string",
+        "testAttribute" : "testValue"
+      }, {
+        "name" : "methodName",
+        "type" : "string"
+      } ]
+    }
+  }, {
+    "name" : "node",
+    "type" : {
+      "type" : "record",
+      "name" : "SampleNode",
+      "fields" : [ {
+        "name" : "count",
+        "type" : "int",
+        "default" : 0
+      }, {
+        "name" : "subNodes",
+        "type" : {
+          "type" : "array",
+          "items" : "SamplePair"
+        }
+      } ]
+    }
+  } ]
+}

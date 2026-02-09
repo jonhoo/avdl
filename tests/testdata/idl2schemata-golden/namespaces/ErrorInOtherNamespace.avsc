@@ -1,0 +1,6 @@
+{
+  "type" : "error",
+  "name" : "ErrorInOtherNamespace",
+  "namespace" : "avro.test.error",
+  "fields" : [ ]
+}

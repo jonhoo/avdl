@@ -884,156 +884,107 @@ fn test_idl2schemata_tools_protocol() {
 // ==============================================================================
 // `idl2schemata` Golden-File Comparison Tests
 // ==============================================================================
+//
+// Golden `.avsc` files live in `tests/testdata/idl2schemata-golden/{name}/`
+// and were generated from the Java `avro-tools idl2schemata` command. Each
+// schema is compared via full `serde_json::Value` equality, catching field
+// serialization, annotation propagation, and default value bugs that a
+// metadata-only check would miss.
 
-/// Recursively extract all named type definitions from a JSON value.
-fn collect_all_named_types(
-    value: &Value,
-    inherited_ns: Option<&str>,
-    out: &mut Vec<(String, String, Option<String>)>,
-    seen: &mut std::collections::HashSet<String>,
-) {
-    match value {
-        Value::Object(obj) => {
-            if let (Some(name), Some(kind)) = (
-                obj.get("name").and_then(|n| n.as_str()),
-                obj.get("type").and_then(|t| t.as_str()),
-            ) {
-                let is_named = matches!(kind, "record" | "enum" | "fixed" | "error");
-                if is_named && seen.insert(name.to_string()) {
-                    let namespace = obj
-                        .get("namespace")
-                        .and_then(|ns| ns.as_str())
-                        .map(|s| s.to_string())
-                        .or_else(|| inherited_ns.map(|s| s.to_string()));
-                    out.push((name.to_string(), kind.to_string(), namespace.clone()));
+const IDL2SCHEMATA_GOLDEN_DIR: &str = "tests/testdata/idl2schemata-golden";
 
-                    let effective_ns = obj
-                        .get("namespace")
-                        .and_then(|ns| ns.as_str())
-                        .or(inherited_ns);
-                    if let Some(fields) = obj.get("fields").and_then(|f| f.as_array()) {
-                        for field in fields {
-                            if let Some(field_type) = field.get("type") {
-                                collect_all_named_types(field_type, effective_ns, out, seen);
-                            }
-                        }
-                    }
-                }
-            } else {
-                if let Some(items) = obj.get("items") {
-                    collect_all_named_types(items, inherited_ns, out, seen);
-                }
-                if let Some(values) = obj.get("values") {
-                    collect_all_named_types(values, inherited_ns, out, seen);
-                }
-            }
-        }
-        Value::Array(arr) => {
-            for item in arr {
-                collect_all_named_types(item, inherited_ns, out, seen);
-            }
-        }
-        _ => {}
+/// Load all golden `.avsc` files for a given test case into a name-to-JSON map.
+fn load_golden_schemata(test_name: &str) -> HashMap<String, Value> {
+    let dir = PathBuf::from(IDL2SCHEMATA_GOLDEN_DIR).join(test_name);
+    if !dir.exists() {
+        return HashMap::new();
     }
-}
-
-fn extract_golden_type_metadata(avpr: &Value) -> Vec<(String, String, Option<String>)> {
-    let protocol_ns = avpr.get("namespace").and_then(|ns| ns.as_str());
-    let types = avpr
-        .get("types")
-        .expect("golden .avpr should have a types key");
-    let mut result = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    collect_all_named_types(types, protocol_ns, &mut result, &mut seen);
+    let mut result = HashMap::new();
+    for entry in fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("failed to read golden dir {}: {e}", dir.display()))
+    {
+        let entry = entry.expect("failed to read directory entry");
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("avsc") {
+            let name = path
+                .file_stem()
+                .expect("avsc file should have a stem")
+                .to_string_lossy()
+                .to_string();
+            let content = fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+            let value: Value = serde_json::from_str(&content)
+                .unwrap_or_else(|e| panic!("failed to parse JSON {}: {e}", path.display()));
+            result.insert(name, value);
+        }
+    }
     result
 }
 
 #[test]
 fn test_idl2schemata_golden_comparison() {
-    fn compare_schemata(
-        name: &str,
-        schemata: &HashMap<String, Value>,
-        golden: &Value,
-    ) {
-        let golden_metadata = extract_golden_type_metadata(golden);
-
-        let golden_by_name: HashMap<&str, (&str, Option<&str>)> = golden_metadata
-            .iter()
-            .map(|(n, k, ns)| (n.as_str(), (k.as_str(), ns.as_deref())))
-            .collect();
-
-        assert_eq!(
-            schemata.len(),
-            golden_metadata.len(),
-            "{name}.avdl: idl2schemata produced {} schemas, golden .avpr has {} types.\n\
-             idl2schemata names: {:?}\n\
-             golden names: {:?}",
-            schemata.len(),
-            golden_metadata.len(),
-            schemata.keys().collect::<Vec<_>>(),
-            golden_metadata.iter().map(|(n, _, _)| n).collect::<Vec<_>>()
-        );
-
-        for (actual_name, actual_json) in schemata {
-            let (golden_kind, golden_ns) = golden_by_name
-                .get(actual_name.as_str())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{name}.avdl: idl2schemata produced schema '{actual_name}' not found in golden .avpr"
-                    )
-                });
-
-            let actual_kind = actual_json
-                .get("type")
-                .and_then(|t| t.as_str())
-                .expect("schema should have a type");
-            assert_eq!(actual_kind, *golden_kind, "{name}.avdl: schema '{actual_name}' type kind mismatch");
-
-            let actual_ns = actual_json.get("namespace").and_then(|ns| ns.as_str());
-            assert_eq!(actual_ns, *golden_ns, "{name}.avdl: schema '{actual_name}' namespace mismatch");
-        }
-    }
-
+    // Files with no import dirs needed.
     let simple_files = [
         "echo", "simple", "comments", "cycle", "forward_ref", "interop",
         "leading_underscore", "mr_events", "namespaces", "reservedwords",
         "unicode", "union", "uuid",
     ];
 
+    // Files that need specific import directories.
+    let import_files: &[(&str, &[&str])] = &[
+        ("baseball", &[INPUT_DIR]),
+        ("import", &[INPUT_DIR, CLASSPATH_DIR]),
+        ("nestedimport", &[INPUT_DIR, CLASSPATH_DIR]),
+        // Schema-mode files: idl2schemata extracts named types from these too.
+        ("schema_syntax_schema", &[INPUT_DIR]),
+        ("status_schema", &[]),
+    ];
+
+    fn compare_schemata_golden(
+        name: &str,
+        schemata: &HashMap<String, Value>,
+        golden: &HashMap<String, Value>,
+    ) {
+        // Verify schema counts match.
+        let mut actual_names: Vec<&String> = schemata.keys().collect();
+        actual_names.sort();
+        let mut golden_names: Vec<&String> = golden.keys().collect();
+        golden_names.sort();
+        assert_eq!(
+            actual_names, golden_names,
+            "{name}.avdl: schema name mismatch.\n  actual:  {actual_names:?}\n  golden:  {golden_names:?}"
+        );
+
+        // Compare each schema's full JSON content.
+        for (schema_name, actual_json) in schemata {
+            let golden_json = golden
+                .get(schema_name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{name}.avdl: schema '{schema_name}' not found in golden .avsc files"
+                    )
+                });
+            assert_eq!(
+                actual_json, golden_json,
+                "{name}.avdl: schema '{schema_name}' content mismatch"
+            );
+        }
+    }
+
     for name in &simple_files {
         let avdl = input_path(&format!("{name}.avdl"));
-        let golden_path = output_path(&format!("{name}.avpr"));
         let schemata = parse_idl2schemata(&avdl, &[]);
-        let golden = load_expected(&golden_path);
-        compare_schemata(name, &schemata, &golden);
+        let golden = load_golden_schemata(name);
+        compare_schemata_golden(name, &schemata, &golden);
     }
 
-    {
-        let input_dir = PathBuf::from(INPUT_DIR);
-        let avdl = input_path("baseball.avdl");
-        let golden_path = output_path("baseball.avpr");
-        let schemata = parse_idl2schemata(&avdl, &[&input_dir]);
-        let golden = load_expected(&golden_path);
-        compare_schemata("baseball", &schemata, &golden);
-    }
-
-    {
-        let input_dir = PathBuf::from(INPUT_DIR);
-        let classpath_dir = PathBuf::from(CLASSPATH_DIR);
-        let avdl = input_path("import.avdl");
-        let golden_path = output_path("import.avpr");
-        let schemata = parse_idl2schemata(&avdl, &[&input_dir, &classpath_dir]);
-        let golden = load_expected(&golden_path);
-        compare_schemata("import", &schemata, &golden);
-    }
-
-    {
-        let input_dir = PathBuf::from(INPUT_DIR);
-        let avdl = input_path("nestedimport.avdl");
-        let golden_path = output_path("nestedimport.avpr");
-        let schemata = parse_idl2schemata(&avdl, &[&input_dir]);
-        let golden = load_expected(&golden_path);
-        compare_schemata("nestedimport", &schemata, &golden);
+    for &(name, import_dirs) in import_files {
+        let avdl = input_path(&format!("{name}.avdl"));
+        let dirs: Vec<PathBuf> = import_dirs.iter().map(PathBuf::from).collect();
+        let dir_refs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
+        let schemata = parse_idl2schemata(&avdl, &dir_refs);
+        let golden = load_golden_schemata(name);
+        compare_schemata_golden(name, &schemata, &golden);
     }
 }
 

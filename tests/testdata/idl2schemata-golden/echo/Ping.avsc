@@ -1,0 +1,14 @@
+{
+  "type" : "record",
+  "name" : "Ping",
+  "namespace" : "org.apache.avro.echo",
+  "fields" : [ {
+    "name" : "timestamp",
+    "type" : "long",
+    "default" : -1
+  }, {
+    "name" : "text",
+    "type" : "string",
+    "default" : ""
+  } ]
+}

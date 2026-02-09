@@ -1,0 +1,6 @@
+{
+  "type" : "enum",
+  "name" : "ValueType",
+  "namespace" : "org.foo",
+  "symbols" : [ "JSON", "BASE64BIN", "PLAIN" ]
+}

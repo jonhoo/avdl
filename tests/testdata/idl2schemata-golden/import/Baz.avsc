@@ -1,0 +1,9 @@
+{
+  "type" : "record",
+  "name" : "Baz",
+  "namespace" : "ns.other.schema",
+  "fields" : [ {
+    "name" : "x",
+    "type" : "int"
+  } ]
+}

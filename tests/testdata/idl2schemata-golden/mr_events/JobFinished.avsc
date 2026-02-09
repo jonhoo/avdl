@@ -1,0 +1,86 @@
+{
+  "type" : "record",
+  "name" : "JobFinished",
+  "namespace" : "org.apache.hadoop.mapreduce.jobhistory",
+  "fields" : [ {
+    "name" : "jobid",
+    "type" : "string"
+  }, {
+    "name" : "finishTime",
+    "type" : {
+      "type" : "long",
+      "logicalType" : "timestamp-millis"
+    }
+  }, {
+    "name" : "finishRatio",
+    "type" : {
+      "type" : "bytes",
+      "logicalType" : "decimal",
+      "precision" : 9,
+      "scale" : 2
+    }
+  }, {
+    "name" : "finishedMaps",
+    "type" : "int"
+  }, {
+    "name" : "finishedReduces",
+    "type" : "int"
+  }, {
+    "name" : "failedMaps",
+    "type" : "int"
+  }, {
+    "name" : "failedReduces",
+    "type" : "int"
+  }, {
+    "name" : "totalCounters",
+    "type" : {
+      "type" : "record",
+      "name" : "JhCounters",
+      "fields" : [ {
+        "name" : "name",
+        "type" : "string"
+      }, {
+        "name" : "groups",
+        "type" : {
+          "type" : "array",
+          "items" : {
+            "type" : "record",
+            "name" : "JhCounterGroup",
+            "fields" : [ {
+              "name" : "name",
+              "type" : "string"
+            }, {
+              "name" : "displayName",
+              "type" : "string"
+            }, {
+              "name" : "counts",
+              "type" : {
+                "type" : "array",
+                "items" : {
+                  "type" : "record",
+                  "name" : "JhCounter",
+                  "fields" : [ {
+                    "name" : "name",
+                    "type" : "string"
+                  }, {
+                    "name" : "displayName",
+                    "type" : "string"
+                  }, {
+                    "name" : "value",
+                    "type" : "long"
+                  } ]
+                }
+              }
+            } ]
+          }
+        }
+      } ]
+    }
+  }, {
+    "name" : "mapCounters",
+    "type" : "JhCounters"
+  }, {
+    "name" : "reduceCounters",
+    "type" : "JhCounters"
+  } ]
+}

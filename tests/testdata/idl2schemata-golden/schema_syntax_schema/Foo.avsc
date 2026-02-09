@@ -1,0 +1,9 @@
+{
+  "type" : "record",
+  "name" : "Foo",
+  "namespace" : "org.foo",
+  "fields" : [ {
+    "name" : "x",
+    "type" : "int"
+  } ]
+}

@@ -1,0 +1,6 @@
+{
+  "type" : "record",
+  "name" : "FromAfar",
+  "namespace" : "org.on.the.classpath",
+  "fields" : [ ]
+}

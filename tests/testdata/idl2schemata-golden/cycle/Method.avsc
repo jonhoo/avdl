@@ -1,0 +1,13 @@
+{
+  "type" : "record",
+  "name" : "Method",
+  "namespace" : "org.apache.avro.gen",
+  "fields" : [ {
+    "name" : "declaringClass",
+    "type" : "string",
+    "testAttribute" : "testValue"
+  }, {
+    "name" : "methodName",
+    "type" : "string"
+  } ]
+}

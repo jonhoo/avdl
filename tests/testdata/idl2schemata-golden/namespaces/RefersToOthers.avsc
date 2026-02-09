@@ -1,0 +1,45 @@
+{
+  "type" : "record",
+  "name" : "RefersToOthers",
+  "namespace" : "avro.test.protocol",
+  "fields" : [ {
+    "name" : "someFixed",
+    "type" : {
+      "type" : "fixed",
+      "name" : "FixedInOtherNamespace",
+      "namespace" : "avro.test.fixed",
+      "size" : 16
+    }
+  }, {
+    "name" : "someRecord",
+    "type" : {
+      "type" : "record",
+      "name" : "RecordInOtherNamespace",
+      "namespace" : "avro.test.record",
+      "fields" : [ ]
+    }
+  }, {
+    "name" : "someError",
+    "type" : {
+      "type" : "error",
+      "name" : "ErrorInOtherNamespace",
+      "namespace" : "avro.test.error",
+      "fields" : [ ]
+    }
+  }, {
+    "name" : "someEnum",
+    "type" : {
+      "type" : "enum",
+      "name" : "EnumInOtherNamespace",
+      "namespace" : "avro.test.enum",
+      "symbols" : [ "FOO" ]
+    }
+  }, {
+    "name" : "thisFixed",
+    "type" : {
+      "type" : "fixed",
+      "name" : "FixedInThisNamespace",
+      "size" : 16
+    }
+  } ]
+}

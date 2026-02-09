@@ -1,0 +1,15 @@
+{
+  "type" : "record",
+  "name" : "JhCounter",
+  "namespace" : "org.apache.hadoop.mapreduce.jobhistory",
+  "fields" : [ {
+    "name" : "name",
+    "type" : "string"
+  }, {
+    "name" : "displayName",
+    "type" : "string"
+  }, {
+    "name" : "value",
+    "type" : "long"
+  } ]
+}

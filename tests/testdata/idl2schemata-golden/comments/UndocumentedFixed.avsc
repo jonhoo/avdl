@@ -1,0 +1,6 @@
+{
+  "type" : "fixed",
+  "name" : "UndocumentedFixed",
+  "namespace" : "testing",
+  "size" : 16
+}

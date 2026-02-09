@@ -1,0 +1,6 @@
+{
+  "type" : "fixed",
+  "name" : "FixedInThisNamespace",
+  "namespace" : "avro.test.protocol",
+  "size" : 16
+}

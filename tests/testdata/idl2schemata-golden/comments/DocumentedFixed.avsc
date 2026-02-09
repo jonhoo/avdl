@@ -1,0 +1,7 @@
+{
+  "type" : "fixed",
+  "name" : "DocumentedFixed",
+  "namespace" : "testing",
+  "doc" : "Documented Fixed Type",
+  "size" : 16
+}

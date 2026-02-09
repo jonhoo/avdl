@@ -1,0 +1,16 @@
+{
+  "type" : "record",
+  "name" : "SelfRef",
+  "namespace" : "org.apache.avro.gen",
+  "fields" : [ {
+    "name" : "something",
+    "type" : "string"
+  }, {
+    "name" : "subNodes",
+    "type" : {
+      "type" : "array",
+      "items" : "SelfRef"
+    },
+    "default" : [ ]
+  } ]
+}

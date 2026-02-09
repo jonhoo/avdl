@@ -1,0 +1,6 @@
+{
+  "type" : "enum",
+  "name" : "EnumInOtherNamespace",
+  "namespace" : "avro.test.enum",
+  "symbols" : [ "FOO" ]
+}

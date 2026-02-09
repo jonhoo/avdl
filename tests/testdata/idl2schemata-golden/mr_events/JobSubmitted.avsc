@@ -1,0 +1,30 @@
+{
+  "type" : "record",
+  "name" : "JobSubmitted",
+  "namespace" : "org.apache.hadoop.mapreduce.jobhistory",
+  "fields" : [ {
+    "name" : "jobid",
+    "type" : "string"
+  }, {
+    "name" : "jobName",
+    "type" : "string"
+  }, {
+    "name" : "userName",
+    "type" : "string"
+  }, {
+    "name" : "submitTime",
+    "type" : {
+      "type" : "long",
+      "logicalType" : "timestamp-millis"
+    }
+  }, {
+    "name" : "submitTimeLocal",
+    "type" : {
+      "type" : "long",
+      "logicalType" : "local-timestamp-millis"
+    }
+  }, {
+    "name" : "jobConfPath",
+    "type" : "string"
+  } ]
+}

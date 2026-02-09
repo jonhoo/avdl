@@ -1,0 +1,15 @@
+{
+  "type" : "error",
+  "name" : "DocumentedError",
+  "namespace" : "testing",
+  "doc" : "Documented Error",
+  "fields" : [ {
+    "name" : "reason",
+    "type" : "string",
+    "doc" : "Documented Reason Field"
+  }, {
+    "name" : "explanation",
+    "type" : "string",
+    "doc" : "Default Doc Explanation Field"
+  } ]
+}

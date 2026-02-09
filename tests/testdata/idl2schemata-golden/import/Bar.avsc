@@ -1,0 +1,27 @@
+{
+  "type" : "record",
+  "name" : "Bar",
+  "namespace" : "org.foo",
+  "fields" : [ {
+    "name" : "baz",
+    "type" : {
+      "type" : "record",
+      "name" : "Baz",
+      "namespace" : "ns.other.schema",
+      "fields" : [ {
+        "name" : "x",
+        "type" : "int"
+      } ]
+    }
+  }, {
+    "name" : "foo",
+    "type" : {
+      "type" : "record",
+      "name" : "Foo",
+      "fields" : [ {
+        "name" : "x",
+        "type" : "int"
+      } ]
+    }
+  } ]
+}

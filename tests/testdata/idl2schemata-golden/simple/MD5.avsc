@@ -1,0 +1,7 @@
+{
+  "type" : "fixed",
+  "name" : "MD5",
+  "namespace" : "org.apache.avro.test",
+  "doc" : "An MD5 hash.",
+  "size" : 16
+}

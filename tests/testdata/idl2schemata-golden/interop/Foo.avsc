@@ -1,0 +1,9 @@
+{
+  "type" : "record",
+  "name" : "Foo",
+  "namespace" : "org.apache.avro",
+  "fields" : [ {
+    "name" : "label",
+    "type" : "string"
+  } ]
+}

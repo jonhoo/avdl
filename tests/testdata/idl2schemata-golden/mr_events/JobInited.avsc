@@ -1,0 +1,24 @@
+{
+  "type" : "record",
+  "name" : "JobInited",
+  "namespace" : "org.apache.hadoop.mapreduce.jobhistory",
+  "fields" : [ {
+    "name" : "jobid",
+    "type" : "string"
+  }, {
+    "name" : "launchTime",
+    "type" : {
+      "type" : "long",
+      "logicalType" : "timestamp-millis"
+    }
+  }, {
+    "name" : "totalMaps",
+    "type" : "int"
+  }, {
+    "name" : "totalReduces",
+    "type" : "int"
+  }, {
+    "name" : "jobStatus",
+    "type" : "string"
+  } ]
+}

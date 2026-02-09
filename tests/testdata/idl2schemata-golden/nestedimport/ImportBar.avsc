@@ -1,0 +1,33 @@
+{
+  "type" : "record",
+  "name" : "ImportBar",
+  "namespace" : "org.apache.avro.ipc.specific",
+  "fields" : [ {
+    "name" : "foo",
+    "type" : {
+      "type" : "record",
+      "name" : "Player",
+      "namespace" : "avro.examples.baseball",
+      "fields" : [ {
+        "name" : "number",
+        "type" : "int"
+      }, {
+        "name" : "first_name",
+        "type" : "string"
+      }, {
+        "name" : "last_name",
+        "type" : "string"
+      }, {
+        "name" : "position",
+        "type" : {
+          "type" : "array",
+          "items" : {
+            "type" : "enum",
+            "name" : "Position",
+            "symbols" : [ "P", "C", "B1", "B2", "B3", "SS", "LF", "CF", "RF", "DH" ]
+          }
+        }
+      } ]
+    }
+  } ]
+}
