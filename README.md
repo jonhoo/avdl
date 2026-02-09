@@ -113,6 +113,14 @@ output, but deliberately differs in a few ways:
      ╰────
   ```
 
+- **Nested unions are rejected per spec.** The Avro specification
+  states "Unions may not immediately contain other unions." This tool
+  enforces this rule, while Java avro-tools 1.12.1 incorrectly accepts
+  nested unions and silently produces an empty union `[]` in the JSON
+  output. If you have `.avdl` files that compiled with Java but fail
+  here, the nested union is a spec violation that Java should have
+  caught.
+
 - **Namespace validation covers all segments.** Rust validates every
   dot-separated segment of namespace names. Java's
   `IdlReader.namespace()` loop skips the last segment, so a namespace

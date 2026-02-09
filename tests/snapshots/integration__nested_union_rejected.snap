@@ -16,6 +16,6 @@ Error {
             ),
             length: 5,
         },
-        message: "Unions may not immediately contain other unions",
+        message: "Unions may not immediately contain other unions (per the Avro specification, §schemas). Note: Java avro-tools incorrectly accepts this syntax, producing an empty union.",
     },
 }

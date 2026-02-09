@@ -1521,7 +1521,9 @@ fn walk_union_type<'input>(
             return Err(make_diagnostic(
                 src,
                 &*ft_ctxs[i],
-                "Unions may not immediately contain other unions",
+                "Unions may not immediately contain other unions \
+                 (per the Avro specification, §schemas). Note: Java avro-tools \
+                 incorrectly accepts this syntax, producing an empty union.",
             ));
         }
     }
