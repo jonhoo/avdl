@@ -69,10 +69,6 @@ output, but deliberately differs in a few ways:
   rejects such files, though Java's internal `IdlFile.outputString()`
   test harness supports the same output.
 
-- **Trailing commas in enums.** `enum E { A, B, C, }` is silently
-  accepted via ANTLR error recovery. avro-tools 1.12.1 crashes on this
-  input.
-
 - **Better error diagnostics.** Errors include source context with the
   offending token underlined, powered by [miette](https://docs.rs/miette).
   The Rust tool also gives clear error messages in cases where

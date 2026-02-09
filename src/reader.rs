@@ -472,7 +472,20 @@ pub fn parse_idl_named(
     // a problem, strip `\u001a` and everything after it from `input` here
     // before passing it to the lexer.
     let input_stream = InputStream::new(input);
-    let lexer = IdlLexer::new(input_stream);
+    let mut lexer = IdlLexer::new(input_stream);
+
+    // Replace the lexer's default ConsoleErrorListener with a
+    // CollectingErrorListener so that token-recognition errors (e.g.,
+    // unrecognized characters) don't leak to stderr. We surface them as
+    // warnings instead, matching Java's behavior of not treating lexer
+    // errors as fatal. (Java also doesn't install a custom listener on
+    // the lexer — it just lets ConsoleErrorListener print to stderr.)
+    let lexer_errors: Rc<RefCell<Vec<SyntaxError>>> = Rc::new(RefCell::new(Vec::new()));
+    lexer.remove_error_listeners();
+    lexer.add_error_listener(Box::new(CollectingErrorListener {
+        errors: Rc::clone(&lexer_errors),
+    }));
+
     let token_stream = CommonTokenStream::new(lexer);
     let mut parser = IdlParser::new(token_stream);
 
@@ -496,14 +509,22 @@ pub fn parse_idl_named(
         .map_err(|e| miette::miette!("ANTLR parse error: {e:?}"))
         .wrap_err_with(|| format!("parse `{source_name}`"))?;
 
-    // Check for ANTLR syntax errors collected during parsing. Any syntax error
-    // means the input is malformed, even if ANTLR's error recovery produced a
-    // parse tree. This matches Java's behavior of throwing on the first error.
-    //
-    // We report only the first error. Java also fails on the first syntax error,
-    // and ANTLR recovery tends to produce cascading noise after the first real
-    // problem. Multi-error highlighting via miette's `related()` can be added
-    // later if needed.
+    // Convert any lexer errors into warnings. Lexer errors (e.g., unrecognized
+    // characters) don't necessarily prevent a valid parse — the lexer skips the
+    // offending character and continues. Java also treats these as non-fatal
+    // (prints to stderr via the default ConsoleErrorListener).
+    let lexer_warnings: Vec<Warning> = RefCell::borrow(&lexer_errors)
+        .iter()
+        .map(|e| Warning {
+            message: e.message.clone(),
+            source: Some(miette::NamedSource::new(source_name, input.to_string())),
+            span: Some(miette::SourceSpan::new(e.offset.into(), e.length)),
+        })
+        .collect();
+
+    // Check for ANTLR parser errors. Any syntax error means the input is
+    // malformed, even if ANTLR's error recovery produced a parse tree. This
+    // matches Java's behavior of throwing on the first error.
     let collected_errors = RefCell::borrow(&syntax_errors);
     if !collected_errors.is_empty() {
         let first = &collected_errors[0];
@@ -551,7 +572,10 @@ pub fn parse_idl_named(
         &src,
     );
 
-    Ok((idl_file, decl_items, warnings))
+    let mut all_warnings = lexer_warnings;
+    all_warnings.extend(warnings);
+
+    Ok((idl_file, decl_items, all_warnings))
 }
 
 // ==========================================================================
@@ -4471,6 +4495,18 @@ mod tests {
             result.is_ok(),
             "decimal(5, 5) should be accepted: {result:?}"
         );
+    }
+
+    #[test]
+    fn lexer_error_produces_warning() {
+        // A control character that the ANTLR lexer can't tokenize should
+        // produce a warning (matching Java's behavior of printing to stderr),
+        // not silently succeed or fatally fail.
+        let idl = "protocol Test { record Foo { string\x01 name; } }";
+        let (_, _, warnings) = parse_idl_for_test(idl)
+            .expect("lexer errors should not be fatal");
+        assert_eq!(warnings.len(), 1);
+        insta::assert_debug_snapshot!(warnings[0]);
     }
 
     #[test]
