@@ -665,6 +665,7 @@ fn alias_ref_name(alias: &str, schema_namespace: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     // =========================================================================

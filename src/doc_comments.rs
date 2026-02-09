@@ -221,6 +221,7 @@ fn common_prefix<'a>(a: &'a str, b: &str) -> &'a str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_strip_indents_single_line() {
