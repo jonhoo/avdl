@@ -194,7 +194,8 @@ After all waves complete:
    was friction during this iteration. Update this file with any
    improvements — better instructions, new tips, corrected
    assumptions. Commit the change.
-6. Append a brief summary of the loop to `agent-logs/LOOPS.md` for
+6. Append a brief summary of the loop to a new file
+   `agent-logs/loop-NN.md` (zero-padded iteration number) for
    the user to peruse later.
 7. **Return to Phase 1** for the next iteration.
 
