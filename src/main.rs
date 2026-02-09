@@ -10,7 +10,7 @@ use std::fs;
 use std::io::{self, Read as _};
 use std::path::PathBuf;
 
-use avdl::{Idl, Idl2Schemata, to_json_string};
+use avdl::{Idl, Idl2Schemata};
 use lexopt::prelude::*;
 
 // ==============================================================================
@@ -211,8 +211,8 @@ fn run_idl(
         eprintln!("Warning: {w}");
     }
 
-    let json_str =
-        to_json_string(&idl_output.json).map_err(|e| miette::miette!("serialize JSON: {e}"))?;
+    let json_str = serde_json::to_string_pretty(&idl_output.json)
+        .map_err(|e| miette::miette!("serialize JSON: {e}"))?;
 
     write_output(&output, &json_str)?;
 
@@ -244,7 +244,7 @@ fn run_idl2schemata(
     fs::create_dir_all(&output_dir).map_err(|e| miette::miette!("{e}: create output directory"))?;
 
     for named_schema in &schemata_output.schemas {
-        let json_str = to_json_string(&named_schema.schema)
+        let json_str = serde_json::to_string_pretty(&named_schema.schema)
             .map_err(|e| miette::miette!("serialize JSON for {}: {e}", named_schema.name))?;
 
         let file_path = output_dir.join(format!("{}.avsc", named_schema.name));

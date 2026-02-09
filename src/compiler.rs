@@ -727,20 +727,6 @@ fn validate_all_references(
 }
 
 // ==============================================================================
-// Public Re-export: Java-Compatible JSON Formatting
-// ==============================================================================
-
-/// Format a JSON value as a pretty-printed string matching Java avro-tools'
-/// output style.
-///
-/// This is the same formatter used by the CLI. Library callers who want
-/// byte-compatible output with the Java tool should use this instead of
-/// `serde_json::to_string_pretty`.
-pub fn to_json_string(value: &Value) -> serde_json::Result<String> {
-    crate::model::json::to_string_pretty_java(value)
-}
-
-// ==============================================================================
 // Unit Tests
 // ==============================================================================
 

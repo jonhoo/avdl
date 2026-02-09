@@ -20,7 +20,7 @@
 //! let output = Idl::new()
 //!     .import_dir("schemas/shared/")
 //!     .convert("schemas/service.avdl")?;
-//! println!("{}", avdl::to_json_string(&output.json)?);
+//! println!("{}", serde_json::to_string_pretty(&output.json)?);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -34,17 +34,11 @@
 //! for schema in &output.schemas {
 //!     std::fs::write(
 //!         format!("{}.avsc", schema.name),
-//!         avdl::to_json_string(&schema.schema)?,
+//!         serde_json::to_string_pretty(&schema.schema)?,
 //!     )?;
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
-//!
-//! # JSON formatting
-//!
-//! [`to_json_string`] formats JSON to match Java avro-tools' output style
-//! (two-space indent, sorted keys within objects). Use it instead of
-//! [`serde_json::to_string_pretty`] when byte-compatible output matters.
 //!
 //! # Error handling
 //!
@@ -62,4 +56,4 @@ pub(crate) mod reader;
 pub(crate) mod resolve;
 
 // Re-export the small number of public API at the crate root.
-pub use compiler::{Idl, Idl2Schemata, IdlOutput, NamedSchema, SchemataOutput, to_json_string};
+pub use compiler::{Idl, Idl2Schemata, IdlOutput, NamedSchema, SchemataOutput};
