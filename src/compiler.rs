@@ -162,7 +162,7 @@ impl Idl {
         // Validate that all type references resolved. Unresolved references
         // indicate missing imports, undefined types, or cross-namespace
         // references that need fully-qualified names.
-        validate_all_references(&idl_file, &registry)?;
+        validate_all_references(&idl_file, &registry, source, source_name)?;
 
         Ok(IdlOutput {
             json,
@@ -353,7 +353,7 @@ impl Idl2Schemata {
         }
 
         // Validate that all type references resolved.
-        validate_all_references(&idl_file, &registry)?;
+        validate_all_references(&idl_file, &registry, source, source_name)?;
 
         Ok(SchemataOutput {
             schemas,
@@ -657,9 +657,15 @@ fn wrap_import_error(
 /// Unresolved references indicate missing imports, undefined types, or
 /// cross-namespace references that need fully-qualified names. Java's
 /// `IdlReader` treats these as fatal errors.
+///
+/// When a reference carries a source span (from the parser), the error is
+/// reported as a `ParseDiagnostic` with source highlighting. References
+/// without spans (from JSON imports) fall back to a plain text message.
 fn validate_all_references(
     idl_file: &IdlFile,
     registry: &SchemaRegistry,
+    source: &str,
+    source_name: &str,
 ) -> miette::Result<()> {
     let mut unresolved = registry.validate_references();
 
@@ -678,13 +684,27 @@ fn validate_all_references(
         IdlFile::ProtocolFile(_) => {}
     }
 
-    unresolved.sort();
-    unresolved.dedup();
-    if !unresolved.is_empty() {
-        miette::bail!("Undefined name: {}", unresolved.join(", "));
+    unresolved.sort_by(|a, b| a.0.cmp(&b.0));
+    unresolved.dedup_by(|a, b| a.0 == b.0);
+
+    if unresolved.is_empty() {
+        return Ok(());
     }
 
-    Ok(())
+    // Report the first unresolved reference that has a source span as a
+    // ParseDiagnostic for rich source-highlighted output. If none have spans,
+    // fall back to a plain message listing all unresolved names.
+    if let Some((name, Some(span))) = unresolved.iter().find(|(_, s)| s.is_some()) {
+        return Err(ParseDiagnostic {
+            src: miette::NamedSource::new(source_name, source.to_string()),
+            span: *span,
+            message: format!("Undefined name: {name}"),
+        }
+        .into());
+    }
+
+    let names: Vec<&str> = unresolved.iter().map(|(name, _)| name.as_str()).collect();
+    miette::bail!("Undefined name: {}", names.join(", "));
 }
 
 // ==============================================================================

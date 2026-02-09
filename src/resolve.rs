@@ -15,6 +15,7 @@
 // named type.
 
 use indexmap::IndexMap;
+use miette::SourceSpan;
 
 use crate::model::schema::AvroSchema;
 
@@ -172,30 +173,33 @@ impl SchemaRegistry {
 
     /// Validate that all `AvroSchema::Reference` nodes in registered schemas
     /// point to actually registered types. Returns a sorted, deduplicated list
-    /// of unresolved names (empty if everything resolves).
-    pub fn validate_references(&self) -> Vec<String> {
+    /// of `(full_name, span)` pairs for unresolved references (empty if
+    /// everything resolves). The span allows callers to produce source-
+    /// highlighted diagnostics.
+    pub fn validate_references(&self) -> Vec<(String, Option<SourceSpan>)> {
         let mut unresolved = Vec::new();
         for schema in self.schemas.values() {
             collect_unresolved_refs(schema, &self.schemas, &mut unresolved);
         }
-        unresolved.sort();
-        unresolved.dedup();
+        unresolved.sort_by(|a, b| a.0.cmp(&b.0));
+        unresolved.dedup_by(|a, b| a.0 == b.0);
         unresolved
     }
 
     /// Validate that all `AvroSchema::Reference` nodes in the given schema
     /// point to types registered in this registry. Returns a sorted,
-    /// deduplicated list of unresolved names (empty if everything resolves).
+    /// deduplicated list of `(full_name, span)` pairs for unresolved
+    /// references (empty if everything resolves).
     ///
     /// This is used to validate schemas that are *not* themselves registered
     /// in the registry -- specifically, the top-level schema from
     /// `IdlFile::SchemaFile`, which is stored separately and would otherwise
     /// escape validation by `validate_references`.
-    pub fn validate_schema(&self, schema: &AvroSchema) -> Vec<String> {
+    pub fn validate_schema(&self, schema: &AvroSchema) -> Vec<(String, Option<SourceSpan>)> {
         let mut unresolved = Vec::new();
         collect_unresolved_refs(schema, &self.schemas, &mut unresolved);
-        unresolved.sort();
-        unresolved.dedup();
+        unresolved.sort_by(|a, b| a.0.cmp(&b.0));
+        unresolved.dedup_by(|a, b| a.0 == b.0);
         unresolved
     }
 }
@@ -203,24 +207,31 @@ impl SchemaRegistry {
 /// Recursively walk a schema tree and collect any `Reference` names that
 /// don't correspond to a known type in the provided name set.
 ///
+/// Each unresolved entry is a `(full_name, span)` pair. The span comes
+/// from the `Reference` variant and may be `None` for references created
+/// from JSON imports (which have no source location).
+///
 /// This is the core validation logic shared by both `validate_references`
 /// (which checks registered schemas) and `validate_schema` (which checks
 /// an arbitrary schema against the registry).
 fn collect_unresolved_refs(
     schema: &AvroSchema,
     known: &IndexMap<String, AvroSchema>,
-    unresolved: &mut Vec<String>,
+    unresolved: &mut Vec<(String, Option<SourceSpan>)>,
 ) {
     match schema {
         AvroSchema::Reference {
-            name, namespace, ..
+            name,
+            namespace,
+            span,
+            ..
         } => {
             let full_name = match namespace {
                 Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
                 _ => name.clone(),
             };
             if !known.contains_key(&full_name) {
-                unresolved.push(full_name);
+                unresolved.push((full_name, *span));
             }
         }
         AvroSchema::Record { fields, .. } => {
@@ -255,6 +266,12 @@ impl Default for SchemaRegistry {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    /// Extract just the names from unresolved reference tuples, for concise
+    /// test assertions.
+    fn names(unresolved: Vec<(String, Option<SourceSpan>)>) -> Vec<String> {
+        unresolved.into_iter().map(|(name, _)| name).collect()
+    }
 
     #[test]
     fn test_register_and_lookup() {
@@ -326,6 +343,7 @@ mod tests {
                     name: "Missing".to_string(),
                     namespace: None,
                     properties: HashMap::new(),
+                    span: None,
                 },
                 doc: None,
                 default: None,
@@ -339,7 +357,7 @@ mod tests {
         })
         .expect("registration of record with reference field succeeds");
         let unresolved = reg.validate_references();
-        assert_eq!(unresolved, vec!["Missing"]);
+        assert_eq!(names(unresolved), vec!["Missing"]);
     }
 
     #[test]
@@ -366,6 +384,7 @@ mod tests {
                     name: "Inner".to_string(),
                     namespace: None,
                     properties: HashMap::new(),
+                    span: None,
                 },
                 doc: None,
                 default: None,
@@ -398,6 +417,7 @@ mod tests {
                             name: "MissingA".to_string(),
                             namespace: None,
                             properties: HashMap::new(),
+                            span: None,
                         }),
                         properties: HashMap::new(),
                     },
@@ -414,6 +434,7 @@ mod tests {
                             name: "MissingB".to_string(),
                             namespace: None,
                             properties: HashMap::new(),
+                            span: None,
                         }),
                         properties: HashMap::new(),
                     },
@@ -432,6 +453,7 @@ mod tests {
                                 name: "MissingC".to_string(),
                                 namespace: None,
                                 properties: HashMap::new(),
+                                span: None,
                             },
                         ],
                         is_nullable_type: true,
@@ -449,7 +471,7 @@ mod tests {
         })
         .expect("registration of Container with nested references succeeds");
         let unresolved = reg.validate_references();
-        assert_eq!(unresolved, vec!["MissingA", "MissingB", "MissingC"]);
+        assert_eq!(names(unresolved), vec!["MissingA", "MissingB", "MissingC"]);
     }
 
     #[test]
@@ -650,9 +672,10 @@ mod tests {
             name: "DoesNotExist".to_string(),
             namespace: Some("com.example".to_string()),
             properties: HashMap::new(),
+            span: None,
         };
         let unresolved = reg.validate_schema(&schema);
-        assert_eq!(unresolved, vec!["com.example.DoesNotExist"]);
+        assert_eq!(names(unresolved), vec!["com.example.DoesNotExist"]);
     }
 
     #[test]
@@ -674,6 +697,7 @@ mod tests {
             name: "MyRecord".to_string(),
             namespace: Some("com.example".to_string()),
             properties: HashMap::new(),
+            span: None,
         };
         let unresolved = reg.validate_schema(&schema);
         assert!(unresolved.is_empty());
@@ -688,11 +712,12 @@ mod tests {
                 name: "DoesNotExist".to_string(),
                 namespace: None,
                 properties: HashMap::new(),
+                span: None,
             }),
             properties: HashMap::new(),
         };
         let unresolved = reg.validate_schema(&schema);
-        assert_eq!(unresolved, vec!["DoesNotExist"]);
+        assert_eq!(names(unresolved), vec!["DoesNotExist"]);
     }
 
     #[test]
@@ -704,11 +729,12 @@ mod tests {
                 name: "Missing".to_string(),
                 namespace: Some("org.test".to_string()),
                 properties: HashMap::new(),
+                span: None,
             }),
             properties: HashMap::new(),
         };
         let unresolved = reg.validate_schema(&schema);
-        assert_eq!(unresolved, vec!["org.test.Missing"]);
+        assert_eq!(names(unresolved), vec!["org.test.Missing"]);
     }
 
     #[test]
@@ -722,12 +748,13 @@ mod tests {
                     name: "Missing".to_string(),
                     namespace: None,
                     properties: HashMap::new(),
+                    span: None,
                 },
             ],
             is_nullable_type: false,
         };
         let unresolved = reg.validate_schema(&schema);
-        assert_eq!(unresolved, vec!["Missing"]);
+        assert_eq!(names(unresolved), vec!["Missing"]);
     }
 
     #[test]
@@ -761,8 +788,9 @@ mod tests {
             name: "MyRecord".to_string(),
             namespace: Some("com.example".to_string()),
             properties: HashMap::new(),
+            span: None,
         };
         let unresolved = reg.validate_schema(&schema);
-        assert_eq!(unresolved, vec!["com.example.MyRecord"]);
+        assert_eq!(names(unresolved), vec!["com.example.MyRecord"]);
     }
 }

@@ -1433,17 +1433,20 @@ fn walk_nullable_type<'input>(
         // so the Reference carries them separately, enabling correct namespace
         // shortening during JSON serialization.
         let type_name = identifier_text(&ref_ctx);
+        let ref_span = span_from_context(&*ref_ctx);
         if let Some((ns, name)) = type_name.rsplit_once('.') {
             AvroSchema::Reference {
                 name: name.to_string(),
                 namespace: Some(ns.to_string()),
                 properties: HashMap::new(),
+                span: ref_span,
             }
         } else {
             AvroSchema::Reference {
                 name: type_name.to_string(),
                 namespace: namespace.clone(),
                 properties: HashMap::new(),
+                span: ref_span,
             }
         }
     } else {
@@ -1721,17 +1724,20 @@ fn walk_message<'input>(
         let mut error_schemas = Vec::new();
         for error_id_ctx in &ctx.errors {
             let error_name = identifier_text(error_id_ctx);
+            let error_span = span_from_context(&**error_id_ctx);
             if let Some((ns, name)) = error_name.rsplit_once('.') {
                 error_schemas.push(AvroSchema::Reference {
                     name: name.to_string(),
                     namespace: Some(ns.to_string()),
                     properties: HashMap::new(),
+                    span: error_span,
                 });
             } else {
                 error_schemas.push(AvroSchema::Reference {
                     name: error_name.to_string(),
                     namespace: namespace.clone(),
                     properties: HashMap::new(),
+                    span: error_span,
                 });
             }
         }
@@ -2499,12 +2505,14 @@ fn apply_properties_to_schema(
             name,
             namespace,
             properties: mut existing,
+            span,
         } => {
             existing.extend(properties);
             AvroSchema::Reference {
                 name,
                 namespace,
                 properties: existing,
+                span,
             }
         }
         // Union and other types that don't carry top-level properties.

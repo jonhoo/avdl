@@ -2,4 +2,11 @@
 source: tests/error_reporting.rs
 expression: error
 ---
-Undefined name: test.Nonexistent
+  x Undefined name: test.Nonexistent
+   ,-[<input>:5:17]
+ 4 |             record R {
+ 5 |                 Nonexistent x;
+   :                 ^^^^^|^^^^^
+   :                      `-- Undefined name: test.Nonexistent
+ 6 |             }
+   `----

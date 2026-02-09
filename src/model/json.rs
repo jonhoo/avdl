@@ -1348,6 +1348,7 @@ mod tests {
             name: "Ping".to_string(),
             namespace: Some("org.example".to_string()),
             properties: HashMap::new(),
+            span: None,
         };
 
         let mut known = HashSet::new();
@@ -1381,6 +1382,7 @@ mod tests {
             name: "Ping".to_string(),
             namespace: Some("org.example".to_string()),
             properties: HashMap::new(),
+            span: None,
         };
 
         let mut known = HashSet::new();
@@ -1410,6 +1412,7 @@ mod tests {
             name: "Ping".to_string(),
             namespace: Some("org.example".to_string()),
             properties: HashMap::new(),
+            span: None,
         };
 
         let mut known = HashSet::new();
@@ -1727,6 +1730,7 @@ mod tests {
             name: "record".to_string(),
             namespace: Some("test.kw".to_string()),
             properties: HashMap::new(),
+            span: None,
         };
 
         let mut known = HashSet::new();
