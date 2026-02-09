@@ -390,7 +390,7 @@ impl CompileContext {
 /// Parse IDL source and recursively resolve all imports.
 ///
 /// Returns the parsed IDL file, schema registry, and any warnings. The key
-/// insight for correct type ordering: `parse_idl` returns declaration items
+/// insight for correct type ordering: `parse_idl_named` returns declaration items
 /// (imports and local types) in source order, and we process them
 /// sequentially, so the registry reflects declaration order.
 fn parse_and_resolve(

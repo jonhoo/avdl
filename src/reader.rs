@@ -288,21 +288,15 @@ pub enum DeclItem {
     Type(AvroSchema, Option<miette::SourceSpan>),
 }
 
-/// Parse an Avro IDL string into an `IdlFile` and a list of declaration items.
+/// Test-only wrapper around [`parse_idl_named`] that normalizes CRLF line
+/// endings to LF before parsing. This ensures byte offsets in ANTLR tokens
+/// (and therefore in `SourceSpan` error diagnostics) are consistent in tests
+/// regardless of the source file's line ending convention.
 ///
-/// The returned `Vec<DeclItem>` contains all imports and locally-defined types
-/// in source order. The caller is responsible for processing these items in
-/// order (resolving imports and registering types) to produce a correctly
-/// ordered `SchemaRegistry`.
-///
-/// Also returns a `Vec<Warning>` containing any out-of-place doc comment
-/// warnings detected during parsing.
+/// Tests that need to verify CRLF-specific behavior should call
+/// [`parse_idl_named`] directly.
 #[cfg(test)]
-pub fn parse_idl(input: &str) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
-    // Normalize CRLF line endings to LF so that byte offsets in ANTLR tokens
-    // (and therefore in SourceSpan error diagnostics) are consistent in tests
-    // regardless of the source file's line ending convention. Production code
-    // reads files itself and doesn't need this normalization.
+pub fn parse_idl_for_test(input: &str) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
     let normalized;
     let input = if input.contains("\r\n") {
         normalized = input.replace("\r\n", "\n");
@@ -2888,7 +2882,7 @@ mod tests {
                 Msg send(Msg m) oneway;
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -2901,7 +2895,7 @@ mod tests {
                 void send(Msg m) oneway;
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(result.is_ok(), "one-way void message should be accepted");
     }
 
@@ -2920,7 +2914,7 @@ mod tests {
                 }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -2937,7 +2931,7 @@ mod tests {
                 @prop("x") Foo getFoo(string id);
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         let msg = format!("{:?}", err);
         assert!(
             msg.contains("Type references may not be annotated"),
@@ -2956,7 +2950,7 @@ mod tests {
                 @prop("x") void doThing(Foo input);
             }
         "#;
-        let (idl_file, _, _) = parse_idl(idl).unwrap();
+        let (idl_file, _, _) = parse_idl_for_test(idl).unwrap();
         let protocol = match idl_file {
             IdlFile::ProtocolFile(p) => p,
             _ => panic!("expected protocol"),
@@ -2977,7 +2971,7 @@ mod tests {
                 }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_ok(),
             "annotation on primitive type should be accepted"
@@ -2999,7 +2993,7 @@ mod tests {
                 record R { string name }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_err(),
             "expected error for missing semicolon in record field"
@@ -3015,7 +3009,7 @@ mod tests {
                 record R { string name; }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_ok(),
             "valid protocol should be accepted, got: {:?}",
@@ -3190,7 +3184,7 @@ mod tests {
                 record R { string name; }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3203,7 +3197,7 @@ mod tests {
                 @doc("Record doc") record R { string name; }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3217,7 +3211,7 @@ mod tests {
                 record R { @type("custom") string name; }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3230,7 +3224,7 @@ mod tests {
                 record R { string @doc("field doc") name; }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3244,7 +3238,7 @@ mod tests {
                 @default("A") enum E { A, B, C }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3258,7 +3252,7 @@ mod tests {
                 @default("x") record R { string name; }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_ok(),
             "default annotation on record should be accepted, got: {:?}",
@@ -3277,7 +3271,7 @@ mod tests {
                 record R { string name; }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_ok(),
             "version annotation on protocol should be accepted, got: {:?}",
@@ -3294,7 +3288,7 @@ mod tests {
                 @doc("message doc") void ping();
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3307,7 +3301,7 @@ mod tests {
                 @response("custom") void ping();
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3321,7 +3315,7 @@ mod tests {
                 record R { string name; }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_ok(),
             "custom annotation on protocol should be accepted, got: {:?}",
@@ -3336,7 +3330,7 @@ mod tests {
     /// Helper: parse an IDL protocol with a single record, return its first field's schema.
     fn parse_first_field_schema(idl: &str) -> AvroSchema {
         let (_idl_file, decl_items, _warnings) =
-            parse_idl(idl).expect("IDL should parse successfully");
+            parse_idl_for_test(idl).expect("IDL should parse successfully");
         // Find the record among declaration items.
         for item in &decl_items {
             if let DeclItem::Type(AvroSchema::Record { fields, .. }, _) = item {
@@ -3597,7 +3591,7 @@ mod tests {
                 }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3610,7 +3604,7 @@ mod tests {
                 }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3624,7 +3618,7 @@ mod tests {
                 }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3637,7 +3631,7 @@ mod tests {
                 }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_ok(),
             "union without duplicates should be accepted, got: {:?}",
@@ -3656,7 +3650,7 @@ mod tests {
                 }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_ok(),
             "union with different named types should be accepted, got: {:?}",
@@ -3675,7 +3669,7 @@ mod tests {
                 enum E { A, B, C } = NONEXISTENT;
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3686,7 +3680,7 @@ mod tests {
                 enum E { A, B, C } = B;
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_ok(),
             "valid enum default should be accepted, got: {:?}",
@@ -3701,14 +3695,14 @@ mod tests {
     #[test]
     fn protocol_name_null_is_rejected() {
         let idl = "protocol `null` { }";
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
     #[test]
     fn protocol_name_int_is_rejected() {
         let idl = "protocol `int` { }";
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_err(),
             "reserved protocol name 'int' should be rejected"
@@ -3730,7 +3724,7 @@ mod tests {
             }
         "#;
         let (_idl_file, decl_items, _warnings) =
-            parse_idl(idl).expect("duplicate @namespace should be accepted");
+            parse_idl_for_test(idl).expect("duplicate @namespace should be accepted");
         let record = decl_items
             .iter()
             .find_map(|item| {
@@ -3765,7 +3759,7 @@ mod tests {
                 record Foo { string name; }
             }
         "#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
@@ -3777,7 +3771,7 @@ mod tests {
                 record Foo { string name; }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(result.is_err(), "dashed alias name should be rejected");
     }
 
@@ -3789,7 +3783,7 @@ mod tests {
                 record Foo { string name; }
             }
         "#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_ok(),
             "qualified alias should be accepted, got: {:?}",
@@ -3827,14 +3821,14 @@ mod tests {
     #[test]
     fn default_int_string_is_rejected() {
         let idl = r#"protocol P { record R { int count = "hello"; } }"#;
-        let err = parse_idl(idl).unwrap_err();
+        let err = parse_idl_for_test(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
     }
 
     #[test]
     fn default_boolean_int_is_rejected() {
         let idl = r#"protocol P { record R { boolean flag = 42; } }"#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_err(),
             "boolean with int default should be rejected"
@@ -3844,7 +3838,7 @@ mod tests {
     #[test]
     fn default_string_array_is_rejected() {
         let idl = r#"protocol P { record R { string name = [1, 2, 3]; } }"#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_err(),
             "string with array default should be rejected"
@@ -3854,7 +3848,7 @@ mod tests {
     #[test]
     fn default_int_null_is_rejected() {
         let idl = r#"protocol P { record R { int count = null; } }"#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_err(),
             "non-nullable int with null default should be rejected"
@@ -3864,14 +3858,14 @@ mod tests {
     #[test]
     fn default_int_float_is_rejected() {
         let idl = r#"protocol P { record R { int count = 3.14; } }"#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(result.is_err(), "int with float default should be rejected");
     }
 
     #[test]
     fn default_int_object_is_rejected() {
         let idl = r#"protocol P { record R { int count = {"key": "value"}; } }"#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_err(),
             "int with object default should be rejected"
@@ -3881,14 +3875,14 @@ mod tests {
     #[test]
     fn default_bytes_int_is_rejected() {
         let idl = r#"protocol P { record R { bytes data = 42; } }"#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(result.is_err(), "bytes with int default should be rejected");
     }
 
     #[test]
     fn default_string_int_is_rejected() {
         let idl = r#"protocol P { record R { string name = 42; } }"#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_err(),
             "string with int default should be rejected"
@@ -3901,7 +3895,7 @@ mod tests {
     fn default_int_valid() {
         let idl = r#"protocol P { record R { int count = 42; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "int with int default should be accepted"
         );
     }
@@ -3910,7 +3904,7 @@ mod tests {
     fn default_string_valid() {
         let idl = r#"protocol P { record R { string name = "hello"; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "string with string default should be accepted"
         );
     }
@@ -3919,7 +3913,7 @@ mod tests {
     fn default_boolean_valid() {
         let idl = r#"protocol P { record R { boolean flag = true; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "boolean with boolean default should be accepted"
         );
     }
@@ -3928,7 +3922,7 @@ mod tests {
     fn default_double_valid() {
         let idl = r#"protocol P { record R { double value = 3.14; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "double with float default should be accepted"
         );
     }
@@ -3937,7 +3931,7 @@ mod tests {
     fn default_double_nan_valid() {
         let idl = r#"protocol P { record R { double value = NaN; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "double with NaN default should be accepted"
         );
     }
@@ -3946,7 +3940,7 @@ mod tests {
     fn default_float_infinity_valid() {
         let idl = r#"protocol P { record R { float value = -Infinity; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "float with -Infinity default should be accepted"
         );
     }
@@ -3955,7 +3949,7 @@ mod tests {
     fn default_nullable_null_valid() {
         let idl = r#"protocol P { record R { string? name = null; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "nullable with null default should be accepted"
         );
     }
@@ -3964,7 +3958,7 @@ mod tests {
     fn default_nullable_non_null_valid() {
         let idl = r#"protocol P { record R { string? name = "hello"; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "nullable with non-null default should be accepted"
         );
     }
@@ -3973,7 +3967,7 @@ mod tests {
     fn default_array_empty_valid() {
         let idl = r#"protocol P { record R { array<int> nums = []; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "array with empty array default should be accepted"
         );
     }
@@ -3982,7 +3976,7 @@ mod tests {
     fn default_map_empty_valid() {
         let idl = r#"protocol P { record R { map<string> m = {}; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "map with empty object default should be accepted"
         );
     }
@@ -3996,7 +3990,7 @@ mod tests {
             }
         "#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "enum with string default should be accepted"
         );
     }
@@ -4010,7 +4004,7 @@ mod tests {
             }
         "#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "record with object default should be accepted"
         );
     }
@@ -4023,7 +4017,7 @@ mod tests {
             }
         "#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "union with null first and null default should be accepted"
         );
     }
@@ -4040,7 +4034,7 @@ mod tests {
             }
         "#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "union default matching non-first branch should be accepted"
         );
     }
@@ -4049,7 +4043,7 @@ mod tests {
     fn default_logical_date_int_valid() {
         let idl = r#"protocol P { record R { date d = 0; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "date with int default should be accepted"
         );
     }
@@ -4058,7 +4052,7 @@ mod tests {
     fn default_annotated_long_int_valid() {
         let idl = r#"protocol P { record R { @foo.bar("baz") long l = 0; } }"#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "annotated long with int default should be accepted"
         );
     }
@@ -4067,7 +4061,7 @@ mod tests {
     fn default_message_param_validated() {
         // Message parameters also go through walk_variable, so validation applies.
         let idl = r#"protocol P { int add(int arg1, int arg2 = "bad"); }"#;
-        let result = parse_idl(idl);
+        let result = parse_idl_for_test(idl);
         assert!(
             result.is_err(),
             "message param with invalid default should be rejected"
@@ -4085,7 +4079,7 @@ mod tests {
             }
         "#;
         assert!(
-            parse_idl(idl).is_ok(),
+            parse_idl_for_test(idl).is_ok(),
             "forward reference with default should skip validation"
         );
     }

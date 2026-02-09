@@ -31,6 +31,16 @@ use crate::model::schema::{AvroSchema, FieldOrder, LogicalType, PrimitiveType};
 use crate::resolve::SchemaRegistry;
 use miette::Result;
 
+/// Parse JSON with C-style comment stripping (`//` and `/* */`).
+///
+/// Avro's Java implementation uses Jackson with `ALLOW_COMMENTS`, so `.avpr` and
+/// `.avsc` files in the wild may contain comments that standard JSON parsers reject.
+fn parse_json_with_comments(input: &str) -> std::result::Result<Value, serde_json::Error> {
+    serde_json::from_reader(
+        json_comments::CommentSettings::c_style().strip_comments(input.as_bytes()),
+    )
+}
+
 // ==============================================================================
 // Import Context: Cycle Prevention and Path Resolution
 // ==============================================================================
@@ -287,10 +297,8 @@ pub fn import_protocol(
 ) -> Result<HashMap<String, Message>> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| miette::miette!("read protocol file `{}`: {e}", path.display()))?;
-    let json: Value = serde_json::from_reader(
-        json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
-    )
-    .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
+    let json: Value = parse_json_with_comments(&content)
+        .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
 
     let default_namespace = json.get("namespace").and_then(|n| n.as_str());
     let mut messages = HashMap::new();
@@ -341,10 +349,8 @@ pub fn import_protocol(
 pub fn import_schema(path: &Path, registry: &mut SchemaRegistry) -> Result<()> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| miette::miette!("read schema file `{}`: {e}", path.display()))?;
-    let json: Value = serde_json::from_reader(
-        json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
-    )
-    .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
+    let json: Value = parse_json_with_comments(&content)
+        .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
 
     let schema = json_to_schema(&json, None)
         .map_err(|e| miette::miette!("parse schema from `{}`: {e}", path.display()))?;
@@ -1973,13 +1979,7 @@ mod tests {
     // JSON comment stripping tests
     // =========================================================================
 
-    /// Helper: parse JSON with comment stripping, same as `import_protocol`
-    /// and `import_schema` use.
-    fn parse_json_with_comments(input: &str) -> std::result::Result<Value, serde_json::Error> {
-        serde_json::from_reader(
-            json_comments::CommentSettings::c_style().strip_comments(input.as_bytes()),
-        )
-    }
+    // Tests below use the module-level `parse_json_with_comments` directly.
 
     #[test]
     fn strip_line_comment() {
