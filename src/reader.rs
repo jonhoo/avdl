@@ -1608,7 +1608,16 @@ fn walk_nullable_type<'input>(
     };
 
     // If the `?` token is present, wrap in a nullable union `[null, T]`.
+    // Reject `null?` because it would produce the invalid union `[null, null]`
+    // (Avro requires each type in a union to be unique). Java also rejects this.
     if ctx.optional.is_some() {
+        if matches!(base_type, AvroSchema::Null) {
+            return Err(make_diagnostic(
+                src,
+                ctx,
+                "`null` type cannot be made nullable",
+            ));
+        }
         Ok(AvroSchema::Union {
             types: vec![AvroSchema::Null, base_type],
             is_nullable_type: true,
@@ -4378,6 +4387,31 @@ mod tests {
             msg.contains("@beta(\"value\")"),
             "error should suggest correct syntax: {msg}"
         );
+    }
+
+    #[test]
+    fn nullable_null_rejected() {
+        // `null?` would produce the invalid union `[null, null]`.
+        // Java also rejects this input.
+        let idl = "protocol Test { record Foo { null? value; } }";
+        let result = parse_idl_for_test(idl);
+        assert!(result.is_err(), "null? should be rejected");
+    }
+
+    #[test]
+    fn nullable_null_in_array_rejected() {
+        // `array<null?>` has the same problem in the element type.
+        let idl = "protocol Test { record Foo { array<null?> values; } }";
+        let result = parse_idl_for_test(idl);
+        assert!(result.is_err(), "array<null?> should be rejected");
+    }
+
+    #[test]
+    fn plain_null_type_accepted() {
+        // Bare `null` (without `?`) is a valid field type.
+        let idl = "protocol Test { record Foo { null value = null; } }";
+        let result = parse_idl_for_test(idl);
+        assert!(result.is_ok(), "plain null should be accepted: {result:?}");
     }
 
     #[test]
