@@ -421,6 +421,94 @@ pub fn validate_default(value: &Value, schema: &AvroSchema) -> Option<String> {
     }
 }
 
+/// Validate field defaults within a record schema, resolving `Reference` types
+/// through the provided lookup function before checking.
+///
+/// At parse time, `validate_default` skips validation for `Reference` types
+/// because the referenced schema is not yet available. This function runs
+/// after type registration, when a resolver can look up previously-registered
+/// types. If the reference resolves, the default is validated against the
+/// resolved schema. If resolution fails (true forward reference), validation
+/// is skipped, matching the existing behavior.
+///
+/// Returns a list of `(field_name, reason)` pairs for any invalid defaults
+/// found.
+pub fn validate_record_field_defaults<F>(schema: &AvroSchema, resolver: F) -> Vec<(String, String)>
+where
+    F: Fn(&str) -> Option<AvroSchema>,
+{
+    let fields = match schema {
+        AvroSchema::Record { fields, .. } => fields,
+        _ => return Vec::new(),
+    };
+
+    let mut errors = Vec::new();
+    for field in fields {
+        let default_val = match &field.default {
+            Some(val) => val,
+            None => continue,
+        };
+
+        // Only intervene for Reference types (and unions containing them).
+        // Non-Reference types are already validated at parse time by
+        // `walk_variable` in reader.rs.
+        let resolved_schema = resolve_for_validation(&field.schema, &resolver);
+        if let Some(ref resolved) = resolved_schema {
+            if let Some(reason) = validate_default(default_val, resolved) {
+                errors.push((field.name.clone(), reason));
+            }
+        }
+        // If resolve_for_validation returns None, the reference could not be
+        // resolved (true forward reference), so we skip validation.
+    }
+
+    errors
+}
+
+/// Attempt to resolve `Reference` types in a schema for default validation.
+///
+/// Returns `Some(resolved_schema)` if all references in the schema can be
+/// resolved, or `None` if any reference is unresolvable (forward reference).
+/// For non-Reference types, returns the schema unchanged.
+fn resolve_for_validation<F>(schema: &AvroSchema, resolver: &F) -> Option<AvroSchema>
+where
+    F: Fn(&str) -> Option<AvroSchema>,
+{
+    match schema {
+        AvroSchema::Reference {
+            name, namespace, ..
+        } => {
+            let full_name = match namespace {
+                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
+                _ => name.clone(),
+            };
+            resolver(&full_name)
+        }
+        AvroSchema::Union {
+            types,
+            is_nullable_type,
+        } => {
+            // Resolve any Reference branches within the union. If any branch
+            // is an unresolvable forward reference, skip validation for the
+            // entire union.
+            let mut resolved_types = Vec::with_capacity(types.len());
+            for branch in types {
+                match resolve_for_validation(branch, resolver) {
+                    Some(resolved) => resolved_types.push(resolved),
+                    None => return None,
+                }
+            }
+            Some(AvroSchema::Union {
+                types: resolved_types,
+                is_nullable_type: *is_nullable_type,
+            })
+        }
+        // For all other types (primitives, records, enums, etc.), the schema
+        // is already concrete and does not need resolution.
+        other => Some(other.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -908,5 +996,258 @@ mod tests {
         let msg = reason.expect("should have a reason");
         assert!(msg.contains("expected int"), "message was: {msg}");
         assert!(msg.contains("got string"), "message was: {msg}");
+    }
+
+    // =========================================================================
+    // validate_record_field_defaults: resolves references before validation
+    // =========================================================================
+
+    /// Helper: build a record schema with a single field using the given field
+    /// schema and default value.
+    fn make_record_with_default(
+        field_name: &str,
+        field_schema: AvroSchema,
+        default: Value,
+    ) -> AvroSchema {
+        AvroSchema::Record {
+            name: "Outer".to_string(),
+            namespace: Some("org.test".to_string()),
+            doc: None,
+            fields: vec![Field {
+                name: field_name.to_string(),
+                schema: field_schema,
+                doc: None,
+                default: Some(default),
+                order: None,
+                aliases: vec![],
+                properties: HashMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        }
+    }
+
+    /// Resolver that maps "org.test.Inner" to a record schema.
+    fn record_resolver(full_name: &str) -> Option<AvroSchema> {
+        if full_name == "org.test.Inner" {
+            Some(AvroSchema::Record {
+                name: "Inner".to_string(),
+                namespace: Some("org.test".to_string()),
+                doc: None,
+                fields: vec![Field {
+                    name: "name".to_string(),
+                    schema: AvroSchema::String,
+                    doc: None,
+                    default: None,
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                }],
+                is_error: false,
+                aliases: vec![],
+                properties: HashMap::new(),
+            })
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn reference_field_rejects_string_default_for_record() {
+        let schema = make_record_with_default(
+            "inner",
+            AvroSchema::Reference {
+                name: "Inner".to_string(),
+                namespace: Some("org.test".to_string()),
+                properties: HashMap::new(),
+            },
+            json!("not a record"),
+        );
+        let errors = validate_record_field_defaults(&schema, record_resolver);
+        assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+        assert_eq!(errors[0].0, "inner");
+        assert!(
+            errors[0].1.contains("got string"),
+            "reason was: {}",
+            errors[0].1
+        );
+    }
+
+    #[test]
+    fn reference_field_rejects_integer_default_for_record() {
+        let schema = make_record_with_default(
+            "inner",
+            AvroSchema::Reference {
+                name: "Inner".to_string(),
+                namespace: Some("org.test".to_string()),
+                properties: HashMap::new(),
+            },
+            json!(42),
+        );
+        let errors = validate_record_field_defaults(&schema, record_resolver);
+        assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+        assert_eq!(errors[0].0, "inner");
+        assert!(
+            errors[0].1.contains("got number"),
+            "reason was: {}",
+            errors[0].1
+        );
+    }
+
+    #[test]
+    fn reference_field_accepts_object_default_for_record() {
+        let schema = make_record_with_default(
+            "inner",
+            AvroSchema::Reference {
+                name: "Inner".to_string(),
+                namespace: Some("org.test".to_string()),
+                properties: HashMap::new(),
+            },
+            json!({"name": "valid"}),
+        );
+        let errors = validate_record_field_defaults(&schema, record_resolver);
+        assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+    }
+
+    #[test]
+    fn forward_reference_skips_validation() {
+        // When the reference cannot be resolved (forward reference), validation
+        // should be skipped -- no errors reported even for clearly invalid defaults.
+        let schema = make_record_with_default(
+            "future_field",
+            AvroSchema::Reference {
+                name: "NotYetDefined".to_string(),
+                namespace: Some("org.test".to_string()),
+                properties: HashMap::new(),
+            },
+            json!("this would be invalid for a record, but we don't know that yet"),
+        );
+        // Resolver returns None for unknown types.
+        let errors = validate_record_field_defaults(&schema, |_| None);
+        assert!(
+            errors.is_empty(),
+            "forward references should skip validation, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn reference_field_rejects_array_default_for_record() {
+        let schema = make_record_with_default(
+            "inner",
+            AvroSchema::Reference {
+                name: "Inner".to_string(),
+                namespace: Some("org.test".to_string()),
+                properties: HashMap::new(),
+            },
+            json!([1, 2, 3]),
+        );
+        let errors = validate_record_field_defaults(&schema, record_resolver);
+        assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+        assert_eq!(errors[0].0, "inner");
+        assert!(
+            errors[0].1.contains("got array"),
+            "reason was: {}",
+            errors[0].1
+        );
+    }
+
+    #[test]
+    fn reference_field_rejects_null_default_for_non_nullable_record() {
+        let schema = make_record_with_default(
+            "inner",
+            AvroSchema::Reference {
+                name: "Inner".to_string(),
+                namespace: Some("org.test".to_string()),
+                properties: HashMap::new(),
+            },
+            json!(null),
+        );
+        let errors = validate_record_field_defaults(&schema, record_resolver);
+        assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
+        assert_eq!(errors[0].0, "inner");
+        assert!(
+            errors[0].1.contains("got null"),
+            "reason was: {}",
+            errors[0].1
+        );
+    }
+
+    #[test]
+    fn non_record_schema_returns_no_errors() {
+        // validate_record_field_defaults should be a no-op for non-record schemas.
+        let errors = validate_record_field_defaults(&AvroSchema::Int, record_resolver);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn field_without_default_is_not_validated() {
+        let schema = AvroSchema::Record {
+            name: "Outer".to_string(),
+            namespace: Some("org.test".to_string()),
+            doc: None,
+            fields: vec![Field {
+                name: "inner".to_string(),
+                schema: AvroSchema::Reference {
+                    name: "Inner".to_string(),
+                    namespace: Some("org.test".to_string()),
+                    properties: HashMap::new(),
+                },
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: HashMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        let errors = validate_record_field_defaults(&schema, record_resolver);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn nullable_reference_union_validates_resolved_type() {
+        // `Inner? inner = null` should be valid (null matches the null branch).
+        let schema = make_record_with_default(
+            "inner",
+            AvroSchema::Union {
+                types: vec![
+                    AvroSchema::Null,
+                    AvroSchema::Reference {
+                        name: "Inner".to_string(),
+                        namespace: Some("org.test".to_string()),
+                        properties: HashMap::new(),
+                    },
+                ],
+                is_nullable_type: true,
+            },
+            json!(null),
+        );
+        let errors = validate_record_field_defaults(&schema, record_resolver);
+        assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+    }
+
+    #[test]
+    fn nullable_reference_union_rejects_invalid_default() {
+        // `Inner? inner = 42` should be invalid (42 matches neither null nor record).
+        let schema = make_record_with_default(
+            "inner",
+            AvroSchema::Union {
+                types: vec![
+                    AvroSchema::Null,
+                    AvroSchema::Reference {
+                        name: "Inner".to_string(),
+                        namespace: Some("org.test".to_string()),
+                        properties: HashMap::new(),
+                    },
+                ],
+                is_nullable_type: true,
+            },
+            json!(42),
+        );
+        let errors = validate_record_field_defaults(&schema, record_resolver);
+        assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
     }
 }

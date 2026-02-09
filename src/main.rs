@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use avdl::import::{ImportContext, import_protocol, import_schema};
 use avdl::model::json::{build_lookup, protocol_to_json, schema_to_json, to_string_pretty_java};
 use avdl::model::protocol::Message;
+use avdl::model::schema::validate_record_field_defaults;
 use avdl::reader::{DeclItem, IdlFile, ImportEntry, ImportKind, Warning, parse_idl_named};
 use avdl::resolve::SchemaRegistry;
 use lexopt::prelude::*;
@@ -509,6 +510,33 @@ fn process_decl_items(
                 // position, preserving its source-order placement relative to
                 // imports.
                 if let Err(msg) = registry.register(schema.clone()) {
+                    if let Some(span) = span {
+                        return Err(avdl::error::ParseDiagnostic {
+                            src: miette::NamedSource::new(source_name, source.to_string()),
+                            span: *span,
+                            message: msg,
+                        }
+                        .into());
+                    }
+                    return Err(miette::miette!("{msg}"));
+                }
+
+                // Validate field defaults for Reference-typed fields now that
+                // the registry contains all previously-registered types. At
+                // parse time, `validate_default` skips Reference types because
+                // the target schema is not yet available. Here we can resolve
+                // backward references and catch invalid defaults like
+                // `Inner inner = "not a record"`.
+                let errors = validate_record_field_defaults(schema, |full_name| {
+                    registry.lookup(full_name).cloned()
+                });
+                if let Some((field_name, reason)) = errors.into_iter().next() {
+                    let type_name = schema
+                        .full_name()
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let msg = format!(
+                        "Invalid default for field `{field_name}` in `{type_name}`: {reason}"
+                    );
                     if let Some(span) = span {
                         return Err(avdl::error::ParseDiagnostic {
                             src: miette::NamedSource::new(source_name, source.to_string()),
