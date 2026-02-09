@@ -148,6 +148,8 @@ in CLAUDE.md.
         sub-agent recorded. Incorporate relevant findings into `main`'s
         `SESSION.md`, then clear the worktree's `SESSION.md`.
       - Merges into `main`:
+        If the change rebases cleanly onto `main` then prefer that,
+        otherwise merge the change:
         ```bash
         cd /home/jon/dev/stream/avdl/main
         git merge fix/issue-UUID-description
