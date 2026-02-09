@@ -61,6 +61,14 @@ pub struct Idl {
 }
 
 /// Result of compiling an Avro IDL source.
+///
+/// The shape of [`json`](IdlOutput::json) depends on the IDL input:
+/// - **Protocol** (`protocol Foo { ... }`) — a JSON object matching the `.avpr`
+///   format, with `"protocol"`, `"types"`, and `"messages"` keys.
+/// - **Standalone schema** (`schema int;`) — a single `.avsc` JSON value
+///   (string, object, or array).
+/// - **Multiple named schemas** (bare record/enum/fixed declarations) — a JSON
+///   array of `.avsc` values.
 #[derive(Debug)]
 pub struct IdlOutput {
     /// The compiled JSON (`.avpr` object, `.avsc` value, or JSON array).
@@ -76,6 +84,7 @@ impl Default for Idl {
 }
 
 impl Idl {
+    /// Create a new builder with no import directories.
     pub fn new() -> Self {
         Idl {
             import_dirs: Vec::new(),
@@ -172,6 +181,10 @@ impl Idl {
 // ==============================================================================
 
 /// A single named schema extracted from an Avro IDL file.
+///
+/// Each schema is fully self-contained: referenced types are inlined on first
+/// occurrence, so the JSON value can be written directly to an `.avsc` file
+/// without needing any other schema definitions.
 #[derive(Debug)]
 pub struct NamedSchema {
     /// Simple name of the schema (the `.avsc` filename stem).
@@ -182,6 +195,10 @@ pub struct NamedSchema {
 }
 
 /// Result of extracting individual schemas from Avro IDL.
+///
+/// Contains all named schemas (records, enums, fixed) from the IDL source,
+/// in declaration order. Each schema is self-contained and suitable for
+/// writing to its own `.avsc` file.
 #[derive(Debug)]
 pub struct SchemataOutput {
     /// Named schemas in declaration order.
@@ -215,6 +232,7 @@ impl Default for Idl2Schemata {
 }
 
 impl Idl2Schemata {
+    /// Create a new builder with no import directories.
     pub fn new() -> Self {
         Idl2Schemata {
             import_dirs: Vec::new(),

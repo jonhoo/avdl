@@ -1,3 +1,56 @@
+//! Avro IDL compiler — parse `.avdl` files and emit Avro protocol (`.avpr`) or
+//! schema (`.avsc`) JSON.
+//!
+//! This crate provides two main entry points, mirroring the `avro-tools` CLI
+//! subcommands:
+//!
+//! - [`Idl`] — compile a `.avdl` file to a single JSON value (protocol or
+//!   schema). Equivalent to `avro-tools idl`.
+//! - [`Idl2Schemata`] — extract individual named schemas from a `.avdl` file,
+//!   each as a self-contained `.avsc` JSON value. Equivalent to
+//!   `avro-tools idl2schemata`.
+//!
+//! Both are non-consuming builders that can be reused across multiple calls.
+//!
+//! # Compiling a protocol
+//!
+//! ```no_run
+//! use avdl::Idl;
+//!
+//! let output = Idl::new()
+//!     .import_dir("schemas/shared/")
+//!     .convert("schemas/service.avdl")?;
+//! println!("{}", avdl::to_json_string(&output.json)?);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Extracting individual schemas
+//!
+//! ```no_run
+//! use avdl::Idl2Schemata;
+//!
+//! let output = Idl2Schemata::new()
+//!     .extract("schemas/service.avdl")?;
+//! for schema in &output.schemas {
+//!     std::fs::write(
+//!         format!("{}.avsc", schema.name),
+//!         avdl::to_json_string(&schema.schema)?,
+//!     )?;
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # JSON formatting
+//!
+//! [`to_json_string`] formats JSON to match Java avro-tools' output style
+//! (two-space indent, sorted keys within objects). Use it instead of
+//! [`serde_json::to_string_pretty`] when byte-compatible output matters.
+//!
+//! # Error handling
+//!
+//! All fallible methods return [`miette::Result`], which provides rich
+//! diagnostic output with source spans when printed with `{:?}`.
+
 pub(crate) mod generated;
 
 pub(crate) mod compiler;
