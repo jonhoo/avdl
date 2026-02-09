@@ -6,15 +6,15 @@
 // most warnings. The outer attributes below suppress the remaining warnings
 // that the generator doesn't cover (clippy, unused_parens, unused_variables).
 
-#[allow(clippy::all, unused_variables)]
+#[allow(clippy::all, unused)]
 #[rustfmt::skip]
-pub mod idlbaselistener;
-#[allow(clippy::all, unused_variables)]
+pub(crate) mod idlbaselistener;
+#[allow(clippy::all, unused)]
 #[rustfmt::skip]
-pub mod idllexer;
-#[allow(clippy::all, unused_variables)]
+pub(crate) mod idllexer;
+#[allow(clippy::all, unused)]
 #[rustfmt::skip]
-pub mod idllistener;
-#[allow(clippy::all, unused_parens, unused_variables)]
+pub(crate) mod idllistener;
+#[allow(clippy::all, unused)]
 #[rustfmt::skip]
-pub mod idlparser;
+pub(crate) mod idlparser;
