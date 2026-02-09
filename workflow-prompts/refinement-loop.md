@@ -88,13 +88,24 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
      file (e.g., `main.rs` one-liners) can often be batched into a
      single wave and applied sequentially by the parent agent without
      sub-agents. If all issues in a wave are 5-15 line changes to
-     distinct parts of the same files, apply them directly on main —
-     this is significantly faster than the multi-agent approach.
+     distinct parts of the same files, the parent can apply them
+     directly instead of spawning sub-agents — this is significantly
+     faster than the multi-agent approach. **Even so, do this work in
+     a worktree, not in `main/`** (see below).
 
-3. **For each wave:**
+3. **All implementation work happens in worktrees, never in `main/`.**
+   Whether a wave is handled by sub-agents or applied directly by the
+   parent agent, the code changes must be made in a worktree and merged
+   back into `main` afterward. Working directly in `main/` risks
+   collisions with parallel agents and makes it hard to revert a wave
+   cleanly if something goes wrong. The only operations that belong in
+   `main/` are read-only exploration (Phase 1), merges, and
+   verification.
+
+4. **For each wave:**
    a. **Prepare worktrees** (not in sub-agents):
       The parent agent must prepare each worktree before launching the
-      sub-agent:
+      sub-agent (or before starting work itself for parent-applied batches):
       ```bash
       cd /home/jon/dev/stream/avdl/avdl-worktrees/wt-X
       git stash 2>/dev/null  # save any leftover state; consider committing to main
@@ -149,7 +160,7 @@ section in CLAUDE.md, or use `scripts/compare-golden.sh`.
       and manually applying the branch's additions — this is often
       faster and safer than resolving inline conflict markers.
 
-4. Repeat for each wave until all grouped issues are resolved.
+5. Repeat for each wave until all grouped issues are resolved.
 
 ### Phase 3: Cleanup and Reflection
 
