@@ -1681,6 +1681,15 @@ fn walk_primitive_type<'input>(
                 )
             })?;
 
+            // The Avro spec requires precision to be a positive integer.
+            if precision == 0 {
+                return Err(make_diagnostic_from_token(
+                    src,
+                    &**precision_tok,
+                    "invalid decimal precision: 0 (must be positive)".to_string(),
+                ));
+            }
+
             let scale = if let Some(scale_tok) = ctx.scale.as_ref() {
                 parse_integer_as_u32(scale_tok.get_text()).map_err(|e| {
                     make_diagnostic_from_token(
@@ -1692,6 +1701,21 @@ fn walk_primitive_type<'input>(
             } else {
                 0
             };
+
+            // The Avro spec requires scale to not exceed precision.
+            if scale > precision {
+                return Err(make_diagnostic_from_token(
+                    src,
+                    &**ctx
+                        .scale
+                        .as_ref()
+                        .expect("scale token present when scale > 0"),
+                    format!(
+                        "invalid decimal scale: {scale} \
+                         (greater than precision: {precision})"
+                    ),
+                ));
+            }
 
             AvroSchema::Logical {
                 logical_type: LogicalType::Decimal { precision, scale },
@@ -4412,6 +4436,41 @@ mod tests {
         let idl = "protocol Test { record Foo { null value = null; } }";
         let result = parse_idl_for_test(idl);
         assert!(result.is_ok(), "plain null should be accepted: {result:?}");
+    }
+
+    #[test]
+    fn decimal_zero_precision_rejected() {
+        let idl = "protocol Test { record Foo { decimal(0) value; } }";
+        let result = parse_idl_for_test(idl);
+        assert!(result.is_err(), "decimal(0) should be rejected");
+    }
+
+    #[test]
+    fn decimal_scale_exceeds_precision_rejected() {
+        let idl = "protocol Test { record Foo { decimal(5, 10) value; } }";
+        let result = parse_idl_for_test(idl);
+        assert!(result.is_err(), "decimal(5, 10) should be rejected");
+    }
+
+    #[test]
+    fn decimal_valid_precision_and_scale_accepted() {
+        let idl = "protocol Test { record Foo { decimal(10, 2) value; } }";
+        let result = parse_idl_for_test(idl);
+        assert!(
+            result.is_ok(),
+            "decimal(10, 2) should be accepted: {result:?}"
+        );
+    }
+
+    #[test]
+    fn decimal_scale_equals_precision_accepted() {
+        // Edge case: scale == precision is valid per the Avro spec.
+        let idl = "protocol Test { record Foo { decimal(5, 5) value; } }";
+        let result = parse_idl_for_test(idl);
+        assert!(
+            result.is_ok(),
+            "decimal(5, 5) should be accepted: {result:?}"
+        );
     }
 
     #[test]
