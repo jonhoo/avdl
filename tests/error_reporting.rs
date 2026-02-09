@@ -27,11 +27,21 @@ use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
 ///
 /// Returns `None` if compilation succeeds.
 fn compile_error(input: &str) -> Option<String> {
+    compile_error_with_width(input, 80)
+}
+
+/// Like [`compile_error`], but allows overriding the miette rendering width.
+///
+/// Useful when error messages embed absolute paths that would be split across
+/// lines at the default 80-column width, making post-processing (e.g., CWD
+/// redaction) unreliable.
+fn compile_error_with_width(input: &str, width: usize) -> Option<String> {
     match Idl::new().convert_str(input) {
         Ok(_) => None,
         Err(e) => {
             let mut buf = String::new();
-            let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
+            let handler =
+                GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(width);
 
             let diag: &dyn Diagnostic = e.as_ref();
             if diag.source_code().is_some() {
@@ -241,7 +251,14 @@ fn test_error_import_nonexistent_file() {
             record R { string name; }
         }
     "#;
-    let error = compile_error(input).expect("should produce an error for nonexistent import");
+    // Use a wide rendering width so miette does not line-wrap the absolute CWD path that
+    // appears in the error message, which would prevent `str::replace` from matching it.
+    let error =
+        compile_error_with_width(input, 300).expect("should produce an error for nonexistent import");
+
+    // Redact the absolute CWD path so the snapshot is portable across machines and worktrees.
+    let cwd = std::env::current_dir().expect("current_dir is available during tests");
+    let error = error.replace(&cwd.display().to_string(), "[CWD]");
     insta::assert_snapshot!(error);
 }
 

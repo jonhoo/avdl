@@ -923,7 +923,7 @@ mod tests {
     #[test]
     fn mark_imported_returns_false_on_first_call() {
         let mut ctx = ImportContext::new(vec![]);
-        let path = PathBuf::from("/tmp/test.avdl");
+        let path = PathBuf::from("dummy/test.avdl");
         assert!(
             !ctx.mark_imported(&path),
             "first import should return false"
@@ -933,7 +933,7 @@ mod tests {
     #[test]
     fn mark_imported_returns_true_on_subsequent_calls() {
         let mut ctx = ImportContext::new(vec![]);
-        let path = PathBuf::from("/tmp/test.avdl");
+        let path = PathBuf::from("dummy/test.avdl");
         ctx.mark_imported(&path);
         assert!(
             ctx.mark_imported(&path),
