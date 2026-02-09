@@ -138,13 +138,13 @@ impl Idl {
         // Serialize the parsed IDL to JSON. Protocols become .avpr, standalone
         // schemas become .avsc.
         let json = match &idl_file {
-            IdlFile::ProtocolFile(protocol) => protocol_to_json(protocol),
-            IdlFile::SchemaFile(schema) => {
+            IdlFile::Protocol(protocol) => protocol_to_json(protocol),
+            IdlFile::Schema(schema) => {
                 let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
                 let lookup = build_lookup(&registry_schemas, None);
                 schema_to_json(schema, &mut HashSet::new(), None, &lookup)
             }
-            IdlFile::NamedSchemasFile(schemas) => {
+            IdlFile::NamedSchemas(schemas) => {
                 let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
                 let lookup = build_lookup(&registry_schemas, None);
                 let json_schemas: Vec<Value> = schemas
@@ -436,12 +436,12 @@ fn parse_and_resolve(
     // includes imported types in declaration order) and prepend imported
     // messages before the protocol's own messages.
     let idl_file = match idl_file {
-        IdlFile::ProtocolFile(mut protocol) => {
+        IdlFile::Protocol(mut protocol) => {
             protocol.types = ctx.registry.schemas().cloned().collect();
             let own_messages = std::mem::take(&mut protocol.messages);
             protocol.messages = std::mem::take(&mut ctx.messages);
             protocol.messages.extend(own_messages);
-            IdlFile::ProtocolFile(protocol)
+            IdlFile::Protocol(protocol)
         }
         other => other,
     };
@@ -603,7 +603,7 @@ fn resolve_single_import(
             }
 
             // If the imported IDL is a protocol, merge its messages.
-            if let IdlFile::ProtocolFile(imported_protocol) = &imported_idl {
+            if let IdlFile::Protocol(imported_protocol) = &imported_idl {
                 messages.extend(imported_protocol.messages.clone());
             }
 
@@ -674,15 +674,15 @@ fn validate_all_references(
     // the registry, so `validate_references` alone misses unresolved references
     // in them.
     match idl_file {
-        IdlFile::SchemaFile(schema) => {
+        IdlFile::Schema(schema) => {
             unresolved.extend(registry.validate_schema(schema));
         }
-        IdlFile::NamedSchemasFile(schemas) => {
+        IdlFile::NamedSchemas(schemas) => {
             for schema in schemas {
                 unresolved.extend(registry.validate_schema(schema));
             }
         }
-        IdlFile::ProtocolFile(_) => {}
+        IdlFile::Protocol(_) => {}
     }
 
     unresolved.sort_by(|a, b| a.0.cmp(&b.0));

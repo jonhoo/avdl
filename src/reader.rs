@@ -394,14 +394,14 @@ const INVALID_TYPE_NAMES: &[&str] = &[
 /// The result of parsing an IDL file -- either a protocol or a standalone schema.
 #[derive(Debug)]
 pub enum IdlFile {
-    ProtocolFile(Protocol),
+    Protocol(Protocol),
     /// A file with an explicit `schema <type>;` declaration. Serialized as a
     /// single JSON schema object.
-    SchemaFile(AvroSchema),
+    Schema(AvroSchema),
     /// A file with bare named type declarations (no `schema` keyword and no
     /// `protocol`). Serialized as a JSON array of all named schemas, matching
     /// the Java `IdlFile.outputString()` behavior.
-    NamedSchemasFile(Vec<AvroSchema>),
+    NamedSchemas(Vec<AvroSchema>),
 }
 
 /// Import type discovered during parsing. The actual import resolution is
@@ -976,7 +976,7 @@ fn walk_idl_file<'input>(
     // Protocol mode: the IDL contains `protocol Name { ... }`.
     if let Some(protocol_ctx) = ctx.protocolDeclaration() {
         let protocol = walk_protocol(&protocol_ctx, token_stream, src, namespace, decl_items)?;
-        return Ok(IdlFile::ProtocolFile(protocol));
+        return Ok(IdlFile::Protocol(protocol));
     }
 
     // Schema mode: optional `namespace`, optional `schema` declaration, plus
@@ -1016,7 +1016,7 @@ fn walk_idl_file<'input>(
         && let Some(ft_ctx) = main_ctx.fullType()
     {
         let schema = walk_full_type(&ft_ctx, token_stream, src, namespace)?;
-        return Ok(IdlFile::SchemaFile(schema));
+        return Ok(IdlFile::Schema(schema));
     }
 
     // If there are named schemas but no explicit `schema <type>;` declaration,
@@ -1025,7 +1025,7 @@ fn walk_idl_file<'input>(
     // declaration. The Java `IdlFile.outputString()` serializes these as a JSON
     // array of all named schemas.
     if !local_schemas.is_empty() {
-        return Ok(IdlFile::NamedSchemasFile(local_schemas));
+        return Ok(IdlFile::NamedSchemas(local_schemas));
     }
 
     Err(make_diagnostic(
@@ -3114,7 +3114,7 @@ mod tests {
         "#;
         let (idl_file, _, _) = parse_idl_for_test(idl).unwrap();
         let protocol = match idl_file {
-            IdlFile::ProtocolFile(p) => p,
+            IdlFile::Protocol(p) => p,
             _ => panic!("expected protocol"),
         };
         let msg = protocol.messages.get("doThing").expect("doThing message");
