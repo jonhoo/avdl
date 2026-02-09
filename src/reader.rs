@@ -2996,6 +2996,7 @@ fn collect_single_import<'input>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     // ------------------------------------------------------------------
     // Octal escapes (issue #5)

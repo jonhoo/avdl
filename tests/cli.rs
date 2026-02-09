@@ -11,6 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use assert_cmd::Command;
+use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 const INPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/input";
