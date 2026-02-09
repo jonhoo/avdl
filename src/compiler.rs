@@ -74,7 +74,10 @@ pub struct IdlOutput {
     /// The compiled JSON (`.avpr` object, `.avsc` value, or JSON array).
     pub json: Value,
     /// Non-fatal warnings from parsing (e.g., orphaned doc comments).
-    pub warnings: Vec<String>,
+    ///
+    /// Each [`Warning`] carries source span and file name information when
+    /// available, enabling rich diagnostic rendering through miette.
+    pub warnings: Vec<Warning>,
 }
 
 impl Default for Idl {
@@ -171,7 +174,7 @@ impl Idl {
 
         Ok(IdlOutput {
             json,
-            warnings: warnings.iter().map(|w| w.to_string()).collect(),
+            warnings,
         })
     }
 }
@@ -204,7 +207,10 @@ pub struct SchemataOutput {
     /// Named schemas in declaration order.
     pub schemas: Vec<NamedSchema>,
     /// Non-fatal warnings from parsing.
-    pub warnings: Vec<String>,
+    ///
+    /// Each [`Warning`] carries source span and file name information when
+    /// available, enabling rich diagnostic rendering through miette.
+    pub warnings: Vec<Warning>,
 }
 
 /// Builder for extracting individual `.avsc` schemas from Avro IDL.
@@ -371,7 +377,7 @@ impl Idl2Schemata {
 
         Ok(SchemataOutput {
             schemas,
-            warnings: warnings.iter().map(|w| w.to_string()).collect(),
+            warnings,
         })
     }
 }

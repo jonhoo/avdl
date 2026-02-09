@@ -812,78 +812,14 @@ fn test_mutual_import_cycle_handled_gracefully() {
 // ==============================================================================
 
 #[test]
-fn test_comments_warnings_count() {
+fn test_comments_warnings() {
     let avdl_path = input_path("comments.avdl");
 
     let output = Idl::new()
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    assert_eq!(
-        output.warnings.len(),
-        24,
-        "comments.avdl should produce exactly 24 out-of-place doc comment warnings, got {}:\n{}",
-        output.warnings.len(),
-        output
-            .warnings
-            .iter()
-            .enumerate()
-            .map(|(i, w)| format!("  {}: {}", i + 1, w))
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
-
-    for (i, warning) in output.warnings.iter().enumerate() {
-        assert!(
-            warning.contains("Ignoring out-of-place documentation comment"),
-            "warning {} should mention out-of-place doc comment, got: {}",
-            i + 1,
-            warning
-        );
-    }
-
-    let expected_positions: &[(u32, u32)] = &[
-        (21, 8),
-        (21, 45),
-        (22, 5),
-        (23, 5),
-        (24, 5),
-        (25, 5),
-        (26, 7),
-        (27, 7),
-        (28, 7),
-        (33, 7),
-        (34, 7),
-        (35, 5),
-        (36, 5),
-        (37, 7),
-        (42, 7),
-        (43, 7),
-        (46, 9),
-        (47, 5),
-        (54, 7),
-        (55, 7),
-        (58, 9),
-        (59, 7),
-        (60, 11),
-        (61, 11),
-    ];
-
-    for (i, (warning, &(expected_line, expected_col))) in output
-        .warnings
-        .iter()
-        .zip(expected_positions.iter())
-        .enumerate()
-    {
-        let expected_prefix = format!("Line {}, char {}:", expected_line, expected_col);
-        assert!(
-            warning.starts_with(&expected_prefix),
-            "warning {} position mismatch: expected '{}', got '{}'",
-            i + 1,
-            expected_prefix,
-            warning.lines().next().unwrap_or("")
-        );
-    }
+    insta::assert_debug_snapshot!(output.warnings);
 }
 
 // ==============================================================================
@@ -1147,8 +1083,7 @@ fn test_tools_protocol_warning() {
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    assert_eq!(output.warnings.len(), 1);
-    assert!(output.warnings[0].contains("Ignoring out-of-place documentation comment"));
+    insta::assert_debug_snapshot!(output.warnings);
 }
 
 #[test]
@@ -1158,8 +1093,7 @@ fn test_tools_schema_warning() {
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    assert_eq!(output.warnings.len(), 1);
-    assert!(output.warnings[0].contains("Ignoring out-of-place documentation comment"));
+    insta::assert_debug_snapshot!(output.warnings);
 }
 
 // ==============================================================================

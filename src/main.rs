@@ -10,8 +10,9 @@ use std::fs;
 use std::io::{self, Read as _};
 use std::path::PathBuf;
 
-use avdl::{Idl, Idl2Schemata};
+use avdl::{Idl, Idl2Schemata, Warning};
 use lexopt::prelude::*;
+use miette::Diagnostic;
 
 // ==============================================================================
 // CLI Help Text
@@ -206,9 +207,11 @@ fn run_idl(
         }
     };
 
-    // Emit any warnings to stderr, matching Java's `IdlTool` format.
+    // Emit any warnings to stderr. When source context is available, render
+    // through miette for rich output with source underlining. Otherwise, fall
+    // back to plain text (e.g., import-prefixed warnings where source was cleared).
     for w in &idl_output.warnings {
-        eprintln!("Warning: {w}");
+        render_warning(w);
     }
 
     let json_str = serde_json::to_string_pretty(&idl_output.json)
@@ -235,9 +238,11 @@ fn run_idl2schemata(
 
     let schemata_output = builder.extract(&input)?;
 
-    // Emit any warnings to stderr.
+    // Emit any warnings to stderr. When source context is available, render
+    // through miette for rich output with source underlining. Otherwise, fall
+    // back to plain text (e.g., import-prefixed warnings where source was cleared).
     for w in &schemata_output.warnings {
-        eprintln!("Warning: {w}");
+        render_warning(w);
     }
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
@@ -254,6 +259,28 @@ fn run_idl2schemata(
     }
 
     Ok(())
+}
+
+// ==============================================================================
+// Warning Rendering
+// ==============================================================================
+
+/// Render a warning to stderr. When the warning has source code and span info
+/// (i.e., `source_code()` and `labels()` are available), use miette's
+/// `GraphicalReportHandler` for rich output with source underlining. Otherwise,
+/// fall back to the plain `"Warning: {message}"` format used by Java's IdlTool.
+fn render_warning(w: &Warning) {
+    if w.source_code().is_some() && w.labels().is_some() {
+        let handler = miette::GraphicalReportHandler::new();
+        let mut buf = String::new();
+        // The handler writes to a `fmt::Write`. If it fails (should not happen
+        // for an in-memory String), fall back to plain output.
+        if handler.render_report(&mut buf, w as &dyn Diagnostic).is_ok() {
+            eprint!("warning: {buf}");
+            return;
+        }
+    }
+    eprintln!("Warning: {w}");
 }
 
 // ==============================================================================

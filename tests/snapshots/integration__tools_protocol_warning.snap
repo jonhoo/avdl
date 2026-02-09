@@ -1,0 +1,16 @@
+---
+source: tests/integration.rs
+assertion_line: 1086
+expression: output.warnings
+---
+[
+    Warning {
+        message: "Line 1, char 1: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/tools/src/test/idl/protocol.avdl",
+        ),
+        span: Some(
+            "0..807",
+        ),
+    },
+]
