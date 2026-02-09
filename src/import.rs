@@ -287,8 +287,10 @@ pub fn import_protocol(
 ) -> Result<HashMap<String, Message>> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| miette::miette!("read protocol file `{}`: {e}", path.display()))?;
-    let json: Value = serde_json::from_str(&content)
-        .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
+    let json: Value = serde_json::from_reader(
+        json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
+    )
+    .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
 
     let default_namespace = json.get("namespace").and_then(|n| n.as_str());
     let mut messages = HashMap::new();
@@ -339,8 +341,10 @@ pub fn import_protocol(
 pub fn import_schema(path: &Path, registry: &mut SchemaRegistry) -> Result<()> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| miette::miette!("read schema file `{}`: {e}", path.display()))?;
-    let json: Value = serde_json::from_str(&content)
-        .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
+    let json: Value = serde_json::from_reader(
+        json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
+    )
+    .map_err(|e| miette::miette!("invalid JSON in {}: {e}", path.display()))?;
 
     let schema = json_to_schema(&json, None)
         .map_err(|e| miette::miette!("parse schema from `{}`: {e}", path.display()))?;
@@ -1963,5 +1967,91 @@ mod tests {
         let (collected, result) = flatten_schema(schema);
         assert!(collected.is_empty());
         assert_eq!(result, AvroSchema::Int);
+    }
+
+    // =========================================================================
+    // JSON comment stripping tests
+    // =========================================================================
+
+    /// Helper: parse JSON with comment stripping, same as `import_protocol`
+    /// and `import_schema` use.
+    fn parse_json_with_comments(input: &str) -> std::result::Result<Value, serde_json::Error> {
+        serde_json::from_reader(
+            json_comments::CommentSettings::c_style().strip_comments(input.as_bytes()),
+        )
+    }
+
+    #[test]
+    fn strip_line_comment() {
+        let input = r#"{
+            // this is a line comment
+            "type": "string"
+        }"#;
+        let value = parse_json_with_comments(input).expect("should parse with line comment");
+        assert_eq!(value["type"], "string");
+    }
+
+    #[test]
+    fn strip_block_comment() {
+        let input = r#"/* license header
+         * Copyright 2024
+         */
+        {"type": "int"}"#;
+        let value = parse_json_with_comments(input).expect("should parse with block comment");
+        assert_eq!(value["type"], "int");
+    }
+
+    #[test]
+    fn preserve_strings_containing_comment_syntax() {
+        let input = r#"{"type": "string", "doc": "use // for comments or /* block */"}"#;
+        let value =
+            parse_json_with_comments(input).expect("should preserve comment-like strings");
+        assert_eq!(value["doc"], "use // for comments or /* block */");
+    }
+
+    #[test]
+    fn hash_comments_are_not_stripped() {
+        // Jackson's ALLOW_COMMENTS does not enable hash comments; neither
+        // should we. `CommentSettings::c_style()` only strips `//` and `/* */`.
+        let input = "# hash comment\n{\"type\": \"int\"}";
+        let result = parse_json_with_comments(input);
+        assert!(result.is_err(), "hash comments should cause a parse error");
+    }
+
+    #[test]
+    fn strip_comments_from_avsc_schema() {
+        // End-to-end: a realistic .avsc file with license header and inline
+        // comments, parsed through the same path as `import_schema`.
+        let input = r#"/*
+         * Licensed under the Apache License, Version 2.0
+         */
+        {
+            "type": "record",
+            "name": "Event",
+            "namespace": "com.example",
+            // Primary fields
+            "fields": [
+                {"name": "id", "type": "long"},  // unique identifier
+                {"name": "data", "type": "string"}
+            ]
+        }"#;
+
+        let value = parse_json_with_comments(input).expect("should parse commented .avsc");
+        let schema = json_to_schema(&value, None).expect("should convert to schema");
+        match schema {
+            AvroSchema::Record {
+                name,
+                namespace,
+                fields,
+                ..
+            } => {
+                assert_eq!(name, "Event");
+                assert_eq!(namespace, Some("com.example".to_string()));
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name, "id");
+                assert_eq!(fields[1].name, "data");
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
     }
 }

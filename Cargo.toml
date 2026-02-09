@@ -13,6 +13,7 @@ include = ["/src/**/*.rs", "/LICENSE", "/README.md"]
 [dependencies]
 antlr4rust = "0.5.2"
 indexmap = "2"
+json_comments = "0.2.2"
 lexopt = "0.3.1"
 miette = { version = "7", default-features = false, features = ["fancy"] }
 regex = "1.12.3"

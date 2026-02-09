@@ -113,13 +113,6 @@ output, but deliberately differs in a few ways:
      ╰────
   ```
 
-- **No JSON comment support in imports.** Java uses Jackson with
-  `ALLOW_COMMENTS` enabled when parsing imported `.avsc`/`.avpr` files,
-  so files with C-style comments (`/* ... */` or `// ...`) — such as
-  those with license headers — are accepted. This tool uses `serde_json`
-  which requires strict JSON, so comments in imported files will cause
-  a parse error.
-
 - **Namespace validation covers all segments.** Rust validates every
   dot-separated segment of namespace names. Java's
   `IdlReader.namespace()` loop skips the last segment, so a namespace
