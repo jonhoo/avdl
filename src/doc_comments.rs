@@ -105,10 +105,16 @@ pub fn strip_indents(doc_comment: &str) -> String {
     if let Some(stripped) = doc_comment.strip_prefix("** ") {
         return stripped.to_string();
     }
+    if let Some(stripped) = doc_comment.strip_prefix("**\t") {
+        return stripped.to_string();
+    }
     if let Some(stripped) = doc_comment.strip_prefix("**") {
         return stripped.to_string();
     }
     if let Some(stripped) = doc_comment.strip_prefix("* ") {
+        return stripped.to_string();
+    }
+    if let Some(stripped) = doc_comment.strip_prefix("*\t") {
         return stripped.to_string();
     }
     if let Some(stripped) = doc_comment.strip_prefix('*') {
@@ -162,13 +168,12 @@ fn try_strip_star_indent(doc_comment: &str) -> Option<String> {
     let mut result_lines = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         if i == 0 {
-            // First line: strip leading stars and optional following space.
+            // First line: strip leading stars and optional following space or tab.
             let after_stars = &first_line[star_count..];
-            let stripped = if let Some(s) = after_stars.strip_prefix(' ') {
-                s
-            } else {
-                after_stars
-            };
+            let stripped = after_stars
+                .strip_prefix(' ')
+                .or_else(|| after_stars.strip_prefix('\t'))
+                .unwrap_or(after_stars);
             result_lines.push(stripped);
         } else {
             let trimmed = line.trim_start();
@@ -176,11 +181,10 @@ fn try_strip_star_indent(doc_comment: &str) -> Option<String> {
                 result_lines.push("");
             } else {
                 let after_stars = &trimmed[star_count..];
-                let stripped = if let Some(s) = after_stars.strip_prefix(' ') {
-                    s
-                } else {
-                    after_stars
-                };
+                let stripped = after_stars
+                    .strip_prefix(' ')
+                    .or_else(|| after_stars.strip_prefix('\t'))
+                    .unwrap_or(after_stars);
                 result_lines.push(stripped);
             }
         }
@@ -385,5 +389,25 @@ mod tests {
         // Double-star prefix with blank lines interspersed.
         let input = "** First\n\n ** Second\n ** Third";
         assert_eq!(strip_indents(input), "First\n\nSecond\nThird");
+    }
+
+    #[test]
+    fn test_strip_indents_tab_after_star() {
+        // Tab after star should be stripped just like a space (issue 17c10dd1).
+        // Multi-line: `*\ttext` on continuation lines.
+        let input = "*\tFirst line\n *\tSecond line";
+        assert_eq!(strip_indents(input), "First line\nSecond line");
+    }
+
+    #[test]
+    fn test_strip_indents_single_line_tab_after_star() {
+        // Single-line: `*\ttext` should strip the tab.
+        assert_eq!(strip_indents("*\ttext"), "text");
+    }
+
+    #[test]
+    fn test_strip_indents_single_line_tab_after_double_star() {
+        // Single-line: `**\ttext` should strip the tab.
+        assert_eq!(strip_indents("**\ttext"), "text");
     }
 }

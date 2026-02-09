@@ -1568,6 +1568,18 @@ fn walk_message<'input>(
         .ok_or_else(|| make_diagnostic(src, ctx, "missing message return type"))?;
     let response = walk_result_type(&result_ctx, token_stream, src, namespace)?;
 
+    // When the return type is a named type reference, any message-level
+    // annotations are ambiguous (do they apply to the message or to the
+    // type?). Java's `exitNullableType` rejects this combination with
+    // "Type references may not be annotated". We mirror that check here.
+    if !props.properties.is_empty() && is_type_reference(&response) {
+        return Err(make_diagnostic(
+            src,
+            ctx,
+            "Type references may not be annotated",
+        ));
+    }
+
     // The message name is stored in the `name` field of the context ext.
     let name_ctx = ctx
         .name
@@ -2813,6 +2825,47 @@ mod tests {
         "#;
         let err = parse_idl(idl).unwrap_err();
         insta::assert_debug_snapshot!(err);
+    }
+
+    #[test]
+    fn annotation_on_message_with_named_return_type_is_rejected() {
+        // Annotations on a message whose return type is a named type reference
+        // are rejected, matching Java's exitNullableType behavior. The grammar
+        // places the annotations on the messageDeclaration, but Java considers
+        // them ambiguous when the return type is a named reference.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record Foo { string name; }
+                @prop("x") Foo getFoo(string id);
+            }
+        "#;
+        let err = parse_idl(idl).unwrap_err();
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("Type references may not be annotated"),
+            "expected 'Type references may not be annotated' error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn annotation_on_message_with_void_return_is_accepted() {
+        // Annotations on a void-returning message are fine -- the annotation
+        // applies to the message, and there is no named type reference.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                record Foo { string name; }
+                @prop("x") void doThing(Foo input);
+            }
+        "#;
+        let (idl_file, _, _) = parse_idl(idl).unwrap();
+        let protocol = match idl_file {
+            IdlFile::ProtocolFile(p) => p,
+            _ => panic!("expected protocol"),
+        };
+        let msg = protocol.messages.get("doThing").expect("doThing message");
+        assert_eq!(msg.properties.get("prop"), Some(&serde_json::json!("x")));
     }
 
     #[test]

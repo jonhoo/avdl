@@ -58,8 +58,12 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
     let mut obj = Map::new();
 
     obj.insert("protocol".to_string(), Value::String(protocol.name.clone()));
+    // Java treats an empty namespace as equivalent to no namespace and omits
+    // the key entirely from the JSON output. We match that behavior.
     if let Some(ns) = &protocol.namespace {
-        obj.insert("namespace".to_string(), Value::String(ns.clone()));
+        if !ns.is_empty() {
+            obj.insert("namespace".to_string(), Value::String(ns.clone()));
+        }
     }
     if let Some(doc) = &protocol.doc {
         obj.insert("doc".to_string(), Value::String(doc.clone()));
@@ -1851,6 +1855,27 @@ mod tests {
         assert_eq!(types.len(), 1);
         assert_eq!(types[0]["name"], json!("Ping"));
         assert_eq!(result["messages"], json!({}));
+    }
+
+    #[test]
+    fn protocol_with_empty_namespace_omits_key() {
+        // Java treats an empty namespace as equivalent to no namespace and
+        // omits the key from JSON output. We match that behavior.
+        let protocol = Protocol {
+            name: "Simple".to_string(),
+            namespace: Some(String::new()),
+            doc: None,
+            properties: HashMap::new(),
+            types: vec![],
+            messages: HashMap::new(),
+        };
+
+        let result = protocol_to_json(&protocol);
+        assert_eq!(result["protocol"], json!("Simple"));
+        assert!(
+            result.get("namespace").is_none(),
+            "empty namespace should be omitted from JSON"
+        );
     }
 
     #[test]
