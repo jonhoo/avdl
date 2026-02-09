@@ -11,8 +11,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use assert_cmd::Command;
+use serde_json::Value;
 
 const INPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/input";
+const OUTPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/output";
 const CLASSPATH_DIR: &str = "avro/lang/java/idl/src/test/idl/putOnClassPath";
 
 /// Helper to construct a `Command` for the `avdl` binary built by this crate.
@@ -21,23 +23,38 @@ fn avdl_cmd() -> Command {
     Command::cargo_bin("avdl").expect("avdl binary should be built by cargo")
 }
 
+/// Load the golden `.avpr` output file and parse it as JSON for semantic
+/// comparison.
+fn load_golden(filename: &str) -> Value {
+    let path = PathBuf::from(OUTPUT_DIR).join(filename);
+    let content = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read golden file {}: {e}", path.display()));
+    serde_json::from_str(&content)
+        .unwrap_or_else(|e| panic!("failed to parse golden JSON {}: {e}", path.display()))
+}
+
 // ==============================================================================
 // `idl` Subcommand Tests
 // ==============================================================================
 
-/// Run `avdl idl` on `simple.avdl` and verify the protocol JSON is written to
-/// stdout with exit code 0.
+/// Run `avdl idl` on `simple.avdl` and verify the protocol JSON written to
+/// stdout is semantically identical to the golden `.avpr` file.
 #[test]
 fn test_cli_idl_file_to_stdout() {
-    avdl_cmd()
+    let output = avdl_cmd()
         .args(["idl", &format!("{INPUT_DIR}/simple.avdl")])
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("\"protocol\""));
+        .output()
+        .expect("run avdl idl");
+    assert!(output.status.success(), "avdl idl should exit 0");
+
+    let actual: Value = serde_json::from_slice(&output.stdout)
+        .expect("stdout should be valid JSON");
+    let expected = load_golden("simple.avpr");
+    assert_eq!(actual, expected, "CLI stdout should match golden simple.avpr");
 }
 
-/// Run `avdl idl` writing to a temp output file, then verify the file exists
-/// and contains valid JSON.
+/// Run `avdl idl` writing to a temp output file, then verify the file is
+/// semantically identical to the golden `.avpr` file.
 #[test]
 fn test_cli_idl_file_to_file() {
     let out_dir = PathBuf::from("tmp/cli-test-idl-file-to-file");
@@ -54,21 +71,18 @@ fn test_cli_idl_file_to_file() {
         .success();
 
     let content = fs::read_to_string(&out_path).expect("read output file");
-    let json: serde_json::Value =
-        serde_json::from_str(&content).expect("output should be valid JSON");
-    assert_eq!(
-        json.get("protocol").and_then(|v| v.as_str()),
-        Some("Simple"),
-        "output JSON should contain protocol name 'Simple'"
-    );
+    let actual: Value =
+        serde_json::from_str(&content).expect("output file should be valid JSON");
+    let expected = load_golden("simple.avpr");
+    assert_eq!(actual, expected, "output file should match golden simple.avpr");
 }
 
-/// Run `avdl idl` on `import.avdl` with --import-dir flags for both the input
+/// Run `avdl idl` on `import.avdl` with `--import-dir` flags for both the input
 /// directory and the classpath directory, verifying that imports resolve
-/// correctly.
+/// correctly and the output matches the golden file.
 #[test]
 fn test_cli_idl_import_dir() {
-    avdl_cmd()
+    let output = avdl_cmd()
         .args([
             "idl",
             "--import-dir",
@@ -77,8 +91,18 @@ fn test_cli_idl_import_dir() {
             CLASSPATH_DIR,
             &format!("{INPUT_DIR}/import.avdl"),
         ])
-        .assert()
-        .success();
+        .output()
+        .expect("run avdl idl with --import-dir");
+    assert!(
+        output.status.success(),
+        "avdl idl with --import-dir should exit 0, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let actual: Value = serde_json::from_slice(&output.stdout)
+        .expect("stdout should be valid JSON");
+    let expected = load_golden("import.avpr");
+    assert_eq!(actual, expected, "CLI stdout should match golden import.avpr");
 }
 
 /// Run `avdl idl` on a nonexistent file and verify a non-zero exit code with
@@ -97,7 +121,7 @@ fn test_cli_idl_nonexistent_file() {
 // ==============================================================================
 
 /// Run `avdl idl2schemata` on `simple.avdl` and verify that `.avsc` files are
-/// created in the output directory.
+/// created in the output directory with valid JSON content.
 #[test]
 fn test_cli_idl2schemata() {
     let out_dir = PathBuf::from("tmp/cli-test-idl2schemata");
@@ -133,6 +157,20 @@ fn test_cli_idl2schemata() {
                 .map(|e| e.file_name().to_string_lossy().to_string())
                 .collect::<Vec<_>>())
         );
+        // Each file should contain valid JSON.
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {filename}: {e}"));
+        let json: Value = serde_json::from_str(&content)
+            .unwrap_or_else(|e| panic!("{filename} should be valid JSON: {e}"));
+        // Every schema file should have a "type" key and a "name" key.
+        assert!(
+            json.get("type").is_some(),
+            "{filename} should have a \"type\" key"
+        );
+        assert!(
+            json.get("name").is_some(),
+            "{filename} should have a \"name\" key"
+        );
     }
 }
 
@@ -155,4 +193,27 @@ fn test_cli_help() {
         .assert()
         .success()
         .stdout(predicates::str::contains("Usage"));
+}
+
+/// Run `avdl` with no arguments and verify it exits with a non-zero code and
+/// prints a usage hint to stderr.
+#[test]
+fn test_cli_no_subcommand() {
+    avdl_cmd()
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("subcommand is required"))
+        .stderr(predicates::str::contains("Usage"));
+}
+
+/// Run `avdl` with an unknown subcommand and verify it exits with a non-zero
+/// code and prints the unrecognized name to stderr.
+#[test]
+fn test_cli_unknown_subcommand() {
+    avdl_cmd()
+        .args(["bogus"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("bogus"))
+        .stderr(predicates::str::contains("Usage"));
 }
