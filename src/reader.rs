@@ -176,6 +176,154 @@ struct SyntaxError {
     message: String,
 }
 
+// ==========================================================================
+// ANTLR Error Message Enrichment
+// ==========================================================================
+//
+// Raw ANTLR error messages are technically correct but often unhelpful
+// because the parser's recovery merges tokens in confusing ways. For
+// example, `@beta record Foo { ... }` produces:
+//
+//     no viable alternative at input '@betarecord'
+//
+// because ANTLR treats `@beta` as the start of a `schemaProperty` rule
+// and expects `(` next; when it sees `record` instead, it lumps the
+// tokens together. We pattern-match on known error shapes to produce
+// more actionable messages while preserving the original as context.
+
+/// Rewrites known ANTLR error patterns into more user-friendly messages.
+/// Returns `None` if the error doesn't match any known pattern, in which
+/// case the original message is used as-is.
+fn enrich_antlr_error(msg: &str) -> Option<String> {
+    // Pattern 1: "no viable alternative at input '...@<word>...'"
+    //
+    // This occurs when `@word` appears without `(value)`. ANTLR merges the
+    // annotation name with subsequent tokens into a single error string
+    // like `@betarecord`. We split the merged text at known keyword
+    // boundaries to recover the annotation name.
+    if let Some(input) = extract_no_viable_input(msg) {
+        if let Some(anno_name) = extract_annotation_name(input) {
+            return Some(format!(
+                "annotation `@{anno_name}` is missing its value -- \
+                 use `@{anno_name}(\"value\")` syntax"
+            ));
+        }
+    }
+
+    // Pattern 2: "mismatched input '<token>' expecting '('"
+    //
+    // This occurs when `@name` is followed by something other than `(`,
+    // meaning the annotation value is missing. The error is clear about
+    // `(` being expected, but doesn't explain WHY -- the user may not
+    // realize annotations require parenthesized values.
+    if msg.contains("expecting '('") && msg.contains("mismatched input") {
+        return Some(format!(
+            "{msg} (annotations require `@name(value)` syntax)"
+        ));
+    }
+
+    None
+}
+
+/// Extracts the quoted input string from a "no viable alternative at input
+/// '<input>'" ANTLR error message.
+fn extract_no_viable_input(msg: &str) -> Option<&str> {
+    let prefix = "no viable alternative at input '";
+    let start = msg.find(prefix)? + prefix.len();
+    let end = msg[start..].find('\'')?;
+    Some(&msg[start..start + end])
+}
+
+/// Avro IDL keywords that commonly follow a bare annotation in source. When
+/// ANTLR merges the annotation name with the next token, these keywords help
+/// us split the merged text to recover the actual annotation name. For
+/// example, `@betarecord` splits into `beta` + `record`.
+const AVRO_KEYWORDS: &[&str] = &[
+    "protocol",
+    "record",
+    "error",
+    "enum",
+    "fixed",
+    "import",
+    "schema",
+    "namespace",
+    "boolean",
+    "int",
+    "long",
+    "float",
+    "double",
+    "string",
+    "bytes",
+    "null",
+    "array",
+    "map",
+    "union",
+    "void",
+    "oneway",
+    "throws",
+    "date",
+    "time_ms",
+    "timestamp_ms",
+    "localtimestamp_ms",
+    "uuid",
+];
+
+/// Extracts the annotation name from a merged ANTLR input string like
+/// `@betarecord` or `@namespace("com.example")@versionprotocol`.
+///
+/// Returns the *last* `@word` that is not followed by `(`, since that is
+/// the one missing its value. Earlier annotations with `(` were parsed
+/// successfully.
+///
+/// Because ANTLR merges the annotation name with the next token (e.g.,
+/// `@beta` + `record` becomes `@betarecord`), we try to split the text
+/// at known keyword boundaries to recover the actual annotation name.
+fn extract_annotation_name(input: &str) -> Option<&str> {
+    // Walk backwards through all `@word` occurrences to find the last
+    // one not followed by `(`.
+    let mut search_from = input.len();
+    loop {
+        let at_pos = input[..search_from].rfind('@')?;
+        let after_at = &input[at_pos + 1..];
+
+        // Collect the full identifier text after `@`.
+        let ident_len = after_at
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .count();
+
+        if ident_len > 0 {
+            let full_ident = &after_at[..ident_len];
+            let after_ident = &after_at[ident_len..];
+
+            if !after_ident.starts_with('(') {
+                // This `@name` is missing its `(value)`. Try to split
+                // off a trailing keyword to recover the real name.
+                let name = split_trailing_keyword(full_ident);
+                return Some(name);
+            }
+        }
+
+        if at_pos == 0 {
+            return None;
+        }
+        search_from = at_pos;
+    }
+}
+
+/// Given a merged identifier like `betarecord`, tries to split off a
+/// trailing Avro keyword to recover the annotation name (`beta`).
+/// Returns the original string if no keyword suffix is found.
+fn split_trailing_keyword(merged: &str) -> &str {
+    let lower = merged.to_ascii_lowercase();
+    for &kw in AVRO_KEYWORDS {
+        if lower.ends_with(kw) && lower.len() > kw.len() {
+            return &merged[..merged.len() - kw.len()];
+        }
+    }
+    merged
+}
+
 /// An ANTLR error listener that collects syntax errors into a shared `Vec`
 /// instead of printing them to stderr. This lets us detect parse errors after
 /// `parser.idlFile()` returns and fail with a proper error.
@@ -210,10 +358,15 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
             })
             .unwrap_or((0, 0));
 
+        // Try to enrich the raw ANTLR message with a more user-friendly
+        // explanation. Fall back to the original if no pattern matches.
+        let enriched = enrich_antlr_error(msg);
+        let display_msg = enriched.as_deref().unwrap_or(msg);
+
         self.errors.borrow_mut().push(SyntaxError {
             offset,
             length,
-            message: format!("line {line}:{column} {msg}"),
+            message: format!("line {line}:{column} {display_msg}"),
         });
     }
 }
@@ -4089,6 +4242,161 @@ mod tests {
         assert!(
             parse_idl_for_test(idl).is_ok(),
             "forward reference with default should skip validation"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // ANTLR error message enrichment
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn enrich_no_viable_alternative_with_annotation() {
+        // ANTLR merges `@beta` and `record` into `@betarecord`.
+        let msg = "no viable alternative at input '@betarecord'";
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        assert!(
+            enriched.contains("@beta"),
+            "should extract annotation name: {enriched}"
+        );
+        assert!(
+            enriched.contains("@beta(\"value\")"),
+            "should suggest correct syntax: {enriched}"
+        );
+    }
+
+    #[test]
+    fn enrich_no_viable_alternative_with_preceding_valid_annotation() {
+        // When a valid `@namespace(...)` precedes a bare `@version`, ANTLR
+        // merges everything: `@namespace("com.example")@versionprotocol`.
+        let msg =
+            "no viable alternative at input '@namespace(\"com.example\")@versionprotocol'";
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        assert!(
+            enriched.contains("@version"),
+            "should identify the bare annotation: {enriched}"
+        );
+        // Should NOT include the trailing keyword in the annotation name.
+        assert!(
+            !enriched.contains("@versionprotocol\""),
+            "should strip trailing keyword: {enriched}"
+        );
+    }
+
+    #[test]
+    fn enrich_mismatched_input_expecting_lparen() {
+        let msg = "mismatched input 'string' expecting '('";
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        assert!(
+            enriched.contains("@name(value)"),
+            "should explain annotation syntax: {enriched}"
+        );
+        // Should preserve the original message for context.
+        assert!(
+            enriched.contains("mismatched input"),
+            "should include original message: {enriched}"
+        );
+    }
+
+    #[test]
+    fn enrich_returns_none_for_unrecognized_errors() {
+        // Errors that don't match any known pattern should pass through.
+        let msg = "mismatched input '}' expecting {';', ','}";
+        assert!(
+            enrich_antlr_error(msg).is_none(),
+            "should not enrich unrecognized errors"
+        );
+    }
+
+    #[test]
+    fn extract_annotation_name_simple() {
+        assert_eq!(
+            extract_annotation_name("@betarecord"),
+            Some("beta"),
+        );
+    }
+
+    #[test]
+    fn extract_annotation_name_with_enum_keyword() {
+        assert_eq!(
+            extract_annotation_name("@unstableenum"),
+            Some("unstable"),
+        );
+    }
+
+    #[test]
+    fn extract_annotation_name_no_keyword_suffix() {
+        // When no known keyword is found at the end, the full ident is
+        // returned. This is the best we can do without source access.
+        assert_eq!(
+            extract_annotation_name("@foobar"),
+            Some("foobar"),
+        );
+    }
+
+    #[test]
+    fn extract_annotation_name_skips_valid_annotations() {
+        // `@namespace(...)` has a `(` so it's valid; the second `@version`
+        // without `(` is the problematic one.
+        assert_eq!(
+            extract_annotation_name("@namespace(\"x\")@versionprotocol"),
+            Some("version"),
+        );
+    }
+
+    #[test]
+    fn split_trailing_keyword_strips_record() {
+        assert_eq!(split_trailing_keyword("betarecord"), "beta");
+    }
+
+    #[test]
+    fn split_trailing_keyword_strips_protocol() {
+        assert_eq!(split_trailing_keyword("versionprotocol"), "version");
+    }
+
+    #[test]
+    fn split_trailing_keyword_strips_string() {
+        assert_eq!(split_trailing_keyword("deprecatedstring"), "deprecated");
+    }
+
+    #[test]
+    fn split_trailing_keyword_no_match() {
+        assert_eq!(split_trailing_keyword("foobar"), "foobar");
+    }
+
+    #[test]
+    fn split_trailing_keyword_exact_keyword() {
+        // If the entire merged text IS a keyword, don't strip it
+        // (that would leave an empty string).
+        assert_eq!(split_trailing_keyword("record"), "record");
+    }
+
+    // ------------------------------------------------------------------
+    // Integration: enriched error messages from parse_idl_for_test
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_bare_annotation_before_protocol() {
+        let idl = "@beta\nprotocol Test { record Foo { string name; } }";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("@beta"),
+            "error should mention the annotation: {msg}"
+        );
+        assert!(
+            msg.contains("@beta(\"value\")"),
+            "error should suggest correct syntax: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_error_annotation_missing_parens_on_field() {
+        let idl = "protocol Test { record Foo { @deprecated string name; } }";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("@name(value)"),
+            "error should explain annotation syntax: {msg}"
         );
     }
 }
