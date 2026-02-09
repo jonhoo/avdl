@@ -1098,8 +1098,8 @@ fn test_extra_protocol_syntax() {
         "protocolSyntax.avdl should define exactly one named type"
     );
     assert_eq!(
-        type_items[0].full_name(),
-        Some("communication.Message".to_string()),
+        type_items[0].full_name().as_deref(),
+        Some("communication.Message"),
         "the named type should be communication.Message"
     );
 
@@ -1178,8 +1178,8 @@ fn test_extra_schema_syntax() {
         "schemaSyntax.avdl should define exactly one named type"
     );
     assert_eq!(
-        type_items[0].full_name(),
-        Some("communication.Message".to_string()),
+        type_items[0].full_name().as_deref(),
+        Some("communication.Message"),
         "the named type should be communication.Message"
     );
 }

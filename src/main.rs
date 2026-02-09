@@ -6,6 +6,7 @@
 //   - `avdl idl [INPUT] [OUTPUT]`        -- compile .avdl to .avpr or .avsc JSON
 //   - `avdl idl2schemata [INPUT] [OUTDIR]` -- extract individual .avsc files
 
+use std::borrow::Cow;
 use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
@@ -533,7 +534,7 @@ fn process_decl_items(
                 if let Some((field_name, reason)) = errors.into_iter().next() {
                     let type_name = schema
                         .full_name()
-                        .unwrap_or_else(|| "<unknown>".to_string());
+                        .unwrap_or(Cow::Borrowed("<unknown>"));
                     let msg = format!(
                         "Invalid default for field `{field_name}` in `{type_name}`: {reason}"
                     );

@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// Field sort order in Avro schemas.
@@ -167,7 +168,10 @@ pub struct Field {
 
 impl AvroSchema {
     /// Returns the full name of a named type (namespace.name), or `None` if not a named type.
-    pub fn full_name(&self) -> Option<std::string::String> {
+    ///
+    /// Returns `Cow::Borrowed` when there is no namespace (avoiding allocation),
+    /// and `Cow::Owned` when a namespace prefix must be prepended.
+    pub fn full_name(&self) -> Option<Cow<'_, str>> {
         match self {
             AvroSchema::Record {
                 name, namespace, ..
@@ -181,8 +185,8 @@ impl AvroSchema {
             | AvroSchema::Reference {
                 name, namespace, ..
             } => Some(match namespace {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.clone(),
+                Some(ns) if !ns.is_empty() => Cow::Owned(format!("{ns}.{name}")),
+                _ => Cow::Borrowed(name.as_str()),
             }),
             _ => None,
         }
@@ -196,14 +200,6 @@ impl AvroSchema {
             | AvroSchema::Fixed { name, .. } => Some(name),
             _ => None,
         }
-    }
-
-    /// Returns true if this is a named type (record, enum, or fixed).
-    pub fn is_named(&self) -> bool {
-        matches!(
-            self,
-            AvroSchema::Record { .. } | AvroSchema::Enum { .. } | AvroSchema::Fixed { .. }
-        )
     }
 
     /// Returns the key used for duplicate detection within a union.
@@ -234,7 +230,8 @@ impl AvroSchema {
             | AvroSchema::Fixed { .. }
             | AvroSchema::Reference { .. } => self
                 .full_name()
-                .expect("match arm restricts to Record/Enum/Fixed/Reference, all have full_name"),
+                .expect("match arm restricts to Record/Enum/Fixed/Reference, all have full_name")
+                .into_owned(),
 
             // Complex anonymous types: keyed by their structural type name.
             AvroSchema::Array { .. } => "array".to_string(),
