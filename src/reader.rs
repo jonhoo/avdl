@@ -52,9 +52,17 @@ use miette::{Context, Result};
 
 /// A non-fatal warning generated during IDL parsing, such as an out-of-place
 /// documentation comment. Matches the Java `IdlReader` warning format.
+///
+/// When `source` and `span` are present, the warning can be rendered with
+/// source context highlighting via miette, similar to how parse errors show
+/// the offending token underlined.
 #[derive(Debug, Clone)]
 pub struct Warning {
     pub message: String,
+    /// The source text and file name, for rich diagnostic rendering.
+    pub source: Option<miette::NamedSource<String>>,
+    /// Byte range of the token that triggered the warning.
+    pub span: Option<miette::SourceSpan>,
 }
 
 impl Warning {
@@ -63,7 +71,24 @@ impl Warning {
     /// The format matches Java's `IdlReader.getDocComment()`:
     ///   "Line %d, char %d: Ignoring out-of-place documentation comment.\n
     ///    Did you mean to use a multiline comment ( /* ... */ ) instead?"
-    fn out_of_place_doc_comment(line: isize, column: isize) -> Self {
+    ///
+    /// `token_start` and `token_stop` are the inclusive byte offsets from
+    /// `Token::get_start()` / `Token::get_stop()`.
+    fn out_of_place_doc_comment(
+        line: isize,
+        column: isize,
+        src: &SourceInfo<'_>,
+        token_start: isize,
+        token_stop: isize,
+    ) -> Self {
+        let (offset, length) = if token_start >= 0 && token_stop >= token_start {
+            (token_start as usize, (token_stop - token_start + 1) as usize)
+        } else if token_start >= 0 {
+            (token_start as usize, 1)
+        } else {
+            (0, 0)
+        };
+
         Warning {
             message: format!(
                 "Line {}, char {}: Ignoring out-of-place documentation comment.\n\
@@ -73,12 +98,17 @@ impl Warning {
                 // get_column() is 0-based, so we add 1 to match.
                 column + 1,
             ),
+            source: Some(miette::NamedSource::new(src.name, src.source.to_string())),
+            span: Some(miette::SourceSpan::new(offset.into(), length)),
         }
     }
 
     /// Prepend an import filename to the warning message, lowercasing the first
     /// character of the original message. Matches Java's
     /// `IdlFile.getWarnings(importFile)` behavior.
+    ///
+    /// The source span is cleared because it referred to the imported file's
+    /// source, which is no longer the relevant context for the prefixed message.
     pub fn with_import_prefix(mut self, import_file: &str) -> Self {
         if let Some(first_char) = self.message.chars().next() {
             self.message = format!(
@@ -88,6 +118,10 @@ impl Warning {
                 &self.message[first_char.len_utf8()..]
             );
         }
+        // The span referred to the imported file's source text, which the
+        // caller no longer has available; clear it to avoid stale references.
+        self.source = None;
+        self.span = None;
         self
     }
 }
@@ -95,6 +129,26 @@ impl Warning {
 impl std::fmt::Display for Warning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for Warning {}
+
+/// Implements `miette::Diagnostic` so warnings with source spans render with
+/// underlined source context, matching how parse errors already display.
+impl miette::Diagnostic for Warning {
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        self.source.as_ref().map(|s| s as &dyn miette::SourceCode)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        let span = self.span?;
+        Some(Box::new(std::iter::once(
+            miette::LabeledSpan::new_with_span(
+                Some("out-of-place doc comment".to_string()),
+                span,
+            ),
+        )))
     }
 }
 
@@ -244,6 +298,18 @@ pub enum DeclItem {
 /// Also returns a `Vec<Warning>` containing any out-of-place doc comment
 /// warnings detected during parsing.
 pub fn parse_idl(input: &str) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
+    // Normalize CRLF line endings to LF so that byte offsets in ANTLR tokens
+    // (and therefore in SourceSpan error diagnostics) are consistent in tests
+    // regardless of the source file's line ending convention. Production code
+    // reads files itself and doesn't need this normalization.
+    let normalized;
+    let input = if input.contains("\r\n") {
+        normalized = input.replace("\r\n", "\n");
+        normalized.as_str()
+    } else {
+        input
+    };
+
     parse_idl_named(input, "<input>")
 }
 
@@ -253,6 +319,12 @@ pub fn parse_idl_named(
     input: &str,
     source_name: &str,
 ) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
+    // TODO: The ANTLR grammar's `idlFile` rule includes `('\u001a' .*?)? EOF`
+    // to treat the ASCII SUB character (U+001A) as an end-of-file marker,
+    // ignoring any trailing content. Java handles this correctly, but the
+    // antlr4rust runtime may not match the `\u001a` literal. If this becomes
+    // a problem, strip `\u001a` and everything after it from `input` here
+    // before passing it to the lexer.
     let input_stream = InputStream::new(input);
     let lexer = IdlLexer::new(input_stream);
     let token_stream = CommonTokenStream::new(lexer);
@@ -328,7 +400,7 @@ pub fn parse_idl_named(
     // position and the current call's position that isn't the actual doc comment
     // for the current node.
     let warnings =
-        collect_orphaned_doc_comment_warnings(token_stream, &src.consumed_doc_indices.borrow());
+        collect_orphaned_doc_comment_warnings(token_stream, &src.consumed_doc_indices.borrow(), &src);
 
     Ok((idl_file, decl_items, warnings))
 }
@@ -1440,12 +1512,22 @@ fn walk_primitive_type<'input>(
                 .precision
                 .as_ref()
                 .ok_or_else(|| make_diagnostic(src, ctx, "decimal type missing precision"))?;
-            let precision = parse_integer_as_u32(precision_tok.get_text())
-                .map_err(|e| miette::miette!("parse decimal precision: {e}"))?;
+            let precision = parse_integer_as_u32(precision_tok.get_text()).map_err(|e| {
+                make_diagnostic_from_token(
+                    src,
+                    &**precision_tok,
+                    format!("invalid decimal precision: {e}"),
+                )
+            })?;
 
             let scale = if let Some(scale_tok) = ctx.scale.as_ref() {
-                parse_integer_as_u32(scale_tok.get_text())
-                    .map_err(|e| miette::miette!("parse decimal scale: {e}"))?
+                parse_integer_as_u32(scale_tok.get_text()).map_err(|e| {
+                    make_diagnostic_from_token(
+                        src,
+                        &**scale_tok,
+                        format!("invalid decimal scale: {e}"),
+                    )
+                })?
             } else {
                 0
             };
@@ -1741,8 +1823,16 @@ fn walk_json_literal<'input>(
             let unescaped = get_string_from_literal(text);
             Ok(Value::String(unescaped))
         }
-        Idl_IntegerLiteral => parse_integer_literal(text),
-        Idl_FloatingPointLiteral => parse_floating_point_literal(text),
+        Idl_IntegerLiteral => parse_integer_literal(text).map_err(|e| {
+            make_diagnostic_from_token(src, tok.as_ref(), format!("invalid integer literal: {e}"))
+        }),
+        Idl_FloatingPointLiteral => parse_floating_point_literal(text).map_err(|e| {
+            make_diagnostic_from_token(
+                src,
+                tok.as_ref(),
+                format!("invalid floating-point literal: {e}"),
+            )
+        }),
         _ => Err(make_diagnostic_from_token(
             src,
             tok.as_ref(),
@@ -2582,6 +2672,7 @@ where
 fn collect_orphaned_doc_comment_warnings<'input, S>(
     token_stream: &S,
     consumed_indices: &HashSet<isize>,
+    src: &SourceInfo<'_>,
 ) -> Vec<Warning>
 where
     S: TokenStream<'input>,
@@ -2598,6 +2689,9 @@ where
             warnings.push(Warning::out_of_place_doc_comment(
                 token.get_line(),
                 token.get_column(),
+                src,
+                token.get_start(),
+                token.get_stop(),
             ));
         }
     }
