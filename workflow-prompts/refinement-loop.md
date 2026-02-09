@@ -246,3 +246,19 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   more effective than 5 broad agents. They produced thorough
   SESSION.md audit trails with minimal overlap and one genuine bug.
   As the codebase matures, prefer fewer, more specialized agents.
+- **TODO-driven discovery works well for directed investigation**:
+  In iteration 11, spawning one agent per `TODOs.md` item produced
+  focused, non-overlapping results. Two items were correctly triaged
+  as non-issues (with documented rationale), and two yielded small
+  actionable fixes. This approach avoids the deduplication overhead
+  of broad exploratory agents.
+- **Non-issue investigations still have value**: Even when a TODO is
+  determined to be a non-issue, documenting the analysis in
+  SESSION.md prevents the question from being re-asked. Consider
+  briefly adding a code comment explaining the design decision.
+- **Worktree snapshot tests break on paths**: The `insta` snapshot
+  test `test_error_import_nonexistent_file` contains an absolute path
+  from `main/`. When run from a worktree, the path differs and the
+  snapshot fails. Sub-agents should skip this test with
+  `--skip test_error_import_nonexistent_file`. The test passes
+  correctly from `main/`.
