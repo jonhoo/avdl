@@ -1,10 +1,12 @@
 use std::borrow::Borrow;
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 use antlr4rust::char_stream::InputData;
 use antlr4rust::token::Token;
 use antlr4rust::token_factory::TokenFactory;
 use antlr4rust::token_stream::TokenStream;
+use regex::Regex;
 
 use crate::generated::idlparser::{Idl_DocComment, Idl_EmptyComment, Idl_WS};
 
@@ -80,117 +82,94 @@ where
     Some(strip_indents(trimmed))
 }
 
-/// Strip common indentation from a doc comment body, matching the Java
+// ==============================================================================
+// Doc comment indent stripping
+// ==============================================================================
+//
+// This is a direct port of Java's `IdlReader.stripIndents()`, which uses two
+// regex-based strategies to remove doc comment decoration:
+//
+// 1. **Star-prefix**: If the comment starts with `*` or `**` and all subsequent
+//    lines (after optional horizontal whitespace) start with the same star
+//    prefix, strip the stars and one optional trailing whitespace character from
+//    each line.
+//
+// 2. **Common whitespace indent**: If all subsequent lines share a common
+//    leading whitespace prefix, strip it.
+//
+// Java's patterns use `\h` (horizontal whitespace) and `\R` (any line break).
+// Rust's `regex` crate lacks these, so we use `[\t ]` and `\r?\n` respectively.
+// Java also uses backreferences (`\k<stars>`) to match the same star count on
+// subsequent lines; we avoid backreferences (unsupported in `regex`) by checking
+// star count manually and building the replacement pattern from it.
+
+/// Validation pattern for single-star prefix: the comment starts with `*` and
+/// all subsequent lines start with `*` after optional horizontal whitespace.
+/// Empty lines are allowed (they don't need a star).
+static STAR_1_VALIDATE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)^\*[^\r\n]*(?:\r?\n[\t ]*\*[^\r\n]*|\r?\n[\t ]*)*$").unwrap());
+
+/// Validation pattern for double-star prefix: same as above but with `**`.
+static STAR_2_VALIDATE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)^\*\*[^\r\n]*(?:\r?\n[\t ]*\*\*[^\r\n]*|\r?\n[\t ]*)*$").unwrap());
+
+/// Replacement pattern for single-star: matches start-of-string or
+/// (newline + horizontal whitespace) followed by `*` and optional trailing
+/// horizontal whitespace.
+///
+/// Java equivalent: `(?U)(?:^|(\R)\h*)\Q*\E\h?`
+static STAR_1_REPLACE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|(\r?\n)[\t ]*)\*[\t ]?").unwrap());
+
+/// Replacement pattern for double-star.
+///
+/// Java equivalent: `(?U)(?:^|(\R)\h*)\Q**\E\h?`
+static STAR_2_REPLACE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|(\r?\n)[\t ]*)\*\*[\t ]?").unwrap());
+
+/// Validation pattern for common whitespace indent: the comment has at least
+/// two lines and all non-empty subsequent lines share a common leading
+/// whitespace prefix. We determine the actual indent length manually.
+static WS_INDENT_VALIDATE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)[^\r\n]*\r?\n[\t ]+[^\r\n]*").unwrap());
+
+/// Strip common indentation from a doc comment body, matching Java's
 /// `IdlReader.stripIndents()` behavior.
 ///
 /// Handles two patterns:
 /// 1. Star-prefixed: lines starting with `*` or `**` (common in `/** ... */` blocks)
 /// 2. Whitespace-indented: strips the common leading whitespace across all lines
 pub fn strip_indents(doc_comment: &str) -> String {
-    // Try star-prefix pattern first.
-    // If all lines after the first start with `*` or `**` (after optional whitespace),
-    // strip that prefix.
-    if let Some(result) = try_strip_star_indent(doc_comment) {
-        return result;
+    // Try double-star prefix first (longer match takes priority, matching Java's
+    // `\\*{1,2}` greedy quantifier behavior).
+    if STAR_2_VALIDATE.is_match(doc_comment) {
+        return STAR_2_REPLACE
+            .replace_all(doc_comment, |caps: &regex::Captures| {
+                // Preserve the newline (group 1) if present; at start-of-string
+                // there is no newline to preserve.
+                caps.get(1).map_or("", |m| m.as_str()).to_string()
+            })
+            .into_owned();
     }
 
-    // Try common whitespace indent.
-    if let Some(result) = try_strip_ws_indent(doc_comment) {
-        return result;
+    if STAR_1_VALIDATE.is_match(doc_comment) {
+        return STAR_1_REPLACE
+            .replace_all(doc_comment, |caps: &regex::Captures| {
+                caps.get(1).map_or("", |m| m.as_str()).to_string()
+            })
+            .into_owned();
     }
 
-    // Handle single-line comments that start with a star prefix (e.g. `* text`
-    // from `/** * text */`). The multi-line star stripper requires >= 2 lines,
-    // so we handle this case separately.
-    if let Some(stripped) = doc_comment.strip_prefix("** ") {
-        return stripped.to_string();
-    }
-    if let Some(stripped) = doc_comment.strip_prefix("**\t") {
-        return stripped.to_string();
-    }
-    if let Some(stripped) = doc_comment.strip_prefix("**") {
-        return stripped.to_string();
-    }
-    if let Some(stripped) = doc_comment.strip_prefix("* ") {
-        return stripped.to_string();
-    }
-    if let Some(stripped) = doc_comment.strip_prefix("*\t") {
-        return stripped.to_string();
-    }
-    if let Some(stripped) = doc_comment.strip_prefix('*') {
-        return stripped.to_string();
+    // Try common whitespace indent. We find the common indent prefix manually
+    // (since Rust regex doesn't support backreferences) and then build a
+    // replacement regex from it.
+    if WS_INDENT_VALIDATE.is_match(doc_comment) {
+        if let Some(result) = try_strip_ws_indent(doc_comment) {
+            return result;
+        }
     }
 
     doc_comment.to_string()
-}
-
-/// Try to strip star-prefixed indentation.
-///
-/// Matches doc comments like:
-/// ```text
-/// * First line
-/// * Second line
-/// ```
-/// or:
-/// ```text
-/// ** First line
-/// ** Second line
-/// ```
-fn try_strip_star_indent(doc_comment: &str) -> Option<String> {
-    let lines: Vec<&str> = doc_comment.lines().collect();
-    if lines.len() < 2 {
-        // Single-line comments don't have star indents to strip.
-        return None;
-    }
-
-    // Determine star prefix length (1 or 2 stars) from the first line.
-    let first_line = lines[0];
-    let star_count = if first_line.starts_with("**") {
-        2
-    } else if first_line.starts_with('*') {
-        1
-    } else {
-        return None;
-    };
-
-    let star_prefix = &"**"[..star_count];
-
-    // Verify all subsequent lines (after whitespace trimming) start with the same
-    // star prefix.
-    for line in &lines[1..] {
-        let trimmed = line.trim_start();
-        if !trimmed.is_empty() && !trimmed.starts_with(star_prefix) {
-            return None;
-        }
-    }
-
-    // Strip the star prefix from each line.
-    let mut result_lines = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        if i == 0 {
-            // First line: strip leading stars and optional following space or tab.
-            let after_stars = &first_line[star_count..];
-            let stripped = after_stars
-                .strip_prefix(' ')
-                .or_else(|| after_stars.strip_prefix('\t'))
-                .unwrap_or(after_stars);
-            result_lines.push(stripped);
-        } else {
-            let trimmed = line.trim_start();
-            if trimmed.is_empty() {
-                result_lines.push("");
-            } else {
-                let after_stars = &trimmed[star_count..];
-                let stripped = after_stars
-                    .strip_prefix(' ')
-                    .or_else(|| after_stars.strip_prefix('\t'))
-                    .unwrap_or(after_stars);
-                result_lines.push(stripped);
-            }
-        }
-    }
-
-    Some(result_lines.join("\n"))
 }
 
 /// Try to strip common whitespace indentation from a multi-line doc comment.
@@ -219,17 +198,12 @@ fn try_strip_ws_indent(doc_comment: &str) -> Option<String> {
         return None;
     }
 
-    let mut result_lines = Vec::new();
-    result_lines.push(lines[0]);
-    for line in &lines[1..] {
-        if line.len() >= indent.len() {
-            result_lines.push(&line[indent.len()..]);
-        } else {
-            result_lines.push(line);
-        }
-    }
-
-    Some(result_lines.join("\n"))
+    // Build a replacement regex: after each newline, strip exactly the common
+    // indent prefix. Java equivalent: `(?U)(\R)<indent>`
+    let escaped_indent = regex::escape(indent);
+    let re = Regex::new(&format!(r"(\r?\n){}", escaped_indent))
+        .expect("escaped indent produces valid regex");
+    Some(re.replace_all(doc_comment, "$1").into_owned())
 }
 
 /// Find the common prefix of two strings (character by character).
@@ -409,5 +383,13 @@ mod tests {
     fn test_strip_indents_single_line_tab_after_double_star() {
         // Single-line: `**\ttext` should strip the tab.
         assert_eq!(strip_indents("**\ttext"), "text");
+    }
+
+    #[test]
+    fn test_strip_indents_mixed_whitespace_around_stars() {
+        // Tabs and spaces around the star prefix on continuation lines.
+        // The regex approach handles any horizontal whitespace uniformly.
+        let input = "* First\n\t * Second\n \t* Third";
+        assert_eq!(strip_indents(input), "First\nSecond\nThird");
     }
 }
