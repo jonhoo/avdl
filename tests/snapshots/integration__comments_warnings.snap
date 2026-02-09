@@ -1,0 +1,223 @@
+---
+source: tests/integration.rs
+assertion_line: 822
+expression: output.warnings
+---
+[
+    Warning {
+        message: "Line 21, char 8: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "881..902",
+        ),
+    },
+    Warning {
+        message: "Line 21, char 45: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "918..939",
+        ),
+    },
+    Warning {
+        message: "Line 22, char 5: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "946..967",
+        ),
+    },
+    Warning {
+        message: "Line 23, char 5: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "975..996",
+        ),
+    },
+    Warning {
+        message: "Line 24, char 5: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1004..1025",
+        ),
+    },
+    Warning {
+        message: "Line 25, char 5: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1032..1053",
+        ),
+    },
+    Warning {
+        message: "Line 26, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1061..1082",
+        ),
+    },
+    Warning {
+        message: "Line 27, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1090..1111",
+        ),
+    },
+    Warning {
+        message: "Line 28, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1120..1141",
+        ),
+    },
+    Warning {
+        message: "Line 33, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1218..1240",
+        ),
+    },
+    Warning {
+        message: "Line 34, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1263..1285",
+        ),
+    },
+    Warning {
+        message: "Line 35, char 5: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1291..1313",
+        ),
+    },
+    Warning {
+        message: "Line 36, char 5: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1321..1343",
+        ),
+    },
+    Warning {
+        message: "Line 37, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1351..1373",
+        ),
+    },
+    Warning {
+        message: "Line 42, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1446..1468",
+        ),
+    },
+    Warning {
+        message: "Line 43, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1491..1513",
+        ),
+    },
+    Warning {
+        message: "Line 46, char 9: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1628..1650",
+        ),
+    },
+    Warning {
+        message: "Line 47, char 5: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1656..1678",
+        ),
+    },
+    Warning {
+        message: "Line 54, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1778..1800",
+        ),
+    },
+    Warning {
+        message: "Line 55, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1824..1846",
+        ),
+    },
+    Warning {
+        message: "Line 58, char 9: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1958..1980",
+        ),
+    },
+    Warning {
+        message: "Line 59, char 7: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "1988..2011",
+        ),
+    },
+    Warning {
+        message: "Line 60, char 11: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "2029..2052",
+        ),
+    },
+    Warning {
+        message: "Line 61, char 11: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "avro/lang/java/idl/src/test/idl/input/comments.avdl",
+        ),
+        span: Some(
+            "2079..2102",
+        ),
+    },
+]

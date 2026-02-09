@@ -1,10 +1,25 @@
 ---
 source: tests/error_reporting.rs
-assertion_line: 282
-expression: "warning_text.join(\"\\n---\\n\")"
+assertion_line: 227
+expression: warnings
 ---
-Line 7, char 17: Ignoring out-of-place documentation comment.
-Did you mean to use a multiline comment ( /* ... */ ) instead?
----
-Line 9, char 13: Ignoring out-of-place documentation comment.
-Did you mean to use a multiline comment ( /* ... */ ) instead?
+[
+    Warning {
+        message: "Line 7, char 17: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "<input>",
+        ),
+        span: Some(
+            "145..160",
+        ),
+    },
+    Warning {
+        message: "Line 9, char 13: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
+        file: Some(
+            "<input>",
+        ),
+        span: Some(
+            "187..202",
+        ),
+    },
+]

@@ -56,13 +56,33 @@ use miette::{Context, Result};
 /// When `source` and `span` are present, the warning can be rendered with
 /// source context highlighting via miette, similar to how parse errors show
 /// the offending token underlined.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Warning {
     pub message: String,
     /// The source text and file name, for rich diagnostic rendering.
     pub source: Option<miette::NamedSource<String>>,
     /// Byte range of the token that triggered the warning.
     pub span: Option<miette::SourceSpan>,
+}
+
+/// Custom `Debug` implementation that shows a compact representation instead of
+/// the deeply nested default. `NamedSource` debug-prints `source: "<redacted>"`
+/// and `SourceSpan` wraps offsets in `SourceOffset(...)`, making the derived
+/// output ~20 lines for a single warning. This shows just the essential fields:
+/// the message, the file name, and the byte span as `start..end`.
+impl std::fmt::Debug for Warning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Warning")
+            .field("message", &self.message)
+            .field("file", &self.source.as_ref().map(|s| s.name().to_string()))
+            .field(
+                "span",
+                &self
+                    .span
+                    .map(|s| format!("{}..{}", s.offset(), s.offset() + s.len())),
+            )
+            .finish()
+    }
 }
 
 impl Warning {
@@ -146,8 +166,17 @@ impl miette::Diagnostic for Warning {
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         let span = self.span?;
+        // Derive a short label from the message content rather than hardcoding
+        // a single label for all warning types.
+        let label = if self.message.contains("out-of-place documentation comment") {
+            "out-of-place doc comment"
+        } else if self.message.contains("token recognition error") {
+            "unrecognized token"
+        } else {
+            "here"
+        };
         Some(Box::new(std::iter::once(
-            miette::LabeledSpan::new_with_span(Some("out-of-place doc comment".to_string()), span),
+            miette::LabeledSpan::new_with_span(Some(label.to_string()), span),
         )))
     }
 }
@@ -322,11 +351,36 @@ fn split_trailing_keyword(merged: &str) -> &str {
     merged
 }
 
+/// Convert 1-based `line` and 0-based `column` (as reported by ANTLR) to a
+/// byte offset into `source`. Returns 0 if the coordinates are out of range.
+fn line_col_to_byte_offset(source: &str, line: isize, column: isize) -> usize {
+    if line <= 0 || column < 0 {
+        return 0;
+    }
+    let target_line = (line - 1) as usize; // convert to 0-based
+    let mut offset = 0;
+    for (i, src_line) in source.split('\n').enumerate() {
+        if i == target_line {
+            return offset + (column as usize).min(src_line.len());
+        }
+        offset += src_line.len() + 1; // +1 for the newline character
+    }
+    0
+}
+
 /// An ANTLR error listener that collects syntax errors into a shared `Vec`
 /// instead of printing them to stderr. This lets us detect parse errors after
 /// `parser.idlFile()` returns and fail with a proper error.
+///
+/// The optional `source` field holds the original input text, enabling the
+/// listener to compute byte offsets from ANTLR's (line, column) when no
+/// offending token is available (lexer errors).
 struct CollectingErrorListener {
     errors: Rc<RefCell<Vec<SyntaxError>>>,
+    /// Original source text for line/column-to-byte-offset conversion.
+    /// `None` for parser errors where the offending token always provides
+    /// byte offsets directly.
+    source: Option<Rc<str>>,
 }
 
 impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
@@ -341,7 +395,8 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
     ) {
         // Extract byte offsets from the offending token when available. These
         // give us a precise source span for miette to underline. When the token
-        // is absent (e.g., lexer errors), we fall back to zero-length.
+        // is absent (e.g., lexer errors), we compute the offset from the
+        // line/column parameters using the stored source text.
         let (offset, length) = offending_symbol
             .map(|tok| {
                 let start = tok.get_start();
@@ -354,7 +409,16 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
                     (0, 0)
                 }
             })
-            .unwrap_or((0, 0));
+            .unwrap_or_else(|| {
+                // Lexer errors have no offending token. Fall back to computing
+                // the byte offset from (line, column) using the source text.
+                if let Some(ref src) = self.source {
+                    let offset = line_col_to_byte_offset(src, line, column);
+                    (offset, 1)
+                } else {
+                    (0, 0)
+                }
+            });
 
         // Try to enrich the raw ANTLR message with a more user-friendly
         // explanation. Fall back to the original if no pattern matches.
@@ -480,10 +544,12 @@ pub fn parse_idl_named(
     // warnings instead, matching Java's behavior of not treating lexer
     // errors as fatal. (Java also doesn't install a custom listener on
     // the lexer — it just lets ConsoleErrorListener print to stderr.)
+    let source_rc: Rc<str> = Rc::from(input);
     let lexer_errors: Rc<RefCell<Vec<SyntaxError>>> = Rc::new(RefCell::new(Vec::new()));
     lexer.remove_error_listeners();
     lexer.add_error_listener(Box::new(CollectingErrorListener {
         errors: Rc::clone(&lexer_errors),
+        source: Some(Rc::clone(&source_rc)),
     }));
 
     let token_stream = CommonTokenStream::new(lexer);
@@ -500,8 +566,11 @@ pub fn parse_idl_named(
     // produce a usable parse tree, but we'll fail after parsing completes.
     let syntax_errors: Rc<RefCell<Vec<SyntaxError>>> = Rc::new(RefCell::new(Vec::new()));
     parser.remove_error_listeners();
+    // Parser errors always have an offending token with byte offsets, so no
+    // source text is needed for line/column fallback.
     parser.add_error_listener(Box::new(CollectingErrorListener {
         errors: Rc::clone(&syntax_errors),
+        source: None,
     }));
 
     let tree = parser

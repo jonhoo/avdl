@@ -49,7 +49,7 @@ fn compile_error(input: &str) -> Option<String> {
 /// compilation.
 ///
 /// Panics if compilation fails, since warning tests require a successful parse.
-fn compile_warnings(input: &str) -> Vec<String> {
+fn compile_warnings(input: &str) -> Vec<avdl::Warning> {
     let output = Idl::new()
         .convert_str(input)
         .expect("warning test input should compile successfully");
@@ -206,7 +206,7 @@ fn test_warning_out_of_place_doc_comment() {
         !warnings.is_empty(),
         "expected at least one warning for out-of-place doc comment"
     );
-    insta::assert_snapshot!(warnings.join("\n"));
+    insta::assert_debug_snapshot!(warnings);
 }
 
 /// Multiple out-of-place doc comments should each generate a separate warning.
@@ -224,7 +224,7 @@ fn test_warning_multiple_out_of_place_doc_comments() {
         }
     "#;
     let warnings = compile_warnings(input);
-    insta::assert_snapshot!(warnings.join("\n---\n"));
+    insta::assert_debug_snapshot!(warnings);
 }
 
 // ==============================================================================

@@ -1,22 +1,14 @@
 ---
 source: src/reader.rs
+assertion_line: 4578
 expression: "warnings[0]"
 ---
 Warning {
     message: "line 1:35 token recognition error at: '\u{1}'",
-    source: Some(
-        NamedSource {
-            name: "<input>",
-            source: "<redacted>",
-            language: None,
-        ,
+    file: Some(
+        "<input>",
     ),
     span: Some(
-        SourceSpan {
-            offset: SourceOffset(
-                0,
-            ),
-            length: 0,
-        },
+        "35..36",
     ),
 }
