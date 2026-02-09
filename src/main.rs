@@ -10,9 +10,8 @@ use std::fs;
 use std::io::{self, Read as _};
 use std::path::PathBuf;
 
-use avdl::{Idl, Idl2Schemata, Warning};
+use avdl::{Idl, Idl2Schemata};
 use lexopt::prelude::*;
-use miette::Diagnostic;
 
 // ==============================================================================
 // CLI Help Text
@@ -265,22 +264,10 @@ fn run_idl2schemata(
 // Warning Rendering
 // ==============================================================================
 
-/// Render a warning to stderr. When the warning has source code and span info
-/// (i.e., `source_code()` and `labels()` are available), use miette's
-/// `GraphicalReportHandler` for rich output with source underlining. Otherwise,
-/// fall back to the plain `"Warning: {message}"` format used by Java's IdlTool.
-fn render_warning(w: &Warning) {
-    if w.source_code().is_some() && w.labels().is_some() {
-        let handler = miette::GraphicalReportHandler::new();
-        let mut buf = String::new();
-        // The handler writes to a `fmt::Write`. If it fails (should not happen
-        // for an in-memory String), fall back to plain output.
-        if handler.render_report(&mut buf, w as &dyn Diagnostic).is_ok() {
-            eprint!("warning: {buf}");
-            return;
-        }
-    }
-    eprintln!("Warning: {w}");
+/// Render a warning to stderr using miette's `Debug` format, which produces
+/// rich graphical output with source spans, labels, and severity markers.
+fn render_warning(w: &miette::Report) {
+    eprintln!("{w:?}");
 }
 
 // ==============================================================================

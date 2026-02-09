@@ -14,7 +14,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use std::fmt::Write;
+
 use avdl::{Idl, Idl2Schemata};
+use miette::{GraphicalReportHandler, GraphicalTheme};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 
@@ -55,6 +58,24 @@ fn parse_idl2schemata(avdl_path: &Path, import_dirs: &[&Path]) -> HashMap<String
         .into_iter()
         .map(|s| (s.name, s.schema))
         .collect()
+}
+
+/// Render a list of warnings to a deterministic string suitable for snapshot
+/// testing. Uses miette's graphical handler with unicode-nocolor theme and
+/// fixed 80-column width for reproducible output.
+fn render_warnings(warnings: &[miette::Report]) -> String {
+    let handler =
+        GraphicalReportHandler::new_themed(GraphicalTheme::unicode_nocolor()).with_width(80);
+    let mut buf = String::new();
+    for (i, w) in warnings.iter().enumerate() {
+        if i > 0 {
+            writeln!(buf).expect("write to String is infallible");
+        }
+        handler
+            .render_report(&mut buf, w.as_ref())
+            .expect("render to String is infallible");
+    }
+    buf
 }
 
 /// Load an expected output file (`.avpr` or `.avsc`) as a `serde_json::Value`.
@@ -819,7 +840,7 @@ fn test_comments_warnings() {
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    insta::assert_debug_snapshot!(output.warnings);
+    insta::assert_snapshot!(render_warnings(&output.warnings));
 }
 
 // ==============================================================================
@@ -1083,7 +1104,7 @@ fn test_tools_protocol_warning() {
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    insta::assert_debug_snapshot!(output.warnings);
+    insta::assert_snapshot!(render_warnings(&output.warnings));
 }
 
 #[test]
@@ -1093,7 +1114,7 @@ fn test_tools_schema_warning() {
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    insta::assert_debug_snapshot!(output.warnings);
+    insta::assert_snapshot!(render_warnings(&output.warnings));
 }
 
 // ==============================================================================

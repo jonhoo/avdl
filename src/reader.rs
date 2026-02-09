@@ -56,13 +56,12 @@ use miette::{Context, Result};
 /// When `source` and `span` are present, the warning can be rendered with
 /// source context highlighting via miette, similar to how parse errors show
 /// the offending token underlined.
-#[derive(Clone)]
-pub struct Warning {
-    pub message: String,
+pub(crate) struct Warning {
+    pub(crate) message: String,
     /// The source text and file name, for rich diagnostic rendering.
-    pub source: Option<miette::NamedSource<String>>,
+    pub(crate) source: Option<miette::NamedSource<String>>,
     /// Byte range of the token that triggered the warning.
-    pub span: Option<miette::SourceSpan>,
+    pub(crate) span: Option<miette::SourceSpan>,
 }
 
 /// Custom `Debug` implementation that shows a compact representation instead of
@@ -126,27 +125,6 @@ impl Warning {
         }
     }
 
-    /// Prepend an import filename to the warning message, lowercasing the first
-    /// character of the original message. Matches Java's
-    /// `IdlFile.getWarnings(importFile)` behavior.
-    ///
-    /// The source span is cleared because it referred to the imported file's
-    /// source, which is no longer the relevant context for the prefixed message.
-    pub fn with_import_prefix(mut self, import_file: &str) -> Self {
-        if let Some(first_char) = self.message.chars().next() {
-            self.message = format!(
-                "{} {}{}",
-                import_file,
-                first_char.to_lowercase(),
-                &self.message[first_char.len_utf8()..]
-            );
-        }
-        // The span referred to the imported file's source text, which the
-        // caller no longer has available; clear it to avoid stale references.
-        self.source = None;
-        self.span = None;
-        self
-    }
 }
 
 impl std::fmt::Display for Warning {
@@ -160,6 +138,10 @@ impl std::error::Error for Warning {}
 /// Implements `miette::Diagnostic` so warnings with source spans render with
 /// underlined source context, matching how parse errors already display.
 impl miette::Diagnostic for Warning {
+    fn severity(&self) -> Option<miette::Severity> {
+        Some(miette::Severity::Warning)
+    }
+
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
         self.source.as_ref().map(|s| s as &dyn miette::SourceCode)
     }
@@ -4566,6 +4548,25 @@ mod tests {
         );
     }
 
+    /// Render a list of warnings to a deterministic string for snapshot tests.
+    fn render_warnings(warnings: &[Warning]) -> String {
+        use std::fmt::Write;
+        let handler = miette::GraphicalReportHandler::new_themed(
+            miette::GraphicalTheme::unicode_nocolor(),
+        )
+        .with_width(80);
+        let mut buf = String::new();
+        for (i, w) in warnings.iter().enumerate() {
+            if i > 0 {
+                writeln!(buf).expect("write to String is infallible");
+            }
+            handler
+                .render_report(&mut buf, w as &dyn miette::Diagnostic)
+                .expect("render to String is infallible");
+        }
+        buf
+    }
+
     #[test]
     fn lexer_error_produces_warning() {
         // A control character that the ANTLR lexer can't tokenize should
@@ -4575,7 +4576,7 @@ mod tests {
         let (_, _, warnings) = parse_idl_for_test(idl)
             .expect("lexer errors should not be fatal");
         assert_eq!(warnings.len(), 1);
-        insta::assert_debug_snapshot!(warnings[0]);
+        insta::assert_snapshot!(render_warnings(&warnings));
     }
 
     #[test]

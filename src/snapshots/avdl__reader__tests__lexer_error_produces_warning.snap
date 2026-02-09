@@ -1,14 +1,10 @@
 ---
 source: src/reader.rs
-assertion_line: 4578
-expression: "warnings[0]"
+expression: render_warnings(&warnings)
 ---
-Warning {
-    message: "line 1:35 token recognition error at: '\u{1}'",
-    file: Some(
-        "<input>",
-    ),
-    span: Some(
-        "35..36",
-    ),
-}
+  ⚠ line 1:35 token recognition error at: ''
+   ╭─[<input>:1:36]
+ 1 │ protocol Test { record Foo { string name; } }
+   ·                                    ┬
+   ·                                    ╰── unrecognized token
+   ╰────

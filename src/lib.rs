@@ -57,4 +57,3 @@ pub(crate) mod resolve;
 
 // Re-export the small number of public API at the crate root.
 pub use compiler::{Idl, Idl2Schemata, IdlOutput, NamedSchema, SchemataOutput};
-pub use reader::Warning;

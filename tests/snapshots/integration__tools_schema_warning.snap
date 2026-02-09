@@ -1,16 +1,27 @@
 ---
 source: tests/integration.rs
-assertion_line: 1096
-expression: output.warnings
+expression: render_warnings(&output.warnings)
 ---
-[
-    Warning {
-        message: "Line 1, char 1: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
-        file: Some(
-            "avro/lang/java/tools/src/test/idl/schema.avdl",
-        ),
-        span: Some(
-            "0..807",
-        ),
-    },
-]
+  ⚠ Line 1, char 1: Ignoring out-of-place documentation comment.
+  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ╭─[avro/lang/java/tools/src/test/idl/schema.avdl:1:1]
+  1 │ ╭─▶ /**
+  2 │ │    * Licensed to the Apache Software Foundation (ASF) under one
+  3 │ │    * or more contributor license agreements.  See the NOTICE file
+  4 │ │    * distributed with this work for additional information
+  5 │ │    * regarding copyright ownership.  The ASF licenses this file
+  6 │ │    * to you under the Apache License, Version 2.0 (the
+  7 │ │    * "License"); you may not use this file except in compliance
+  8 │ │    * with the License.  You may obtain a copy of the License at
+  9 │ │    *
+ 10 │ │    *     https://www.apache.org/licenses/LICENSE-2.0
+ 11 │ │    *
+ 12 │ │    * Unless required by applicable law or agreed to in writing, software
+ 13 │ │    * distributed under the License is distributed on an "AS IS" BASIS,
+ 14 │ │    * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ 15 │ │    * See the License for the specific language governing permissions and
+ 16 │ │    * limitations under the License.
+ 17 │ ├─▶  */
+    · ╰──── out-of-place doc comment
+ 18 │     namespace org.apache.avro.test;
+    ╰────

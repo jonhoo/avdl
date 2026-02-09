@@ -1,16 +1,13 @@
 ---
 source: tests/error_reporting.rs
-assertion_line: 209
-expression: warnings
+expression: render_warnings(&warnings)
 ---
-[
-    Warning {
-        message: "Line 6, char 17: Ignoring out-of-place documentation comment.\nDid you mean to use a multiline comment ( /* ... */ ) instead?",
-        file: Some(
-            "<input>",
-        ),
-        span: Some(
-            "117..176",
-        ),
-    },
-]
+  ⚠ Line 6, char 17: Ignoring out-of-place documentation comment.
+  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
+   ╭─[<input>:6:17]
+ 5 │                 string name;
+ 6 │                 /** This doc comment is orphaned — nothing follows it. */
+   ·                 ────────────────────────────┬────────────────────────────
+   ·                                             ╰── out-of-place doc comment
+ 7 │             }
+   ╰────

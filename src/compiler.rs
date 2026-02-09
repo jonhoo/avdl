@@ -25,7 +25,7 @@ use crate::import::{ImportContext, import_protocol, import_schema};
 use crate::model::json::{build_lookup, protocol_to_json, schema_to_json};
 use crate::model::protocol::Message;
 use crate::model::schema::validate_record_field_defaults;
-use crate::reader::{DeclItem, IdlFile, ImportKind, Warning, parse_idl_named};
+use crate::reader::{DeclItem, IdlFile, ImportKind, parse_idl_named};
 use crate::resolve::SchemaRegistry;
 
 // ==============================================================================
@@ -69,15 +69,26 @@ pub struct Idl {
 ///   (string, object, or array).
 /// - **Multiple named schemas** (bare record/enum/fixed declarations) — a JSON
 ///   array of `.avsc` values.
-#[derive(Debug)]
 pub struct IdlOutput {
     /// The compiled JSON (`.avpr` object, `.avsc` value, or JSON array).
     pub json: Value,
     /// Non-fatal warnings from parsing (e.g., orphaned doc comments).
     ///
-    /// Each [`Warning`] carries source span and file name information when
-    /// available, enabling rich diagnostic rendering through miette.
-    pub warnings: Vec<Warning>,
+    /// Each warning is a [`miette::Report`] with `Severity::Warning` set.
+    /// Print with `eprintln!("{report:?}")` for rich diagnostic output
+    /// including source spans and labels.
+    pub warnings: Vec<miette::Report>,
+}
+
+/// Shows the JSON shape and warning count without dumping the full graphical
+/// rendering of every `miette::Report` (whose `Debug` impl is verbose).
+impl std::fmt::Debug for IdlOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdlOutput")
+            .field("json", &self.json)
+            .field("warnings", &format_args!("[{} warnings]", self.warnings.len()))
+            .finish()
+    }
 }
 
 impl Default for Idl {
@@ -202,15 +213,24 @@ pub struct NamedSchema {
 /// Contains all named schemas (records, enums, fixed) from the IDL source,
 /// in declaration order. Each schema is self-contained and suitable for
 /// writing to its own `.avsc` file.
-#[derive(Debug)]
 pub struct SchemataOutput {
     /// Named schemas in declaration order.
     pub schemas: Vec<NamedSchema>,
     /// Non-fatal warnings from parsing.
     ///
-    /// Each [`Warning`] carries source span and file name information when
-    /// available, enabling rich diagnostic rendering through miette.
-    pub warnings: Vec<Warning>,
+    /// Each warning is a [`miette::Report`] with `Severity::Warning` set.
+    /// Print with `eprintln!("{report:?}")` for rich diagnostic output
+    /// including source spans and labels.
+    pub warnings: Vec<miette::Report>,
+}
+
+impl std::fmt::Debug for SchemataOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SchemataOutput")
+            .field("schemas", &self.schemas)
+            .field("warnings", &format_args!("[{} warnings]", self.warnings.len()))
+            .finish()
+    }
 }
 
 /// Builder for extracting individual `.avsc` schemas from Avro IDL.
@@ -393,7 +413,7 @@ struct CompileContext {
     registry: SchemaRegistry,
     import_ctx: ImportContext,
     messages: HashMap<String, Message>,
-    warnings: Vec<Warning>,
+    warnings: Vec<miette::Report>,
 }
 
 impl CompileContext {
@@ -419,8 +439,8 @@ fn parse_and_resolve(
     input_dir: &Path,
     input_path: Option<PathBuf>,
     ctx: &mut CompileContext,
-) -> miette::Result<(IdlFile, SchemaRegistry, Vec<Warning>)> {
-    let (idl_file, decl_items, mut warnings) =
+) -> miette::Result<(IdlFile, SchemaRegistry, Vec<miette::Report>)> {
+    let (idl_file, decl_items, local_warnings) =
         parse_idl_named(source, source_name).context("parse IDL source")?;
 
     // Pre-size the registry based on the number of type declarations in this
@@ -454,6 +474,13 @@ fn parse_and_resolve(
         source_name,
     )?;
 
+    // Convert the local `Warning` values from the top-level parse into
+    // `miette::Report`s, then append any import-derived reports that
+    // `process_decl_items` accumulated in `ctx.warnings`.
+    let mut warnings: Vec<miette::Report> = local_warnings
+        .into_iter()
+        .map(miette::Report::new)
+        .collect();
     warnings.append(&mut ctx.warnings);
 
     // For protocol files, rebuild the types list from the registry (which now
@@ -485,7 +512,7 @@ fn process_decl_items(
     import_ctx: &mut ImportContext,
     current_dir: &Path,
     messages: &mut HashMap<String, Message>,
-    warnings: &mut Vec<Warning>,
+    warnings: &mut Vec<miette::Report>,
     source: &str,
     source_name: &str,
 ) -> miette::Result<()> {
@@ -552,7 +579,7 @@ fn resolve_single_import(
     import_ctx: &mut ImportContext,
     current_dir: &Path,
     messages: &mut HashMap<String, Message>,
-    warnings: &mut Vec<Warning>,
+    warnings: &mut Vec<miette::Report>,
     source: &str,
     source_name: &str,
 ) -> miette::Result<()> {
@@ -617,13 +644,14 @@ fn resolve_single_import(
                 parse_idl_named(&imported_source, &imported_name)
                     .with_context(|| format!("parse imported IDL {}", resolved_path.display()))?;
 
-            // Propagate warnings from the imported file.
+            // Propagate warnings from the imported file, wrapping each with the
+            // import filename as context so the user knows where they originated.
             let import_file_name = resolved_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(import.path.as_str());
             for w in import_warnings {
-                warnings.push(w.with_import_prefix(import_file_name));
+                warnings.push(miette::Report::new(w).wrap_err(format!("{import_file_name}")));
             }
 
             // If the imported IDL is a protocol, merge its messages.
