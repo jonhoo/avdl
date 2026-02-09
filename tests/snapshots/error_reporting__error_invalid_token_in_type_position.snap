@@ -2,12 +2,13 @@
 source: tests/error_reporting.rs
 expression: error
 ---
-  x line 1:24 extraneous input '123' expecting {DocComment, 'protocol',
-  | 'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', 'error',
-  | 'record', 'array', 'map', 'union', 'boolean', 'int', 'long', 'float',
-  | 'double', 'string', 'bytes', 'null', 'true', 'false', 'decimal', 'date',
-  | 'time_ms', 'timestamp_ms', 'local_timestamp_ms', 'uuid', 'void', 'oneway',
-  | 'throws', '}', '@', IdentifierToken}
+  x parse IDL source
+  `-> line 1:24 extraneous input '123' expecting {DocComment, 'protocol',
+      'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', 'error',
+      'record', 'array', 'map', 'union', 'boolean', 'int', 'long', 'float',
+      'double', 'string', 'bytes', 'null', 'true', 'false', 'decimal', 'date',
+      'time_ms', 'timestamp_ms', 'local_timestamp_ms', 'uuid', 'void',
+      'oneway', 'throws', '}', '@', IdentifierToken}
    ,-[<input>:1:25]
  1 | protocol P { record R { 123 x; } }
    :                         ^|^

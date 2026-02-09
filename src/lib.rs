@@ -1,8 +1,13 @@
-pub mod generated;
+pub(crate) mod generated;
 
-pub mod doc_comments;
-pub mod error;
-pub mod import;
-pub mod model;
-pub mod reader;
-pub mod resolve;
+pub(crate) mod doc_comments;
+pub(crate) mod error;
+pub(crate) mod import;
+pub(crate) mod model;
+pub(crate) mod reader;
+pub(crate) mod resolve;
+
+pub mod compiler;
+
+// Re-export the public API at the crate root for convenience.
+pub use compiler::{Idl, Idl2Schemata, IdlOutput, NamedSchema, SchemataOutput, to_json_string};

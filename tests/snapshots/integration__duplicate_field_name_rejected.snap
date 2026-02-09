@@ -3,19 +3,22 @@ source: tests/integration.rs
 expression: err
 ---
 Error {
-    msg: "parse `<input>`",
-    source: ParseDiagnostic {
-        src: NamedSource {
-            name: "<input>",
-            source: "<redacted>",
-            language: None,
-        ,
-        span: SourceSpan {
-            offset: SourceOffset(
-                121,
-            ),
-            length: 4,
+    msg: "parse IDL source",
+    source: Error {
+        msg: "parse `<input>`",
+        source: ParseDiagnostic {
+            src: NamedSource {
+                name: "<input>",
+                source: "<redacted>",
+                language: None,
+            ,
+            span: SourceSpan {
+                offset: SourceOffset(
+                    121,
+                ),
+                length: 4,
+            },
+            message: "duplicate field 'name' in record 'R'",
         },
-        message: "duplicate field 'name' in record 'R'",
     },
 }

@@ -3,19 +3,22 @@ source: tests/integration.rs
 expression: err
 ---
 Error {
-    msg: "parse `<input>`",
-    source: ParseDiagnostic {
-        src: NamedSource {
-            name: "<input>",
-            source: "<redacted>",
-            language: None,
-        ,
-        span: SourceSpan {
-            offset: SourceOffset(
-                1089,
-            ),
-            length: 1,
+    msg: "parse IDL source",
+    source: Error {
+        msg: "parse `avro/lang/java/idl/src/test/idl/AnnotationOnTypeReference.avdl`",
+        source: ParseDiagnostic {
+            src: NamedSource {
+                name: "avro/lang/java/idl/src/test/idl/AnnotationOnTypeReference.avdl",
+                source: "<redacted>",
+                language: None,
+            ,
+            span: SourceSpan {
+                offset: SourceOffset(
+                    1089,
+                ),
+                length: 1,
+            },
+            message: "Type references may not be annotated",
         },
-        message: "Type references may not be annotated",
     },
 }

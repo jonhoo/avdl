@@ -2,7 +2,8 @@
 source: tests/error_reporting.rs
 expression: error
 ---
-  x line 1:20 no viable alternative at input 'record{'
+  x parse IDL source
+  `-> line 1:20 no viable alternative at input 'record{'
    ,-[<input>:1:21]
  1 | protocol P { record { int x; } }
    :                     |

@@ -3,19 +3,22 @@ source: tests/integration.rs
 expression: err
 ---
 Error {
-    msg: "parse `<input>`",
-    source: ParseDiagnostic {
-        src: NamedSource {
-            name: "<input>",
-            source: "<redacted>",
-            language: None,
-        ,
-        span: SourceSpan {
-            offset: SourceOffset(
-                122,
-            ),
-            length: 5,
+    msg: "parse IDL source",
+    source: Error {
+        msg: "parse `<input>`",
+        source: ParseDiagnostic {
+            src: NamedSource {
+                name: "<input>",
+                source: "<redacted>",
+                language: None,
+            ,
+            span: SourceSpan {
+                offset: SourceOffset(
+                    122,
+                ),
+                length: 5,
+            },
+            message: "Unions may not immediately contain other unions (per the Avro specification, §schemas). Note: Java avro-tools incorrectly accepts this syntax, producing an empty union.",
         },
-        message: "Unions may not immediately contain other unions (per the Avro specification, §schemas). Note: Java avro-tools incorrectly accepts this syntax, producing an empty union.",
     },
 }

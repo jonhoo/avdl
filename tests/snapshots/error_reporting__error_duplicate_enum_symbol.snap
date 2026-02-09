@@ -2,7 +2,8 @@
 source: tests/error_reporting.rs
 expression: error
 ---
-  x parse `<input>`
+  x parse IDL source
+  |-> parse `<input>`
   `-> duplicate enum symbol: RED
    ,-[<input>:4:44]
  3 |         protocol P {

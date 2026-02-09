@@ -2,7 +2,8 @@
 source: tests/error_reporting.rs
 expression: error
 ---
-  x parse `<input>`
+  x parse IDL source
+  |-> parse `<input>`
   `-> @aliases must contain an array of strings
    ,-[<input>:4:13]
  3 |         protocol P {

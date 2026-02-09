@@ -297,6 +297,7 @@ pub enum DeclItem {
 ///
 /// Also returns a `Vec<Warning>` containing any out-of-place doc comment
 /// warnings detected during parsing.
+#[cfg(test)]
 pub fn parse_idl(input: &str) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
     // Normalize CRLF line endings to LF so that byte offsets in ANTLR tokens
     // (and therefore in SourceSpan error diagnostics) are consistent in tests

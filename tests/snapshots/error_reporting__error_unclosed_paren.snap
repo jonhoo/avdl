@@ -2,7 +2,8 @@
 source: tests/error_reporting.rs
 expression: error
 ---
-  x line 1:23 missing ')' at ';'
+  x parse IDL source
+  `-> line 1:23 missing ')' at ';'
    ,-[<input>:1:24]
  1 | protocol P { fixed F(16; }
    :                        |

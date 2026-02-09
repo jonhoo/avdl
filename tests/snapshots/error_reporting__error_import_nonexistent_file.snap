@@ -1,13 +1,13 @@
 ---
 source: tests/error_reporting.rs
-expression: buf
+expression: error
 ---
-  x import not found: does_not_exist.avsc (searched relative to . and 0 import
-  | dir(s))
+  x import not found: does_not_exist.avsc (searched relative to /home/jon/dev/
+  | stream/avdl/main and 0 import dir(s))
    ,-[<input>:4:13]
  3 |         protocol P {
  4 |             import schema "does_not_exist.avsc";
    :             ^^^|^^
-   :                `-- import not found: does_not_exist.avsc (searched relative to . and 0 import dir(s))
+   :                `-- import not found: does_not_exist.avsc (searched relative to /home/jon/dev/stream/avdl/main and 0 import dir(s))
  5 |             record R { string name; }
    `----

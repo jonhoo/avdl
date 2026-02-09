@@ -97,9 +97,6 @@ impl SchemaRegistry {
     /// This avoids incremental reallocation of the backing `IndexMap` as types
     /// are registered, which profiling showed accounts for ~4.2% of total time
     /// on large inputs.
-    // Not yet called from production code — will be used by the planned
-    // library API (compiler.rs). Keeping to avoid re-adding later.
-    #[allow(dead_code)]
     pub fn reserve(&mut self, additional: usize) {
         self.schemas.reserve(additional);
     }
@@ -148,13 +145,17 @@ impl SchemaRegistry {
         self.schemas.values()
     }
 
+    // -- Test-only helpers below this line --
+
     /// Check whether a name is registered.
+    #[cfg(test)]
     pub fn contains(&self, full_name: &str) -> bool {
         self.schemas.contains_key(full_name)
     }
 
     /// Return all registered schemas in registration order, consuming the
     /// registry.
+    #[cfg(test)]
     pub fn into_schemas(self) -> Vec<AvroSchema> {
         self.schemas.into_values().collect()
     }
@@ -162,6 +163,7 @@ impl SchemaRegistry {
     /// Merge schemas from another registry (used for imports).
     /// Schemas already present (by full name) are skipped, preserving the
     /// original definition.
+    #[cfg(test)]
     pub fn merge(&mut self, other: SchemaRegistry) {
         for (name, schema) in other.schemas {
             self.schemas.entry(name).or_insert(schema);

@@ -4,41 +4,35 @@
 //
 // These tests verify the *content* and *quality* of error messages produced by
 // malformed or invalid `.avdl` inputs. Each test feeds an inline `.avdl` string
-// to the parser, captures the rendered error output, and snapshots it with
+// to the builder API, captures the rendered error output, and snapshots it with
 // `insta` so that changes to error messages are reviewed explicitly.
 //
 // The helper functions render errors through `miette`'s `GraphicalReportHandler`
 // (with Unicode and color disabled for reproducible snapshots) so that we test
 // what the user actually sees, including source spans and labels.
 
-use avdl::reader::{DeclItem, Warning, parse_idl};
-use avdl::resolve::SchemaRegistry;
+use avdl::Idl;
 use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
 
 // ==============================================================================
 // Test Helpers
 // ==============================================================================
 
-/// Parse an inline `.avdl` string and return the rendered error message.
+/// Compile an inline `.avdl` string through the builder and return the rendered
+/// error message.
 ///
 /// Uses `miette`'s `GraphicalReportHandler` to render rich diagnostics (with
 /// source spans and labels) when available, falling back to plain `Display`
 /// output for errors without source location info.
 ///
-/// Returns `None` if parsing succeeds.
-fn parse_error(input: &str) -> Option<String> {
-    match parse_idl(input) {
+/// Returns `None` if compilation succeeds.
+fn compile_error(input: &str) -> Option<String> {
+    match Idl::new().convert_str(input) {
         Ok(_) => None,
         Err(e) => {
             let mut buf = String::new();
-            // Use the ASCII theme for reproducible snapshots (no Unicode box
-            // drawing, no ANSI color codes).
             let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
 
-            // Try to render as a full miette diagnostic. Only use the
-            // graphical handler when the underlying error carries source code
-            // and labels -- otherwise the graphical output adds noisy prefixes
-            // (`x`, `|`) without any meaningful source context.
             let diag: &dyn Diagnostic = e.as_ref();
             if diag.source_code().is_some() {
                 if handler.render_report(&mut buf, diag).is_ok() {
@@ -46,97 +40,55 @@ fn parse_error(input: &str) -> Option<String> {
                 }
             }
 
-            // Fall back to plain Display for errors without diagnostic info.
             Some(format!("{e}"))
         }
     }
 }
 
-/// Parse an inline `.avdl` string and return warnings from a successful parse.
+/// Compile an inline `.avdl` string and return warnings from a successful
+/// compilation.
 ///
-/// Panics if parsing fails, since warning tests require a successful parse.
-fn parse_warnings(input: &str) -> Vec<Warning> {
-    let (_idl_file, _decl_items, warnings) =
-        parse_idl(input).expect("warning test input should parse successfully");
-    warnings
-}
-
-/// Parse an inline `.avdl` string, then attempt to register all types in a
-/// `SchemaRegistry` and return the first registration error rendered through
-/// miette's `GraphicalReportHandler`.
-///
-/// This catches semantic errors like duplicate type names that are only detected
-/// during schema registration, not during parsing. When the `DeclItem` carries
-/// a source span, the error is rendered with source highlighting.
-fn registry_error(input: &str) -> Option<String> {
-    let (_idl_file, decl_items, _warnings) =
-        parse_idl(input).expect("registry error test input should parse successfully");
-
-    let mut registry = SchemaRegistry::new();
-    for item in &decl_items {
-        if let DeclItem::Type(schema, span) = item {
-            if let Err(msg) = registry.register(schema.clone()) {
-                // When a span is available, render through miette for
-                // source-highlighted output matching the parse_error helper.
-                if let Some(span) = span {
-                    let diag = avdl::error::ParseDiagnostic {
-                        src: miette::NamedSource::new("<input>", input.to_string()),
-                        span: *span,
-                        message: msg.clone(),
-                    };
-                    let handler =
-                        GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
-                    let mut buf = String::new();
-                    if handler
-                        .render_report(&mut buf, &diag as &dyn Diagnostic)
-                        .is_ok()
-                    {
-                        return Some(buf);
-                    }
-                }
-                return Some(msg);
-            }
-        }
-    }
-    None
+/// Panics if compilation fails, since warning tests require a successful parse.
+fn compile_warnings(input: &str) -> Vec<String> {
+    let output = Idl::new()
+        .convert_str(input)
+        .expect("warning test input should compile successfully");
+    output.warnings
 }
 
 // ==============================================================================
 // Syntax Errors (ANTLR Parse Failures)
 // ==============================================================================
 
-/// Missing semicolon after a field declaration. The parser should report a
-/// useful error pointing at the location where the semicolon was expected.
+/// Missing semicolon after a field declaration.
 #[test]
 fn test_error_missing_semicolon() {
     let input = "protocol P { record R { int x } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Missing closing brace for the protocol — the record is closed but the
-/// protocol body is not.
+/// Missing closing brace for the protocol.
 #[test]
 fn test_error_unclosed_brace() {
     let input = "protocol P { record R { int x; }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Malformed union with a double comma (empty type slot).
+/// Malformed union with a double comma.
 #[test]
 fn test_error_malformed_union() {
     let input = "protocol P { record R { union { int, , string } x; } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Invalid token in type position — a number literal where a type name is
-/// expected.
+/// Invalid token in type position.
 #[test]
 fn test_error_invalid_token_in_type_position() {
     let input = "protocol P { record R { 123 x; } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
@@ -144,7 +96,7 @@ fn test_error_invalid_token_in_type_position() {
 #[test]
 fn test_error_malformed_fixed_size() {
     let input = "protocol P { fixed F(not_a_number); }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
@@ -152,8 +104,7 @@ fn test_error_malformed_fixed_size() {
 // Semantic / Validation Errors
 // ==============================================================================
 
-/// Two records with the same fully-qualified name should produce a "duplicate
-/// schema name" error during registration.
+/// Two records with the same fully-qualified name should produce an error.
 #[test]
 fn test_error_duplicate_type_name() {
     let input = r#"
@@ -163,7 +114,7 @@ fn test_error_duplicate_type_name() {
             record Dup { int id; }
         }
     "#;
-    let error = registry_error(input).expect("should produce a registration error");
+    let error = compile_error(input).expect("should produce a registration error");
     insta::assert_snapshot!(error);
 }
 
@@ -179,12 +130,11 @@ fn test_error_duplicate_field_name() {
             }
         }
     "#;
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Nested unions are forbidden by the Avro specification: "Unions may not
-/// immediately contain other unions."
+/// Nested unions are forbidden by the Avro specification.
 #[test]
 fn test_error_nested_union() {
     let input = r#"
@@ -195,7 +145,7 @@ fn test_error_nested_union() {
             }
         }
     "#;
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
@@ -208,21 +158,19 @@ fn test_error_duplicate_enum_symbol() {
             enum Color { RED, GREEN, BLUE, RED }
         }
     "#;
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// A type name that collides with an Avro built-in type (e.g., `int`) should
-/// be rejected with an "Illegal name" error.
+/// A type name that collides with an Avro built-in type should be rejected.
 #[test]
 fn test_error_reserved_type_name() {
     let input = r#"record `int` { string value; }"#;
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Referencing an undefined type should produce an unresolved reference when
-/// the schema registry validates references.
+/// Referencing an undefined type should produce an error.
 #[test]
 fn test_error_undefined_type() {
     let input = r#"
@@ -233,37 +181,17 @@ fn test_error_undefined_type() {
             }
         }
     "#;
-    // This test exercises the registry's validate_references method rather than
-    // parse_idl directly, since forward references are allowed during parsing
-    // and only flagged during validation.
-    let (_idl_file, decl_items, _warnings) =
-        parse_idl(input).expect("parsing should succeed with unresolved references");
-
-    let mut registry = SchemaRegistry::new();
-    for item in &decl_items {
-        if let DeclItem::Type(schema, _) = item {
-            let _ = registry.register(schema.clone());
-        }
-    }
-
-    let unresolved = registry.validate_references();
-    assert!(
-        !unresolved.is_empty(),
-        "should have unresolved references for undefined type"
-    );
-    insta::assert_snapshot!(format!("unresolved references: {:?}", unresolved));
+    let error = compile_error(input).expect("should produce an error for undefined type");
+    insta::assert_snapshot!(error);
 }
 
 // ==============================================================================
 // Warning Tests
 // ==============================================================================
 
-/// A doc comment (`/** ... */`) before a field that already has a doc comment,
-/// or in a position where it's not attached to a declaration, should produce
-/// an out-of-place doc comment warning (not an error).
+/// A doc comment before a closing brace should produce a warning.
 #[test]
 fn test_warning_out_of_place_doc_comment() {
-    // Place a doc comment before a closing brace where no declaration follows.
     let input = r#"
         @namespace("test")
         protocol P {
@@ -273,17 +201,15 @@ fn test_warning_out_of_place_doc_comment() {
             }
         }
     "#;
-    let warnings = parse_warnings(input);
+    let warnings = compile_warnings(input);
     assert!(
         !warnings.is_empty(),
         "expected at least one warning for out-of-place doc comment"
     );
-    let warning_text: Vec<String> = warnings.iter().map(|w| format!("{w}")).collect();
-    insta::assert_snapshot!(warning_text.join("\n"));
+    insta::assert_snapshot!(warnings.join("\n"));
 }
 
-/// Multiple out-of-place doc comments in a single file should each generate a
-/// separate warning with correct line and column information.
+/// Multiple out-of-place doc comments should each generate a separate warning.
 #[test]
 fn test_warning_multiple_out_of_place_doc_comments() {
     let input = r#"
@@ -297,18 +223,15 @@ fn test_warning_multiple_out_of_place_doc_comments() {
             /** orphan 3 */
         }
     "#;
-    let warnings = parse_warnings(input);
-    let warning_text: Vec<String> = warnings.iter().map(|w| format!("{w}")).collect();
-    insta::assert_snapshot!(warning_text.join("\n---\n"));
+    let warnings = compile_warnings(input);
+    insta::assert_snapshot!(warnings.join("\n---\n"));
 }
 
 // ==============================================================================
 // Import Errors
 // ==============================================================================
 
-/// Importing a nonexistent file should produce an error during import
-/// resolution. This tests the error message from `ImportContext::resolve_import`,
-/// rendered with source highlighting pointing at the import statement.
+/// Importing a nonexistent file should produce an error.
 #[test]
 fn test_error_import_nonexistent_file() {
     let input = r#"
@@ -318,135 +241,81 @@ fn test_error_import_nonexistent_file() {
             record R { string name; }
         }
     "#;
-    let (_idl_file, decl_items, _warnings) =
-        parse_idl(input).expect("parsing the IDL text itself should succeed");
-
-    let import_ctx = avdl::import::ImportContext::new(vec![]);
-
-    for item in &decl_items {
-        if let DeclItem::Import(import) = item {
-            let result = import_ctx.resolve_import(&import.path, std::path::Path::new("."));
-            if let Err(e) = result {
-                // When a span is available, render through miette for
-                // source-highlighted output matching other error tests.
-                if let Some(span) = import.span {
-                    let diag = avdl::error::ParseDiagnostic {
-                        src: miette::NamedSource::new("<input>", input.to_string()),
-                        span,
-                        message: format!("{e}"),
-                    };
-                    let handler =
-                        GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
-                    let mut buf = String::new();
-                    if handler
-                        .render_report(&mut buf, &diag as &dyn Diagnostic)
-                        .is_ok()
-                    {
-                        insta::assert_snapshot!(buf);
-                        return;
-                    }
-                }
-
-                insta::assert_snapshot!(format!("{e}"));
-                return;
-            }
-        }
-    }
-
-    panic!("should produce an error for nonexistent import");
+    let error = compile_error(input).expect("should produce an error for nonexistent import");
+    insta::assert_snapshot!(error);
 }
 
 // ==============================================================================
 // Mutation Error Tests (Slight Variations of Valid IDL)
 // ==============================================================================
 
-/// Semicolon replaced with a comma in a field declaration. This is a common
-/// typo when switching between languages (e.g., Go struct syntax uses commas).
 #[test]
 fn test_error_semicolon_replaced_with_comma() {
     let input = "protocol P { record R { int x, } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Missing semicolon between two field declarations. The parser should detect
-/// that the second field's type name appears where a separator was expected.
 #[test]
 fn test_error_missing_field_separator() {
     let input = "protocol P { record R { int x int y; } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Extra closing brace after the protocol. The parser should report that
-/// unexpected input follows the valid protocol definition.
 #[test]
 fn test_error_extra_closing_brace() {
     let input = "protocol P { record R { int x; } } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Missing record name — the opening brace appears where a name identifier
-/// is expected.
 #[test]
 fn test_error_missing_record_name() {
     let input = "protocol P { record { int x; } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Misspelled `protocol` keyword. The parser should fail because `protocl` is
-/// not a recognized keyword or valid start of a schema/protocol declaration.
 #[test]
 fn test_error_misspelled_keyword() {
     let input = "protocl P { record R { int x; } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Missing type for a field — just a bare identifier where a type name should
-/// precede the field name.
 #[test]
 fn test_error_missing_field_type() {
     let input = "protocol P { record R { x; } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Enum symbols without commas between them. Avro IDL enums require commas
-/// separating symbols.
 #[test]
 fn test_error_missing_enum_commas() {
     let input = "protocol P { enum E { A B C } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Semicolons used instead of commas in enum body — a common mistake when
-/// confusing record field syntax with enum symbol syntax.
 #[test]
 fn test_error_semicolons_in_enum() {
     let input = "protocol P { enum E { A; B; C } }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Fixed declaration missing the size argument in parentheses. The parser
-/// should report that a `(` or size is expected after the fixed name.
 #[test]
 fn test_error_missing_fixed_size() {
     let input = "protocol P { fixed F; }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Unclosed parenthesis in a fixed declaration — `(` is opened but `)` is
-/// missing before the semicolon.
 #[test]
 fn test_error_unclosed_paren() {
     let input = "protocol P { fixed F(16; }";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
@@ -454,7 +323,6 @@ fn test_error_unclosed_paren() {
 // Additional Semantic Error Tests
 // ==============================================================================
 
-/// Duplicate parameter names in a message declaration should be rejected.
 #[test]
 fn test_error_duplicate_message_param() {
     let input = r#"
@@ -464,21 +332,17 @@ fn test_error_duplicate_message_param() {
             void test(Msg x, Msg x);
         }
     "#;
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// An IDL file with no protocol or schema declaration should be rejected.
 #[test]
 fn test_error_empty_idl_file() {
     let input = "/* nothing */";
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// An invalid `@order` annotation value (not ASCENDING, DESCENDING, or IGNORE)
-/// should be rejected. The `@order` annotation is a field-variable property,
-/// placed between the type and the field name.
 #[test]
 fn test_error_invalid_order_value() {
     let input = r#"
@@ -489,11 +353,10 @@ fn test_error_invalid_order_value() {
             }
         }
     "#;
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// An `@aliases` annotation with a non-array value should be rejected.
 #[test]
 fn test_error_invalid_aliases_type() {
     let input = r#"
@@ -502,11 +365,10 @@ fn test_error_invalid_aliases_type() {
             @aliases(123) record R { string name; }
         }
     "#;
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// A one-way message with a non-void return type should be rejected.
 #[test]
 fn test_error_oneway_nonvoid() {
     let input = r#"
@@ -516,12 +378,10 @@ fn test_error_oneway_nonvoid() {
             Msg send(Msg m) oneway;
         }
     "#;
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }
 
-/// Annotations on type references (bare names of previously-defined types)
-/// should be rejected.
 #[test]
 fn test_error_annotated_type_reference() {
     let input = r#"
@@ -533,6 +393,6 @@ fn test_error_annotated_type_reference() {
             }
         }
     "#;
-    let error = parse_error(input).expect("should produce an error");
+    let error = compile_error(input).expect("should produce an error");
     insta::assert_snapshot!(error);
 }

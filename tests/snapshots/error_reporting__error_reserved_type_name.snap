@@ -2,7 +2,8 @@
 source: tests/error_reporting.rs
 expression: error
 ---
-  x parse `<input>`
+  x parse IDL source
+  |-> parse `<input>`
   `-> Illegal name: int
    ,-[<input>:1:8]
  1 | record `int` { string value; }

@@ -2,7 +2,8 @@
 source: tests/error_reporting.rs
 expression: error
 ---
-  x parse `<input>`
+  x parse IDL source
+  |-> parse `<input>`
   `-> duplicate field 'name' in record 'R'
    ,-[<input>:6:21]
  5 |                 string name;

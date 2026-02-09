@@ -2,7 +2,8 @@
 source: tests/error_reporting.rs
 expression: error
 ---
-  x line 1:23 mismatched input ';' expecting {'}', ','}
+  x parse IDL source
+  `-> line 1:23 mismatched input ';' expecting {'}', ','}
    ,-[<input>:1:24]
  1 | protocol P { enum E { A; B; C } }
    :                        |
