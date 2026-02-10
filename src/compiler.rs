@@ -161,6 +161,19 @@ impl Idl {
         let (idl_file, registry, warnings) =
             parse_and_resolve(source, source_name, input_dir, input_path, &mut ctx)?;
 
+        // The `idl` subcommand requires either a protocol or at least one local
+        // schema declaration. Import-only schema-mode files (with only namespace
+        // and import statements) are not valid input for `idl` — matching Java's
+        // `IdlTool.run()` behavior. (The `idl2schemata` path intentionally omits
+        // this check so it can extract schemas that come purely from imports.)
+        if let IdlFile::NamedSchemas(schemas) = &idl_file {
+            if schemas.is_empty() {
+                miette::bail!(
+                    "IDL file contains neither a protocol nor a schema declaration"
+                );
+            }
+        }
+
         // Serialize the parsed IDL to JSON. Protocols become .avpr, standalone
         // schemas become .avsc.
         let json = match &idl_file {
@@ -891,5 +904,96 @@ mod tests {
         // Verify Default is implemented.
         let _idl = Idl::default();
         let _schemata = Idl2Schemata::default();
+    }
+
+    // =========================================================================
+    // Import-only schema-mode files
+    // =========================================================================
+    //
+    // Schema-mode files with only `namespace` and `import` statements (no local
+    // type declarations, no `schema` keyword, no protocol) should be accepted
+    // by `idl2schemata` (which extracts imported named schemas) but rejected by
+    // `idl` (which requires a protocol or schema declaration to produce output).
+    // This matches Java's behavior: `IdlToSchemataTool` accepts such files,
+    // while `IdlTool` rejects them.
+
+    #[test]
+    fn idl_rejects_import_only_schema_mode() {
+        let result = Idl::new().convert_str("namespace org.example;");
+        let err = result.expect_err("idl should reject import-only schema-mode file");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("neither a protocol nor a schema declaration"),
+            "expected 'neither a protocol nor a schema declaration', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn idl2schemata_accepts_import_only_schema_mode() {
+        // A schema-mode file with only a namespace and no declarations should
+        // succeed (producing zero schemas) rather than erroring.
+        let output = Idl2Schemata::new()
+            .extract_str("namespace org.example;")
+            .expect("idl2schemata should accept import-only schema-mode file");
+        assert!(
+            output.schemas.is_empty(),
+            "expected no schemas from namespace-only file"
+        );
+    }
+
+    #[test]
+    fn idl2schemata_extracts_schemas_from_import_only_file() {
+        // Create a temporary directory with an .avsc file and an .avdl that
+        // imports it. The .avdl has no local type declarations.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let avsc_path = dir.path().join("Foo.avsc");
+        std::fs::write(
+            &avsc_path,
+            r#"{"type":"record","name":"Foo","namespace":"org.example","fields":[{"name":"x","type":"string"}]}"#,
+        )
+        .expect("write .avsc");
+
+        let avdl_path = dir.path().join("import-only.avdl");
+        std::fs::write(
+            &avdl_path,
+            "namespace org.example;\nimport schema \"Foo.avsc\";\n",
+        )
+        .expect("write .avdl");
+
+        let output = Idl2Schemata::new()
+            .extract(&avdl_path)
+            .expect("idl2schemata should extract imported schemas");
+        assert_eq!(output.schemas.len(), 1, "should extract one schema");
+        assert_eq!(output.schemas[0].name, "Foo");
+        assert_eq!(output.schemas[0].schema["type"], "record");
+    }
+
+    #[test]
+    fn idl_rejects_import_only_file_even_with_imports() {
+        // Even when there are import statements, `idl` should reject a
+        // schema-mode file that has no local schema declarations, matching
+        // Java's `IdlTool` behavior.
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let avsc_path = dir.path().join("Bar.avsc");
+        std::fs::write(
+            &avsc_path,
+            r#"{"type":"record","name":"Bar","namespace":"org.example","fields":[{"name":"y","type":"int"}]}"#,
+        )
+        .expect("write .avsc");
+
+        let avdl_path = dir.path().join("import-only.avdl");
+        std::fs::write(
+            &avdl_path,
+            "namespace org.example;\nimport schema \"Bar.avsc\";\n",
+        )
+        .expect("write .avdl");
+
+        let result = Idl::new().convert(&avdl_path);
+        let err = result.expect_err("idl should reject import-only file");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("neither a protocol nor a schema declaration"),
+            "expected 'neither a protocol nor a schema declaration', got: {msg}"
+        );
     }
 }

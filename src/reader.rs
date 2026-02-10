@@ -1097,20 +1097,13 @@ fn walk_idl_file<'input>(
         return Ok(IdlFile::Schema(schema));
     }
 
-    // If there are named schemas but no explicit `schema <type>;` declaration,
-    // return all registered schemas. This handles IDL files like
-    // `status_schema.avdl` that define named types without an explicit schema
-    // declaration. The Java `IdlFile.outputString()` serializes these as a JSON
-    // array of all named schemas.
-    if !local_schemas.is_empty() {
-        return Ok(IdlFile::NamedSchemas(local_schemas));
-    }
-
-    Err(make_diagnostic(
-        src,
-        ctx,
-        "IDL file contains neither a protocol nor a schema declaration",
-    ))
+    // Return all locally-declared named schemas (possibly empty). Files with
+    // only `namespace` and `import` statements yield an empty vec here; their
+    // imported types are resolved later by `parse_and_resolve`. We intentionally
+    // do NOT reject the empty case at parse time — that policy belongs to the
+    // CLI layer (`Idl::convert_impl` rejects it for the `idl` subcommand, while
+    // `Idl2Schemata::extract_impl` allows it, matching Java's behavior).
+    Ok(IdlFile::NamedSchemas(local_schemas))
 }
 
 /// Walk a protocol declaration and return a complete `Protocol`.
