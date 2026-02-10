@@ -675,12 +675,16 @@ pub fn parse_idl_named(
     input: &str,
     source_name: &str,
 ) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
-    // TODO: The ANTLR grammar's `idlFile` rule includes `('\u001a' .*?)? EOF`
+    // The ANTLR grammar's `idlFile` rule includes `('\u001a' .*?)? EOF`
     // to treat the ASCII SUB character (U+001A) as an end-of-file marker,
-    // ignoring any trailing content. Java handles this correctly, but the
-    // antlr4rust runtime may not match the `\u001a` literal. If this becomes
-    // a problem, strip `\u001a` and everything after it from `input` here
-    // before passing it to the lexer.
+    // ignoring any trailing content. The antlr4rust runtime does not handle
+    // this correctly, so we strip the SUB character and everything after it
+    // before passing the input to the lexer.
+    let input = if let Some(pos) = input.find('\u{001a}') {
+        &input[..pos]
+    } else {
+        input
+    };
     let input_stream = InputStream::new(input);
     let mut lexer = IdlLexer::new(input_stream);
 
@@ -3461,6 +3465,42 @@ mod tests {
         assert!(
             result.is_ok(),
             "valid protocol should be accepted, got: {:?}",
+            result.err()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // SUB character (U+001A) as EOF marker (issue #c44fd7cc)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn sub_character_treated_as_eof() {
+        // The ANTLR grammar treats \u001a (ASCII SUB) as an EOF marker.
+        // Content after SUB should be ignored, and the parse should succeed.
+        let idl = "protocol P { record R { int x; } }\u{001a}trailing garbage";
+        let result = parse_idl_for_test(idl);
+        assert!(
+            result.is_ok(),
+            "SUB character should act as EOF marker, got: {:?}",
+            result.err()
+        );
+        let (idl_file, _, _) = result.unwrap();
+        assert!(
+            matches!(idl_file, IdlFile::Protocol(ref p) if p.name == "P"),
+            "expected Protocol named 'P', got: {:?}",
+            idl_file
+        );
+    }
+
+    #[test]
+    fn sub_character_at_end_without_trailing_content() {
+        // A SUB character at the very end (no trailing content) should also
+        // parse successfully.
+        let idl = "protocol P { record R { int x; } }\u{001a}";
+        let result = parse_idl_for_test(idl);
+        assert!(
+            result.is_ok(),
+            "SUB at end of input should be accepted, got: {:?}",
             result.err()
         );
     }
