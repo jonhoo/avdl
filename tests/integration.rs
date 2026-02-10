@@ -247,11 +247,20 @@ fn test_schema_syntax() {
     assert_eq!(actual, expected);
 }
 
+/// `status_schema.avdl` contains only bare named types (no `schema` keyword,
+/// no `protocol`), so the `idl` subcommand should reject it — matching Java's
+/// `IdlTool.run()` behavior. The `idl2schemata` path still accepts it (tested
+/// in `test_idl2schemata_golden_comparison`).
 #[test]
-fn test_status_schema() {
-    let actual = parse_and_serialize(&input_path("status_schema.avdl"), &[]);
-    let expected = load_expected(&output_path("status.avsc"));
-    assert_eq!(actual, expected);
+fn test_status_schema_rejected_by_idl() {
+    let avdl_path = input_path("status_schema.avdl");
+    let result = Idl::new().convert(&avdl_path);
+    let err = result.expect_err("idl should reject bare named types file");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("neither a protocol nor a schema declaration"),
+        "expected 'neither a protocol nor a schema declaration', got: {msg}"
+    );
 }
 
 // ==============================================================================

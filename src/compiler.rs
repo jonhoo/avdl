@@ -71,10 +71,12 @@ pub struct Idl {
 ///   format, with `"protocol"`, `"types"`, and `"messages"` keys.
 /// - **Standalone schema** (`schema int;`) — a single `.avsc` JSON value
 ///   (string, object, or array).
-/// - **Multiple named schemas** (bare record/enum/fixed declarations) — a JSON
-///   array of `.avsc` values.
+///
+/// Files with only bare named type declarations (no `schema` keyword, no
+/// `protocol`) are rejected, matching Java's `IdlTool` behavior. Use
+/// [`Idl2Schemata`] to extract schemas from such files.
 pub struct IdlOutput {
-    /// The compiled JSON (`.avpr` object, `.avsc` value, or JSON array).
+    /// The compiled JSON (`.avpr` object or `.avsc` value).
     pub json: Value,
     /// Non-fatal warnings from parsing (e.g., orphaned doc comments).
     ///
@@ -197,18 +199,17 @@ impl Idl {
             }
         };
 
-        // The `idl` subcommand requires either a protocol or at least one local
-        // schema declaration. Import-only schema-mode files (with only namespace
-        // and import statements) are not valid input for `idl` — matching Java's
-        // `IdlTool.run()` behavior. (The `idl2schemata` path intentionally omits
-        // this check so it can extract schemas that come purely from imports.)
-        if let IdlFile::NamedSchemas(schemas) = &idl_file {
-            if schemas.is_empty() {
-                self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
-                miette::bail!(
-                    "IDL file contains neither a protocol nor a schema declaration"
-                );
-            }
+        // The `idl` subcommand requires either a protocol or a `schema` keyword.
+        // Schema-mode files with only bare named type declarations (records, enums,
+        // fixed) but no `schema` keyword are rejected — Java's `IdlTool.run()`
+        // checks `if (m == null && p == null)` and errors with "the IDL file does
+        // not contain a schema nor a protocol." The `idl2schemata` path
+        // intentionally omits this check so it can extract named schemas.
+        if let IdlFile::NamedSchemas(_) = &idl_file {
+            self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+            miette::bail!(
+                "IDL file contains neither a protocol nor a schema declaration"
+            );
         }
 
         // Serialize the parsed IDL to JSON. Protocols become .avpr, standalone
@@ -220,15 +221,8 @@ impl Idl {
                 let lookup = build_lookup(&registry_schemas, None);
                 schema_to_json(schema, &mut HashSet::new(), None, &lookup)
             }
-            IdlFile::NamedSchemas(schemas) => {
-                let registry_schemas: Vec<_> = registry.schemas().cloned().collect();
-                let lookup = build_lookup(&registry_schemas, None);
-                let json_schemas: Vec<Value> = schemas
-                    .iter()
-                    .map(|s| schema_to_json(s, &mut HashSet::new(), None, &lookup))
-                    .collect();
-                Value::Array(json_schemas)
-            }
+            // `NamedSchemas` is rejected above — this arm is unreachable.
+            IdlFile::NamedSchemas(_) => unreachable!("NamedSchemas rejected earlier"),
         };
 
         // Validate that all type references resolved. Unresolved references
@@ -1215,5 +1209,47 @@ mod tests {
             msg.contains("neither a protocol nor a schema declaration"),
             "expected 'neither a protocol nor a schema declaration', got: {msg}"
         );
+    }
+
+    // =========================================================================
+    // Bare named type declarations (no `schema` keyword, no `protocol`)
+    // =========================================================================
+    //
+    // Java's `IdlTool.run()` rejects files with only named type declarations
+    // (records, enums, fixed) but no `schema` keyword or `protocol` — both
+    // `m` (main schema) and `p` (protocol) are null. The `idl` subcommand
+    // should match this behavior, while `idl2schemata` should accept them.
+
+    #[test]
+    fn idl_rejects_bare_named_types() {
+        let result = Idl::new().convert_str(
+            r#"
+            namespace org.test;
+            record Foo { string name; }
+            enum Color { RED, GREEN, BLUE }
+            "#,
+        );
+        let err = result.expect_err("idl should reject bare named types without schema keyword");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("neither a protocol nor a schema declaration"),
+            "expected 'neither a protocol nor a schema declaration', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn idl2schemata_accepts_bare_named_types() {
+        let output = Idl2Schemata::new()
+            .extract_str(
+                r#"
+                namespace org.test;
+                record Foo { string name; }
+                enum Color { RED, GREEN, BLUE }
+                "#,
+            )
+            .expect("idl2schemata should accept bare named types");
+        assert_eq!(output.schemas.len(), 2, "should extract two schemas");
+        assert_eq!(output.schemas[0].name, "Foo");
+        assert_eq!(output.schemas[1].name, "Color");
     }
 }
