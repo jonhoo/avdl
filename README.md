@@ -117,6 +117,11 @@ output, but deliberately differs in a few ways:
   here, the nested union is a spec violation that Java should have
   caught.
 
+- **Float formatting uses serde_json defaults.** Java renders large
+  or small float/double values in scientific notation (e.g.,
+  `-1.0E12`); this tool uses `serde_json`'s decimal representation
+  (e.g., `-1000000000000.0`). Both parse to the same numeric value.
+
 - **Namespace validation covers all segments.** Rust validates every
   dot-separated segment of namespace names. Java's
   `IdlReader.namespace()` loop skips the last segment, so a namespace

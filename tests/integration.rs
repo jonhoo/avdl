@@ -24,11 +24,28 @@ use serde_json::Value;
 const INPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/input";
 const OUTPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/output";
 
+/// Recursively replace `\r\n` with `\n` in all JSON string values. This is a
+/// no-op on Linux/macOS; on Windows, Git checks out `.avdl` files with `\r\n`
+/// line endings, which causes doc-comment strings to differ from the golden
+/// `.avpr` files that use `\n`.
+fn normalize_crlf(value: Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(s.replace("\r\n", "\n")),
+        Value::Array(arr) => Value::Array(arr.into_iter().map(normalize_crlf).collect()),
+        Value::Object(obj) => {
+            Value::Object(obj.into_iter().map(|(k, v)| (k, normalize_crlf(v))).collect())
+        }
+        other => other,
+    }
+}
+
 // ==============================================================================
 // Test Infrastructure
 // ==============================================================================
 
 /// Parse an `.avdl` file through the `Idl` builder and return the JSON output.
+/// Applies CRLF normalization so tests pass on Windows where Git checks out
+/// files with `\r\n` line endings.
 fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
     let mut builder = Idl::new();
     for dir in import_dirs {
@@ -37,7 +54,7 @@ fn parse_and_serialize(avdl_path: &Path, import_dirs: &[&Path]) -> Value {
     let output = builder
         .convert(avdl_path)
         .unwrap_or_else(|e| panic!("failed to compile {}: {e}", avdl_path.display()));
-    output.json
+    normalize_crlf(output.json)
 }
 
 /// Parse an `.avdl` file through the `Idl2Schemata` builder and return a map
@@ -56,7 +73,7 @@ fn parse_idl2schemata(avdl_path: &Path, import_dirs: &[&Path]) -> HashMap<String
     output
         .schemas
         .into_iter()
-        .map(|s| (s.name, s.schema))
+        .map(|s| (s.name, normalize_crlf(s.schema)))
         .collect()
 }
 
@@ -79,11 +96,14 @@ fn render_warnings(warnings: &[miette::Report]) -> String {
 }
 
 /// Load an expected output file (`.avpr` or `.avsc`) as a `serde_json::Value`.
+/// Applies CRLF normalization so tests pass on Windows where Git checks out
+/// files with `\r\n` line endings.
 fn load_expected(path: &Path) -> Value {
     let content = fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("failed to read expected output {}: {e}", path.display()));
-    serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("failed to parse expected JSON {}: {e}", path.display()))
+    let value: Value = serde_json::from_str(&content)
+        .unwrap_or_else(|e| panic!("failed to parse expected JSON {}: {e}", path.display()));
+    normalize_crlf(value)
 }
 
 /// Helper to construct the input path for a test case.
@@ -891,7 +911,7 @@ fn load_golden_schemata(test_name: &str) -> HashMap<String, Value> {
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
             let value: Value = serde_json::from_str(&content)
                 .unwrap_or_else(|e| panic!("failed to parse JSON {}: {e}", path.display()));
-            result.insert(name, value);
+            result.insert(name, normalize_crlf(value));
         }
     }
     result

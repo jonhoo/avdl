@@ -18,6 +18,21 @@ const INPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/input";
 const OUTPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/output";
 const CLASSPATH_DIR: &str = "avro/lang/java/idl/src/test/idl/putOnClassPath";
 
+/// Recursively replace `\r\n` with `\n` in all JSON string values. This is a
+/// no-op on Linux/macOS; on Windows, Git checks out `.avdl` files with `\r\n`
+/// line endings, which causes doc-comment strings to differ from the golden
+/// `.avpr` files that use `\n`.
+fn normalize_crlf(value: Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(s.replace("\r\n", "\n")),
+        Value::Array(arr) => Value::Array(arr.into_iter().map(normalize_crlf).collect()),
+        Value::Object(obj) => {
+            Value::Object(obj.into_iter().map(|(k, v)| (k, normalize_crlf(v))).collect())
+        }
+        other => other,
+    }
+}
+
 /// Helper to construct a `Command` for the `avdl` binary built by this crate.
 #[allow(deprecated)] // cargo_bin() warns about custom build-dir; acceptable here
 fn avdl_cmd() -> Command {
@@ -52,7 +67,8 @@ fn test_cli_idl_file_to_stdout() {
         serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
     let expected = load_golden("simple.avpr");
     assert_eq!(
-        actual, expected,
+        normalize_crlf(actual),
+        normalize_crlf(expected),
         "CLI stdout should match golden simple.avpr"
     );
 }
@@ -78,7 +94,8 @@ fn test_cli_idl_file_to_file() {
     let actual: Value = serde_json::from_str(&content).expect("output file should be valid JSON");
     let expected = load_golden("simple.avpr");
     assert_eq!(
-        actual, expected,
+        normalize_crlf(actual),
+        normalize_crlf(expected),
         "output file should match golden simple.avpr"
     );
 }
@@ -109,7 +126,8 @@ fn test_cli_idl_import_dir() {
         serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
     let expected = load_golden("import.avpr");
     assert_eq!(
-        actual, expected,
+        normalize_crlf(actual),
+        normalize_crlf(expected),
         "CLI stdout should match golden import.avpr"
     );
 }

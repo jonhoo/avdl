@@ -8,7 +8,22 @@ homepage = "https://github.com/jonhoo/avdl"
 repository = "https://github.com/jonhoo/avdl"
 keywords = ["avro", "idl", "schema", "compiler"]
 categories = ["command-line-utilities", "compilers", "parser-implementations"]
-include = ["/src/**/*.rs", "/LICENSE", "/README.md"]
+include = [
+    "/src/**",
+    "/tests/**",
+    "/LICENSE",
+    "/README.md",
+    # Avro submodule test fixtures
+    "/avro/lang/java/idl/src/test/idl/input/**",
+    "/avro/lang/java/idl/src/test/idl/output/**",
+    "/avro/lang/java/idl/src/test/idl/putOnClassPath/**",
+    "/avro/lang/java/idl/src/test/idl/extra/**",
+    "/avro/lang/java/idl/src/test/idl/cycle.avdl",
+    "/avro/lang/java/idl/src/test/idl/logicalTypes.avdl",
+    "/avro/lang/java/idl/src/test/idl/AnnotationOnTypeReference.avdl",
+    "/avro/lang/java/tools/src/test/idl/**",
+    "/avro/lang/java/compiler/src/test/idl/**",
+]
 
 [dependencies]
 antlr4rust = "0.5.2"
