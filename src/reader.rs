@@ -3199,10 +3199,31 @@ fn try_promote_logical_type(schema: AvroSchema) -> AvroSchema {
                 properties,
             }
         }
+        ("time-micros", PrimitiveType::Long) => {
+            properties.remove("logicalType");
+            AvroSchema::Logical {
+                logical_type: LogicalType::TimeMicros,
+                properties,
+            }
+        }
         ("local-timestamp-millis", PrimitiveType::Long) => {
             properties.remove("logicalType");
             AvroSchema::Logical {
                 logical_type: LogicalType::LocalTimestampMillis,
+                properties,
+            }
+        }
+        ("timestamp-micros", PrimitiveType::Long) => {
+            properties.remove("logicalType");
+            AvroSchema::Logical {
+                logical_type: LogicalType::TimestampMicros,
+                properties,
+            }
+        }
+        ("local-timestamp-micros", PrimitiveType::Long) => {
+            properties.remove("logicalType");
+            AvroSchema::Logical {
+                logical_type: LogicalType::LocalTimestampMicros,
                 properties,
             }
         }

@@ -109,10 +109,16 @@ pub enum LogicalType {
     Date,
     /// `time-millis` -> int
     TimeMillis,
+    /// `time-micros` -> long
+    TimeMicros,
     /// `timestamp-millis` -> long
     TimestampMillis,
+    /// `timestamp-micros` -> long
+    TimestampMicros,
     /// `local-timestamp-millis` -> long
     LocalTimestampMillis,
+    /// `local-timestamp-micros` -> long
+    LocalTimestampMicros,
     /// `uuid` -> string
     Uuid,
     /// `decimal` -> bytes, with precision and scale
@@ -319,10 +325,12 @@ impl AvroSchema {
             // Java treats logical types as their underlying type for union
             // duplicate checking (e.g., `date` is `int`, `uuid` is `string`).
             AvroSchema::Logical { logical_type, .. } => match logical_type {
-                LogicalType::Date => "int".to_string(),
-                LogicalType::TimeMillis => "int".to_string(),
-                LogicalType::TimestampMillis => "long".to_string(),
-                LogicalType::LocalTimestampMillis => "long".to_string(),
+                LogicalType::Date | LogicalType::TimeMillis => "int".to_string(),
+                LogicalType::TimeMicros
+                | LogicalType::TimestampMillis
+                | LogicalType::TimestampMicros
+                | LogicalType::LocalTimestampMillis
+                | LogicalType::LocalTimestampMicros => "long".to_string(),
                 LogicalType::Uuid => "string".to_string(),
                 LogicalType::Decimal { .. } => "bytes".to_string(),
             },
@@ -350,8 +358,11 @@ impl AvroSchema {
             AvroSchema::Logical { logical_type, .. } => match logical_type {
                 LogicalType::Date => "date".to_string(),
                 LogicalType::TimeMillis => "time_ms".to_string(),
+                LogicalType::TimeMicros => "time_us".to_string(),
                 LogicalType::TimestampMillis => "timestamp_ms".to_string(),
+                LogicalType::TimestampMicros => "timestamp_us".to_string(),
                 LogicalType::LocalTimestampMillis => "local_timestamp_ms".to_string(),
+                LogicalType::LocalTimestampMicros => "local_timestamp_us".to_string(),
                 LogicalType::Uuid => "uuid".to_string(),
                 LogicalType::Decimal { .. } => "decimal".to_string(),
             },
@@ -461,9 +472,11 @@ pub fn is_valid_default(value: &Value, schema: &AvroSchema) -> bool {
         AvroSchema::Logical { logical_type, .. } => {
             let underlying = match logical_type {
                 LogicalType::Date | LogicalType::TimeMillis => AvroSchema::Int,
-                LogicalType::TimestampMillis | LogicalType::LocalTimestampMillis => {
-                    AvroSchema::Long
-                }
+                LogicalType::TimeMicros
+                | LogicalType::TimestampMillis
+                | LogicalType::TimestampMicros
+                | LogicalType::LocalTimestampMillis
+                | LogicalType::LocalTimestampMicros => AvroSchema::Long,
                 LogicalType::Uuid => AvroSchema::String,
                 LogicalType::Decimal { .. } => AvroSchema::Bytes,
             };

@@ -436,6 +436,13 @@ pub fn schema_to_json(
                         Value::String("time-millis".to_string()),
                     );
                 }
+                LogicalType::TimeMicros => {
+                    obj.insert("type".to_string(), Value::String("long".to_string()));
+                    obj.insert(
+                        "logicalType".to_string(),
+                        Value::String("time-micros".to_string()),
+                    );
+                }
                 LogicalType::TimestampMillis => {
                     obj.insert("type".to_string(), Value::String("long".to_string()));
                     obj.insert(
@@ -443,11 +450,25 @@ pub fn schema_to_json(
                         Value::String("timestamp-millis".to_string()),
                     );
                 }
+                LogicalType::TimestampMicros => {
+                    obj.insert("type".to_string(), Value::String("long".to_string()));
+                    obj.insert(
+                        "logicalType".to_string(),
+                        Value::String("timestamp-micros".to_string()),
+                    );
+                }
                 LogicalType::LocalTimestampMillis => {
                     obj.insert("type".to_string(), Value::String("long".to_string()));
                     obj.insert(
                         "logicalType".to_string(),
                         Value::String("local-timestamp-millis".to_string()),
+                    );
+                }
+                LogicalType::LocalTimestampMicros => {
+                    obj.insert("type".to_string(), Value::String("long".to_string()));
+                    obj.insert(
+                        "logicalType".to_string(),
+                        Value::String("local-timestamp-micros".to_string()),
                     );
                 }
                 LogicalType::Uuid => {
