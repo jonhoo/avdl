@@ -1,0 +1,4 @@
+protocol Test {
+    import protocol "bad_json.avpr";
+    record Foo { string name; }
+}

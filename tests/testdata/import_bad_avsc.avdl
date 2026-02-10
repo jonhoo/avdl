@@ -1,0 +1,4 @@
+protocol Test {
+    import schema "bad_json.avsc";
+    record Foo { string name; }
+}

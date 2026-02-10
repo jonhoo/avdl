@@ -682,9 +682,11 @@ fn resolve_single_import(
 /// Wrap an import error with the IDL source span of the import statement.
 ///
 /// When the import statement's byte range (`span`) is available, the returned
-/// error includes a `ParseDiagnostic` pointing at the import line in the IDL
-/// source. This gives the user a direct pointer to which import triggered the
-/// failure, even when the root cause is inside the imported JSON file.
+/// error places the `ParseDiagnostic` (which carries `source_code()` and
+/// `labels()`) as the **root** diagnostic, and attaches the downstream error
+/// as context. This ordering is important because miette's
+/// `GraphicalReportHandler` only renders source spans from the root
+/// diagnostic -- context layers are shown as plain text.
 fn wrap_import_error(
     error: miette::Report,
     span: Option<miette::SourceSpan>,
@@ -699,7 +701,10 @@ fn wrap_import_error(
             span,
             message: format!("import {} {}", kind, resolved_path.display()),
         };
-        error.context(diag)
+        // Place ParseDiagnostic as root so its source span is rendered,
+        // and attach the downstream error (e.g., JSON parse failure) as
+        // context text above.
+        miette::Report::new(diag).wrap_err(format!("{error}"))
     } else {
         error.context(format!("import {} {}", kind, resolved_path.display()))
     }

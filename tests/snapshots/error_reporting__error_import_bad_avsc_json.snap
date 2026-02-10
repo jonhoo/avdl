@@ -1,0 +1,14 @@
+---
+source: tests/error_reporting.rs
+assertion_line: 322
+expression: error
+---
+  x invalid JSON in [ROOT]/tests/testdata/bad_json.avsc: key must be a string at line 1 column 3
+  `-> import schema [ROOT]/tests/testdata/bad_json.avsc
+   ,-[[ROOT]/tests/testdata/import_bad_avsc.avdl:2:5]
+ 1 | protocol Test {
+ 2 |     import schema "bad_json.avsc";
+   :     ^^^|^^
+   :        `-- import schema [ROOT]/tests/testdata/bad_json.avsc
+ 3 |     record Foo { string name; }
+   `----
