@@ -251,27 +251,10 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   As the codebase matures, prefer fewer (but still >3), more specialized
   agents. But consider the exploration-exploitation trade-off: you
   should still run _some_ broad agents _some_ of the time.
-- **TODO-driven discovery works well for directed investigation**:
-  In iteration 11, spawning one agent per `TODOs.md` item produced
-  focused, non-overlapping results. Two items were correctly triaged
-  as non-issues (with documented rationale), and two yielded small
-  actionable fixes. This approach avoids the deduplication overhead
-  of broad exploratory agents.
 - **Non-issue investigations still have value**: Even when a TODO is
   determined to be a non-issue, documenting the analysis in
   SESSION.md prevents the question from being re-asked. Consider
   briefly adding a code comment explaining the design decision.
-- **Worktree snapshot tests break on paths**: The `insta` snapshot
-  test `test_error_import_nonexistent_file` contains an absolute path
-  from `main/`. When run from a worktree, the path differs and the
-  snapshot fails. Sub-agents should skip this test with
-  `-- --skip test_error_import_nonexistent_file`. The test passes
-  correctly from `main/`.
-- **User-seeded issues accelerate the loop**: When the user seeds
-  issues directly (as in iteration 15), discovery still adds value
-  for finding related issues in the same area. The error UX discovery
-  agent found 4 additional issues while the user seeded 4 — almost
-  doubling the iteration's output.
 - **Error UX audits are productive even for mature codebases**: In
   iteration 15, an error-focused discovery agent found 4 genuine
   diagnostic quality issues (duplicate error text, lost source spans,
@@ -279,9 +262,3 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   a rich source of improvements because they interact with many
   subsystems (ANTLR, miette, import resolution) that evolve
   independently.
-- **Wave 3 parent-applied batch is efficient for small fixes**: In
-  iteration 15, three small non-functional fixes (README docs,
-  Cargo.toml include, CRLF test normalization) were applied directly
-  by the parent agent in a single worktree commit, avoiding the
-  overhead of three sub-agents for what amounted to ~60 lines of
-  changes across distinct files.
