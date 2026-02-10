@@ -306,39 +306,62 @@ fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
     }
 
     let help = format_expected_help(tokens);
+    let expects_string = expecting_set_includes_string_literal(tokens);
 
     // Determine the offending token and error shape.
     if let Some(offending) = extract_quoted_token(msg, "extraneous input ") {
-        if offending == "<EOF>" {
-            return Some(EnrichedError {
-                message: "unexpected end of file".to_string(),
-                label: Some("unexpected end of file".to_string()),
-                help,
-            });
-        }
-        return Some(EnrichedError {
-            message: format!("unexpected token `{offending}`"),
-            label: Some(format!("unexpected `{offending}`")),
-            help,
-        });
+        return Some(build_unexpected_token_error(offending, help, expects_string));
     }
 
     if let Some(offending) = extract_quoted_token(msg, "mismatched input ") {
-        if offending == "<EOF>" {
-            return Some(EnrichedError {
-                message: "unexpected end of file".to_string(),
-                label: Some("unexpected end of file".to_string()),
-                help,
-            });
-        }
-        return Some(EnrichedError {
-            message: format!("unexpected token `{offending}`"),
-            label: Some(format!("unexpected `{offending}`")),
-            help,
-        });
+        return Some(build_unexpected_token_error(offending, help, expects_string));
     }
 
     None
+}
+
+/// Builds an `EnrichedError` for an unexpected token in a position with a
+/// large expected-token set.
+///
+/// When the offending token looks like a bare identifier (e.g., `YELLOW`) and
+/// the expected set includes `StringLiteral`, we add a hint suggesting that
+/// the identifier should be quoted. This covers the common mistake of writing
+/// `Color primary = YELLOW;` instead of `Color primary = "YELLOW";` for enum
+/// defaults.
+fn build_unexpected_token_error(
+    offending: &str,
+    help: Option<String>,
+    expects_string: bool,
+) -> EnrichedError {
+    if offending == "<EOF>" {
+        return EnrichedError {
+            message: "unexpected end of file".to_string(),
+            label: Some("unexpected end of file".to_string()),
+            help,
+        };
+    }
+
+    // When the offending token looks like a bare identifier and a string
+    // literal is expected, the user likely forgot to quote the value (e.g.,
+    // an enum default like `Color primary = YELLOW` instead of `= "YELLOW"`).
+    if expects_string && looks_like_bare_identifier(offending) {
+        let help = append_quoting_hint(help, offending);
+        return EnrichedError {
+            message: format!(
+                "unexpected token `{offending}` -- did you mean `\"{offending}\"`?"
+            ),
+            label: Some(format!(
+                "unexpected `{offending}` -- did you mean `\"{offending}\"`?"
+            )),
+            help,
+        };
+    }
+
+    EnrichedError {
+        message: format!("unexpected token `{offending}`"),
+        label: Some(format!("unexpected `{offending}`")),
+        help,
+    }
 }
 
 /// Formats the ANTLR expected-token set into a human-readable help string.
@@ -390,6 +413,52 @@ fn extract_quoted_token<'a>(msg: &'a str, prefix: &str) -> Option<&'a str> {
     }
     let end = rest[1..].find('\'')?;
     Some(&rest[1..1 + end])
+}
+
+/// Returns `true` if the ANTLR expected-token set includes `StringLiteral`.
+///
+/// This signals that the parser was expecting a JSON value (or similar
+/// string-accepting position), which helps us detect the "bare identifier
+/// instead of quoted string" pattern.
+fn expecting_set_includes_string_literal(tokens: &str) -> bool {
+    tokens
+        .split(',')
+        .any(|t| t.trim().trim_matches('\'') == "StringLiteral")
+}
+
+/// Returns `true` if the token text looks like a bare identifier: starts with
+/// a letter or underscore, and contains only alphanumeric characters and
+/// underscores. This excludes JSON keywords (`null`, `true`, `false`) since
+/// those are valid in default-value positions and have their own ANTLR tokens.
+fn looks_like_bare_identifier(token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    // JSON keywords are valid jsonValue alternatives; don't flag them.
+    if matches!(token, "null" | "true" | "false") {
+        return false;
+    }
+    let mut chars = token.chars();
+    let first = chars.next().expect("non-empty token has a first char");
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Appends a quoting hint to an existing help message (or creates one).
+///
+/// Produces a suggestion like: `hint: did you mean "YELLOW"? Enum default
+/// values must be quoted strings.`
+fn append_quoting_hint(help: Option<String>, offending: &str) -> Option<String> {
+    let hint = format!(
+        "hint: did you mean \"{offending}\"? \
+         Enum default values must be quoted strings"
+    );
+    Some(match help {
+        Some(h) => format!("{h}\n{hint}"),
+        None => hint,
+    })
 }
 
 /// Extracts the quoted input string from a "no viable alternative at input
@@ -4796,8 +4865,131 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // Bare identifier quoting hint
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn looks_like_bare_identifier_uppercase() {
+        assert!(looks_like_bare_identifier("YELLOW"));
+    }
+
+    #[test]
+    fn looks_like_bare_identifier_mixed_case() {
+        assert!(looks_like_bare_identifier("myValue"));
+    }
+
+    #[test]
+    fn looks_like_bare_identifier_with_underscores() {
+        assert!(looks_like_bare_identifier("MY_VALUE_2"));
+    }
+
+    #[test]
+    fn looks_like_bare_identifier_rejects_null() {
+        // JSON keywords should not trigger the quoting hint.
+        assert!(!looks_like_bare_identifier("null"));
+    }
+
+    #[test]
+    fn looks_like_bare_identifier_rejects_true() {
+        assert!(!looks_like_bare_identifier("true"));
+    }
+
+    #[test]
+    fn looks_like_bare_identifier_rejects_false() {
+        assert!(!looks_like_bare_identifier("false"));
+    }
+
+    #[test]
+    fn looks_like_bare_identifier_rejects_number() {
+        assert!(!looks_like_bare_identifier("123"));
+    }
+
+    #[test]
+    fn looks_like_bare_identifier_rejects_special_chars() {
+        assert!(!looks_like_bare_identifier("<EOF>"));
+    }
+
+    #[test]
+    fn looks_like_bare_identifier_rejects_empty() {
+        assert!(!looks_like_bare_identifier(""));
+    }
+
+    #[test]
+    fn expecting_set_includes_string_literal_present() {
+        let tokens = "'null', 'true', 'false', '{', '[', StringLiteral, \
+                      IntegerLiteral, FloatingPointLiteral";
+        assert!(expecting_set_includes_string_literal(tokens));
+    }
+
+    #[test]
+    fn expecting_set_includes_string_literal_absent() {
+        let tokens = "'null', 'true', 'false', '{', '['";
+        assert!(!expecting_set_includes_string_literal(tokens));
+    }
+
+    #[test]
+    fn enrich_bare_identifier_in_json_value_position() {
+        // Simulates the ANTLR error for `Color primary = YELLOW;`.
+        let msg = "mismatched input 'YELLOW' expecting {'null', 'true', 'false', \
+                   '{', '[', StringLiteral, IntegerLiteral, FloatingPointLiteral}";
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        assert!(
+            enriched.message.contains("\"YELLOW\""),
+            "message should suggest quoting: {}",
+            enriched.message,
+        );
+        assert!(
+            enriched.label.as_deref().expect("should have label").contains("\"YELLOW\""),
+            "label should suggest quoting: {:?}",
+            enriched.label,
+        );
+        let help = enriched.help.as_deref().expect("should have help");
+        assert!(
+            help.contains("did you mean \"YELLOW\""),
+            "help should suggest quoting: {help}",
+        );
+        assert!(
+            help.contains("quoted strings"),
+            "help should mention quoted strings: {help}",
+        );
+    }
+
+    #[test]
+    fn enrich_non_identifier_in_json_value_position_no_quoting_hint() {
+        // A numeric token in a jsonValue position should NOT trigger the
+        // quoting hint, since numbers are valid JSON values.
+        let msg = "mismatched input ';' expecting {'null', 'true', 'false', \
+                   '{', '[', StringLiteral, IntegerLiteral, FloatingPointLiteral}";
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        // `;` is not a bare identifier, so no quoting hint should appear.
+        let help = enriched.help.as_deref().unwrap_or("");
+        assert!(
+            !help.contains("did you mean"),
+            "should not suggest quoting for non-identifiers: {help}",
+        );
+    }
+
+    // ------------------------------------------------------------------
     // Integration: enriched error messages from parse_idl_for_test
     // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_bare_enum_default_suggests_quoting() {
+        let idl = r#"protocol Test {
+            enum Color { RED, GREEN, BLUE }
+            record Palette { Color primary = YELLOW; }
+        }"#;
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("YELLOW"),
+            "error should mention the bare identifier: {msg}"
+        );
+        assert!(
+            msg.contains("\"YELLOW\""),
+            "error should suggest quoting: {msg}"
+        );
+    }
 
     #[test]
     fn parse_error_bare_annotation_before_protocol() {
