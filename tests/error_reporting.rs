@@ -56,6 +56,32 @@ fn compile_error_with_width(input: &str, width: usize) -> Option<String> {
     }
 }
 
+/// Compile a `.avdl` file from disk through the builder and return the
+/// rendered error message.
+///
+/// Like [`compile_error`], but reads from a file path so that imports resolve
+/// relative to the file's directory. Uses a wide rendering width to avoid
+/// line-wrapping absolute paths that would break redaction.
+fn compile_file_error(path: &std::path::Path) -> Option<String> {
+    match Idl::new().convert(path) {
+        Ok(_) => None,
+        Err(e) => {
+            let mut buf = String::new();
+            let handler =
+                GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(300);
+
+            let diag: &dyn Diagnostic = e.as_ref();
+            if diag.source_code().is_some() {
+                if handler.render_report(&mut buf, diag).is_ok() {
+                    return Some(buf);
+                }
+            }
+
+            Some(format!("{e}"))
+        }
+    }
+}
+
 /// Compile an inline `.avdl` string and return warnings from a successful
 /// compilation.
 ///
@@ -278,6 +304,36 @@ fn test_error_import_nonexistent_file() {
     // Redact the absolute CWD path so the snapshot is portable across machines and worktrees.
     let cwd = std::env::current_dir().expect("current_dir is available during tests");
     let error = error.replace(&cwd.display().to_string(), "[CWD]");
+    insta::assert_snapshot!(error);
+}
+
+/// Importing a `.avsc` file with invalid JSON should produce an error that
+/// includes the source span of the `import` statement in the calling `.avdl`
+/// file.
+#[test]
+fn test_error_import_bad_avsc_json() {
+    let avdl_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/testdata/import_bad_avsc.avdl");
+    let error = compile_file_error(&avdl_path).expect("should produce an error for bad .avsc");
+
+    // Redact the absolute path prefix so the snapshot is portable.
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let error = error.replace(manifest_dir, "[ROOT]");
+    insta::assert_snapshot!(error);
+}
+
+/// Importing a `.avpr` file with invalid JSON should produce an error that
+/// includes the source span of the `import` statement in the calling `.avdl`
+/// file.
+#[test]
+fn test_error_import_bad_avpr_json() {
+    let avdl_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/testdata/import_bad_avpr.avdl");
+    let error = compile_file_error(&avdl_path).expect("should produce an error for bad .avpr");
+
+    // Redact the absolute path prefix so the snapshot is portable.
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let error = error.replace(manifest_dir, "[ROOT]");
     insta::assert_snapshot!(error);
 }
 
