@@ -7,7 +7,7 @@ expression: render_error(&err)
    ,-[<input>:4:35]
  3 |             protocol P {
  4 |                 record R { string @doc("field doc") name; }
-   :                                   |
-   :                                   `-- Can't set reserved property: doc
+   :                                   ^^^^^^^^|^^^^^^^^
+   :                                           `-- Can't set reserved property: doc
  5 |             }
    `----

@@ -8,7 +8,7 @@ expression: error
    ,-[<input>:6:17]
  5 |             record R {
  6 |                 @foo("bar") MD5 hash;
-   :                 |
-   :                 `-- Type references may not be annotated
+   :                 ^^^^^^^|^^^^^^^
+   :                        `-- Type references may not be annotated
  7 |             }
    `----

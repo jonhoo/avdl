@@ -6,6 +6,6 @@ expression: render_error(&err)
   `-> Invalid default for field `count`: expected int, got string
    ,-[<input>:1:29]
  1 | protocol P { record R { int count = "hello"; } }
-   :                             ^^|^^
-   :                               `-- Invalid default for field `count`: expected int, got string
+   :                             ^^^^^^^|^^^^^^^
+   :                                    `-- Invalid default for field `count`: expected int, got string
    `----

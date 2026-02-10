@@ -7,7 +7,7 @@ expression: render_error(&err)
    ,-[<input>:4:17]
  3 |             protocol P {
  4 |                 @default("A") enum E { A, B, C }
-   :                 |
-   :                 `-- Can't set reserved property: default
+   :                 ^^^^^^|^^^^^^
+   :                       `-- Can't set reserved property: default
  5 |             }
    `----

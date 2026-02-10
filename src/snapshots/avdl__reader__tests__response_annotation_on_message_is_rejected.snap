@@ -7,7 +7,7 @@ expression: render_error(&err)
    ,-[<input>:4:17]
  3 |             protocol P {
  4 |                 @response("custom") void ping();
-   :                 |
-   :                 `-- Can't set reserved property: response
+   :                 ^^^^^^^^^|^^^^^^^^^
+   :                          `-- Can't set reserved property: response
  5 |             }
    `----

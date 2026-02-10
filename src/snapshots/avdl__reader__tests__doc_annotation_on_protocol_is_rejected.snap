@@ -7,7 +7,7 @@ expression: render_error(&err)
    ,-[<input>:3:13]
  2 |             @namespace("test")
  3 |             @doc("Protocol doc via annotation")
-   :             |
-   :             `-- Can't set reserved property: doc
+   :             ^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^
+   :                              `-- Can't set reserved property: doc
  4 |             protocol P {
    `----

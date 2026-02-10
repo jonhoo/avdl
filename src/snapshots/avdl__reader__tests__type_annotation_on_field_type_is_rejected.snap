@@ -7,7 +7,7 @@ expression: render_error(&err)
    ,-[<input>:4:28]
  3 |             protocol P {
  4 |                 record R { @type("custom") string name; }
-   :                            |
-   :                            `-- Can't set reserved property: type
+   :                            ^^^^^^^|^^^^^^^
+   :                                   `-- Can't set reserved property: type
  5 |             }
    `----
