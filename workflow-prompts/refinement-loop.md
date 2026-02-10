@@ -265,3 +265,18 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   a rich source of improvements because they interact with many
   subsystems (ANTLR, miette, import resolution) that evolve
   independently.
+- **TODO audits are high-yield in mature codebases**: In iteration 16,
+  a TODO-focused agent found 2 genuine bugs from existing TODO comments
+  (SUB character handling, union annotation drop) plus duplication and
+  coverage gaps. TODOs accumulate as the codebase evolves and are
+  worth re-evaluating periodically.
+- **Upstream bugs should be filed alongside project issues**: Discovery
+  agents found 3 upstream Java bugs in iteration 16 (NPE on forward
+  refs, crash on out-of-range ints, crash on duplicate union types).
+  Filing these in `upstream-issues/` documents behaviors where our tool
+  is already more correct than Java and prevents re-investigation.
+- **Batching small test/doc issues into a single wave agent works
+  well**: In iteration 16 Wave 4, three related test-quality issues
+  (shared helpers, CRLF documentation, stdin coverage) were handled by
+  a single agent since they all touched `tests/*.rs`. This was faster
+  than 3 separate agents with the overhead of worktree prep and merge.
