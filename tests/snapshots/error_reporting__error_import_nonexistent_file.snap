@@ -1,12 +1,13 @@
 ---
 source: tests/error_reporting.rs
+assertion_line: 307
 expression: error
 ---
-  x import not found: does_not_exist.avsc (searched relative to [CWD] and 0 import dir(s))
+  x import not found: does_not_exist.avsc (searched: [CWD])
    ,-[<input>:4:13]
  3 |         protocol P {
  4 |             import schema "does_not_exist.avsc";
    :             ^^^|^^
-   :                `-- import not found: does_not_exist.avsc (searched relative to [CWD] and 0 import dir(s))
+   :                `-- import not found: does_not_exist.avsc (searched: [CWD])
  5 |             record R { string name; }
    `----

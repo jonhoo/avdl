@@ -95,10 +95,14 @@ impl ImportContext {
             }
         }
 
+        // Build a comma-separated list of all directories that were searched,
+        // starting with the importing file's directory, then each --import-dir.
+        let searched: Vec<String> = std::iter::once(current_dir.display().to_string())
+            .chain(self.import_dirs.iter().map(|d| d.display().to_string()))
+            .collect();
         Err(miette::miette!(
-            "import not found: {import_file} (searched relative to {} and {} import dir(s))",
-            current_dir.display(),
-            self.import_dirs.len()
+            "import not found: {import_file} (searched: {})",
+            searched.join(", ")
         ))
     }
 
