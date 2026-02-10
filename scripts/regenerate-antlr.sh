@@ -82,10 +82,15 @@ for file in "${GENERATED_FILES[@]}"; do
 done
 
 # ==============================================================================
-# Clean up any artifacts generated next to the grammar
+# Clean up non-Rust artifacts
+#
+# ANTLR writes .interp and .tokens files alongside the generated code.
+# With -Xexact-output-dir these land in both the output directory and
+# (sometimes) next to the grammar. Remove them from both locations.
 # ==============================================================================
 
 rm -f "$GRAMMAR_DIR"/*.rs "$GRAMMAR_DIR"/*.interp "$GRAMMAR_DIR"/*.tokens
+rm -f "$GENERATED_DIR"/*.interp "$GENERATED_DIR"/*.tokens
 
 # ==============================================================================
 # Smoke test
