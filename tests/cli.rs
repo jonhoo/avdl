@@ -7,31 +7,19 @@
 // complement the library-level integration tests in `integration.rs` by testing
 // the full CLI surface (argument parsing, file I/O, error reporting).
 
+mod common;
+
 use std::fs;
 use std::path::PathBuf;
 
 use assert_cmd::Command;
+use common::normalize_crlf;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 const INPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/input";
 const OUTPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/output";
 const CLASSPATH_DIR: &str = "avro/lang/java/idl/src/test/idl/putOnClassPath";
-
-/// Recursively replace `\r\n` with `\n` in all JSON string values. This is a
-/// no-op on Linux/macOS; on Windows, Git checks out `.avdl` files with `\r\n`
-/// line endings, which causes doc-comment strings to differ from the golden
-/// `.avpr` files that use `\n`.
-fn normalize_crlf(value: Value) -> Value {
-    match value {
-        Value::String(s) => Value::String(s.replace("\r\n", "\n")),
-        Value::Array(arr) => Value::Array(arr.into_iter().map(normalize_crlf).collect()),
-        Value::Object(obj) => {
-            Value::Object(obj.into_iter().map(|(k, v)| (k, normalize_crlf(v))).collect())
-        }
-        other => other,
-    }
-}
 
 /// Helper to construct a `Command` for the `avdl` binary built by this crate.
 #[allow(deprecated)] // cargo_bin() warns about custom build-dir; acceptable here
@@ -141,6 +129,54 @@ fn test_cli_idl_nonexistent_file() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("nonexistent.avdl"));
+}
+
+/// Pipe `.avdl` input via stdin (no input file argument) and verify the
+/// protocol JSON is written to stdout.
+#[test]
+fn test_cli_idl_stdin_to_stdout() {
+    let input = r#"protocol P { record R { int x; } }"#;
+    let output = avdl_cmd()
+        .args(["idl"])
+        .write_stdin(input)
+        .output()
+        .expect("run avdl idl with stdin");
+    assert!(
+        output.status.success(),
+        "avdl idl with stdin should exit 0, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let actual: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    assert_eq!(actual["protocol"], "P");
+    let types = actual["types"].as_array().expect("should have types array");
+    assert_eq!(types.len(), 1);
+    assert_eq!(types[0]["name"], "R");
+}
+
+/// Pass `-` as the output path and verify that JSON is written to stdout
+/// (same as omitting the output path).
+#[test]
+fn test_cli_idl_explicit_dash_output() {
+    let output = avdl_cmd()
+        .args(["idl", &format!("{INPUT_DIR}/simple.avdl"), "-"])
+        .output()
+        .expect("run avdl idl with - output");
+    assert!(
+        output.status.success(),
+        "avdl idl with - output should exit 0, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let actual: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON");
+    let expected = load_golden("simple.avpr");
+    assert_eq!(
+        normalize_crlf(actual),
+        normalize_crlf(expected),
+        "CLI stdout with `-` output should match golden simple.avpr"
+    );
 }
 
 // ==============================================================================

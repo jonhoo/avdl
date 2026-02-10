@@ -11,9 +11,11 @@
 // (with Unicode and color disabled for reproducible snapshots) so that we test
 // what the user actually sees, including source spans and labels.
 
+mod common;
+
 use avdl::Idl;
+use common::render_warnings;
 use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
-use std::fmt::Write;
 
 // ==============================================================================
 // Test Helpers
@@ -91,24 +93,6 @@ fn compile_warnings(input: &str) -> Vec<miette::Report> {
         .convert_str(input)
         .expect("warning test input should compile successfully");
     output.warnings
-}
-
-/// Render a list of warnings to a deterministic string suitable for snapshot
-/// testing. Uses miette's graphical handler with unicode-nocolor theme and
-/// fixed 80-column width for reproducible output.
-fn render_warnings(warnings: &[miette::Report]) -> String {
-    let handler =
-        GraphicalReportHandler::new_themed(GraphicalTheme::unicode_nocolor()).with_width(80);
-    let mut buf = String::new();
-    for (i, w) in warnings.iter().enumerate() {
-        if i > 0 {
-            writeln!(buf).expect("write to String is infallible");
-        }
-        handler
-            .render_report(&mut buf, w.as_ref())
-            .expect("render to String is infallible");
-    }
-    buf
 }
 
 // ==============================================================================

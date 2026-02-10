@@ -10,34 +10,20 @@
 // `assert_eq!`. Our JSON serialization sorts object keys alphabetically,
 // so `Value` comparison is order-insensitive and tests semantic equality.
 
+mod common;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use std::fmt::Write;
-
 use avdl::{Idl, Idl2Schemata};
+use common::{normalize_crlf, render_warnings};
 use miette::{GraphicalReportHandler, GraphicalTheme};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 
 const INPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/input";
 const OUTPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/output";
-
-/// Recursively replace `\r\n` with `\n` in all JSON string values. This is a
-/// no-op on Linux/macOS; on Windows, Git checks out `.avdl` files with `\r\n`
-/// line endings, which causes doc-comment strings to differ from the golden
-/// `.avpr` files that use `\n`.
-fn normalize_crlf(value: Value) -> Value {
-    match value {
-        Value::String(s) => Value::String(s.replace("\r\n", "\n")),
-        Value::Array(arr) => Value::Array(arr.into_iter().map(normalize_crlf).collect()),
-        Value::Object(obj) => {
-            Value::Object(obj.into_iter().map(|(k, v)| (k, normalize_crlf(v))).collect())
-        }
-        other => other,
-    }
-}
 
 // ==============================================================================
 // Test Infrastructure
@@ -86,24 +72,6 @@ fn render_error(err: &miette::Report) -> String {
     handler
         .render_report(&mut buf, err.as_ref())
         .expect("render to String is infallible");
-    buf
-}
-
-/// Render a list of warnings to a deterministic string suitable for snapshot
-/// testing. Uses miette's graphical handler with unicode-nocolor theme and
-/// fixed 80-column width for reproducible output.
-fn render_warnings(warnings: &[miette::Report]) -> String {
-    let handler =
-        GraphicalReportHandler::new_themed(GraphicalTheme::unicode_nocolor()).with_width(80);
-    let mut buf = String::new();
-    for (i, w) in warnings.iter().enumerate() {
-        if i > 0 {
-            writeln!(buf).expect("write to String is infallible");
-        }
-        handler
-            .render_report(&mut buf, w.as_ref())
-            .expect("render to String is infallible");
-    }
     buf
 }
 
