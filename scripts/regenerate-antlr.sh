@@ -26,7 +26,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GRAMMAR="$REPO_ROOT/avro/share/idl_grammar/org/apache/avro/idl/Idl.g4"
 GRAMMAR_DIR="$(dirname "$GRAMMAR")"
 GENERATED_DIR="$REPO_ROOT/src/generated"
-JAR_URL="https://github.com/AmatanHead/antlr4/releases/download/v0.5.0-beta/antlr4-4.13.3-SNAPSHOT-complete.jar"
+JAR_URL="https://github.com/antlr4rust/antlr4/releases/download/v0.5.0/antlr4-4.13.3-SNAPSHOT-complete.jar"
 JAR="$REPO_ROOT/tmp/antlr4-tool.jar"
 
 # The four .rs files ANTLR generates from the grammar.

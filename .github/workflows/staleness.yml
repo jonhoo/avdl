@@ -116,7 +116,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST=$(gh api repos/AmatanHead/antlr4/releases/latest \
+          LATEST=$(gh api repos/antlr4rust/antlr4/releases/latest \
                    --jq '.tag_name')
           PINNED="${{ steps.pinned.outputs.version }}"
           if [ "$LATEST" = "$PINNED" ]; then
@@ -138,7 +138,7 @@ jobs:
           # The exact asset filename may differ per release, so we
           # fetch the asset list and pick the *-complete.jar.
           ASSET_URL=$(gh api \
-            "repos/AmatanHead/antlr4/releases/tags/$LATEST" \
+            "repos/antlr4rust/antlr4/releases/tags/$LATEST" \
             --jq '.assets[]
                   | select(.name | endswith("-complete.jar"))
                   | .browser_download_url')
@@ -164,7 +164,7 @@ jobs:
         run: |
           LATEST="${{ steps.check.outputs.latest }}"
           PINNED="${{ steps.pinned.outputs.version }}"
-          URL="https://github.com/AmatanHead/antlr4/releases/tag/$LATEST"
+          URL="https://github.com/antlr4rust/antlr4/releases/tag/$LATEST"
           TITLE="antlr4rust has a newer release ($LATEST)"
           {
             echo "Pinned: \`$PINNED\`"

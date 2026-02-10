@@ -179,7 +179,7 @@ scripts/regenerate-antlr.sh
 - Java (tested with 21)
 
 The script automatically downloads the ANTLR tool JAR from the
-[antlr4rust fork](https://github.com/AmatanHead/antlr4) GitHub
+[antlr4rust fork](https://github.com/antlr4rust/antlr4) GitHub
 release and caches it at `tmp/antlr4-tool.jar`. This fork adds
 Rust target support — the upstream ANTLR4 project does not support
 Rust.
@@ -288,7 +288,7 @@ java -jar avro-tools-1.12.1.jar idl input.avdl output.avpr
 ### antlr4rust runtime
 
 The antlr4rust runtime source is available at
-<https://github.com/AmatanHead/antlr4/tree/master/runtime/Rust>.
+<https://github.com/antlr4rust/antlr4/tree/master/runtime/Rust>.
 Useful for understanding `CommonTokenStream`, `InputStream`, token
 access patterns, and the generated context types. Notably,
 `CommonTokenStream::get(index)` is public and provides raw access to
