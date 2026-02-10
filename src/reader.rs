@@ -124,6 +124,46 @@ impl Warning {
             span: Some(miette::SourceSpan::new(offset.into(), length)),
         }
     }
+
+    /// Create a warning for annotations dropped on a union type.
+    ///
+    /// Non-nullable union types (explicit `union { ... }`) cannot carry
+    /// annotations in Avro — any `@name(value)` annotations placed on them
+    /// are silently discarded. Java also drops them without feedback. This
+    /// warning lets the user know their annotations had no effect.
+    fn annotations_dropped_on_union<'a>(
+        annotation_keys: &[&str],
+        src: &SourceInfo<'_>,
+        ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'a>,
+    ) -> Self {
+        let start_token = ctx.start();
+        let stop_token = ctx.stop();
+        let offset = start_token.get_start();
+        let stop = {
+            let candidate = stop_token.get_stop();
+            if candidate >= offset {
+                candidate
+            } else {
+                start_token.get_stop()
+            }
+        };
+        let (byte_offset, length): (usize, usize) = if offset >= 0 && stop >= offset {
+            (offset as usize, (stop - offset + 1) as usize)
+        } else if offset >= 0 {
+            (offset as usize, 1)
+        } else {
+            (0, 0)
+        };
+
+        let keys_display = annotation_keys.join(", ");
+        Warning {
+            message: format!(
+                "Annotations on union types are not supported and will be ignored: {keys_display}"
+            ),
+            source: Some(miette::NamedSource::new(src.name, src.source.to_string())),
+            span: Some(miette::SourceSpan::new(byte_offset.into(), length)),
+        }
+    }
 }
 
 impl std::fmt::Display for Warning {
@@ -153,6 +193,8 @@ impl miette::Diagnostic for Warning {
             "out-of-place doc comment"
         } else if self.message.contains("token recognition error") {
             "unrecognized token"
+        } else if self.message.contains("Annotations on union types") {
+            "annotations ignored here"
         } else {
             "here"
         };
@@ -836,6 +878,7 @@ pub fn parse_idl_named(
         source: input,
         name: source_name,
         consumed_doc_indices: RefCell::new(HashSet::new()),
+        warnings: RefCell::new(Vec::new()),
     };
 
     let mut namespace: Option<String> = None;
@@ -864,6 +907,7 @@ pub fn parse_idl_named(
 
     let mut all_warnings = lexer_warnings;
     all_warnings.extend(warnings);
+    all_warnings.extend(src.warnings.into_inner());
 
     Ok((idl_file, decl_items, all_warnings))
 }
@@ -892,6 +936,11 @@ struct SourceInfo<'a> {
     /// After the full tree walk, any `DocComment` token NOT in this set is
     /// orphaned and should generate a warning.
     consumed_doc_indices: RefCell<HashSet<isize>>,
+    /// Warnings collected during the tree walk. Functions that detect
+    /// non-fatal issues (e.g., annotations silently dropped on union types)
+    /// push here rather than threading `&mut Vec<Warning>` through every
+    /// call site.
+    warnings: RefCell<Vec<Warning>>,
 }
 
 /// Construct a `miette::Report` wrapping a `ParseDiagnostic` with source
@@ -1863,6 +1912,18 @@ fn walk_full_type<'input>(
         ));
     }
 
+    // Warn when annotations are placed on a non-nullable union type. These
+    // annotations cannot be attached to the union schema (Avro unions don't
+    // carry top-level properties) and will be silently discarded. Java also
+    // drops them without feedback. Nullable unions (`type?` syntax) are fine
+    // because annotations are applied to the non-null branch instead.
+    if !props.properties.is_empty() && is_non_nullable_union(&schema) {
+        let keys: Vec<&str> = props.properties.keys().map(|k| k.as_str()).collect();
+        src.warnings.borrow_mut().push(Warning::annotations_dropped_on_union(
+            &keys, src, ctx,
+        ));
+    }
+
     // Apply custom properties to the schema. For nullable unions we apply
     // properties to the non-null branch (matching the Java behavior).
     let schema = if !props.properties.is_empty() {
@@ -2812,6 +2873,21 @@ fn is_type_reference(schema: &AvroSchema) -> bool {
     }
 }
 
+/// Returns true when the schema is a union that `apply_properties` cannot
+/// attach annotations to. Nullable two-member unions (`type?` syntax) are
+/// excluded because `apply_properties` correctly forwards annotations to
+/// the non-null branch for those.
+fn is_non_nullable_union(schema: &AvroSchema) -> bool {
+    match schema {
+        AvroSchema::Union {
+            is_nullable_type: true,
+            types,
+        } if types.len() == 2 => false,
+        AvroSchema::Union { .. } => true,
+        _ => false,
+    }
+}
+
 /// When `type?` creates a union `[null, T]` and the field's default is non-null,
 /// reorder the union to `[T, null]` so that the default value matches the first
 /// branch. This matches the Java `fixOptionalSchema` behavior.
@@ -3027,8 +3103,9 @@ fn apply_properties_to_schema(
             }
         }
         // Union and other types that don't carry top-level properties.
-        // TODO: warn when `properties` is non-empty here — annotations on
-        // non-nullable unions are silently dropped (Java also rejects them).
+        // The caller (`walk_full_type`) emits a warning before reaching
+        // here when `properties` is non-empty and the schema is a
+        // non-nullable union.
         other => other,
     }
 }
@@ -5093,6 +5170,39 @@ mod tests {
         let (_, _, warnings) = parse_idl_for_test(idl).expect("lexer errors should not be fatal");
         assert_eq!(warnings.len(), 1);
         insta::assert_snapshot!(render_warnings(&warnings));
+    }
+
+    #[test]
+    fn annotations_on_non_nullable_union_produce_warning() {
+        // Annotations on non-nullable union types cannot be attached to the
+        // union schema (Avro unions don't carry properties). The parser should
+        // emit a warning rather than silently dropping them.
+        let idl = r#"protocol P {
+    record R {
+        @deprecated("yes") union { null, string } field;
+    }
+}"#;
+        let (_, _, warnings) =
+            parse_idl_for_test(idl).expect("annotations on union should parse successfully");
+        assert_eq!(warnings.len(), 1, "expected exactly one warning: {warnings:?}");
+        insta::assert_snapshot!(render_warnings(&warnings));
+    }
+
+    #[test]
+    fn annotations_on_nullable_union_no_warning() {
+        // Nullable unions created via `type?` syntax apply annotations to
+        // the non-null branch, so no warning should be emitted.
+        let idl = r#"protocol P {
+    record R {
+        @order("ignore") string? field;
+    }
+}"#;
+        let (_, _, warnings) =
+            parse_idl_for_test(idl).expect("nullable union should parse successfully");
+        assert!(
+            warnings.is_empty(),
+            "nullable union annotations should not produce warnings: {warnings:?}"
+        );
     }
 
     #[test]

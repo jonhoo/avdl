@@ -1,0 +1,13 @@
+---
+source: src/reader.rs
+expression: render_warnings(&warnings)
+---
+  ⚠ Annotations on union types are not supported and will be ignored:
+  │ deprecated
+   ╭─[<input>:3:9]
+ 2 │     record R {
+ 3 │         @deprecated("yes") union { null, string } field;
+   ·         ────────────────────┬────────────────────
+   ·                             ╰── annotations ignored here
+ 4 │     }
+   ╰────
