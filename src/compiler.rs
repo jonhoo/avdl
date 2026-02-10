@@ -847,7 +847,24 @@ fn validate_all_references(
                 unresolved.extend(registry.validate_schema(schema));
             }
         }
-        IdlFile::Protocol(_) => {}
+        IdlFile::Protocol(protocol) => {
+            // Message return types, parameter types, and error types are stored
+            // in the `Protocol` but never registered in the `SchemaRegistry`, so
+            // `validate_references()` alone does not see them. We must validate
+            // them explicitly here. Without this, undefined types in messages
+            // silently pass through (Java rejects them with "Undefined schema").
+            for msg in protocol.messages.values() {
+                unresolved.extend(registry.validate_schema(&msg.response));
+                for field in &msg.request {
+                    unresolved.extend(registry.validate_schema(&field.schema));
+                }
+                if let Some(errors) = &msg.errors {
+                    for err_schema in errors {
+                        unresolved.extend(registry.validate_schema(err_schema));
+                    }
+                }
+            }
+        }
     }
 
     unresolved.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1006,6 +1023,107 @@ mod tests {
         // Verify Default is implemented.
         let _idl = Idl::default();
         let _schemata = Idl2Schemata::default();
+    }
+
+    // =========================================================================
+    // Undefined types in protocol messages
+    // =========================================================================
+    //
+    // Java's IdlReader rejects undefined types in message return types,
+    // parameter types, and throws clauses with "Undefined schema" errors.
+    // We verify that our validation catches these cases too.
+
+    #[test]
+    fn undefined_message_return_type_is_rejected() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                DoesNotExist getUnknown();
+            }
+            "#,
+        );
+        let err = result.expect_err("undefined return type should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Undefined name"),
+            "should report undefined name for return type, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn undefined_message_param_type_is_rejected() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                void process(DoesNotExist arg);
+            }
+            "#,
+        );
+        let err = result.expect_err("undefined param type should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Undefined name"),
+            "should report undefined name for param type, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn undefined_message_error_type_is_rejected() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                void doThing() throws DoesNotExist;
+            }
+            "#,
+        );
+        let err = result.expect_err("undefined error type should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Undefined name"),
+            "should report undefined name for error type, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn defined_message_types_are_accepted() {
+        // Verify that messages referencing defined types still work correctly.
+        let output = Idl::new()
+            .convert_str(
+                r#"
+                @namespace("test")
+                protocol P {
+                    record Request { string query; }
+                    record Response { string answer; }
+                    error ServiceError { string message; }
+                    Response search(Request req) throws ServiceError;
+                }
+                "#,
+            )
+            .expect("messages with defined types should be accepted");
+        assert_eq!(output.json["protocol"], "P");
+        assert!(output.json["messages"]["search"].is_object());
+    }
+
+    #[test]
+    fn extract_str_undefined_message_return_type_is_rejected() {
+        // idl2schemata should also reject undefined message types.
+        let result = Idl2Schemata::new().extract_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                DoesNotExist getUnknown();
+            }
+            "#,
+        );
+        let err = result.expect_err("idl2schemata should reject undefined return type");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Undefined name"),
+            "should report undefined name for return type, got: {msg}"
+        );
     }
 
     // =========================================================================
