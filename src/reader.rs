@@ -894,6 +894,22 @@ struct SourceInfo<'a> {
     consumed_doc_indices: RefCell<HashSet<isize>>,
 }
 
+/// Compute `(offset, length)` from ANTLR's inclusive start/stop byte offsets.
+///
+/// ANTLR tokens report byte positions where both `start` and `stop` are
+/// inclusive, so the length of the spanned region is `stop - start + 1`.
+/// Returns a span covering at least one character when possible, or `(0, 0)`
+/// when no valid position is available.
+fn span_from_offsets(start: isize, stop: isize) -> (usize, usize) {
+    if start >= 0 && stop >= start {
+        (start as usize, (stop - start + 1) as usize)
+    } else if start >= 0 {
+        (start as usize, 1)
+    } else {
+        (0, 0)
+    }
+}
+
 /// Construct a `miette::Report` wrapping a `ParseDiagnostic` with source
 /// location extracted from an ANTLR parse tree context's start token.
 ///
@@ -923,16 +939,7 @@ fn make_diagnostic<'input>(
         }
     };
 
-    // Compute a span covering at least one character. ANTLR byte offsets are
-    // inclusive on both ends, so length = stop - start + 1.
-    let (offset, length) = if offset >= 0 && stop >= offset {
-        (offset as usize, (stop - offset + 1) as usize)
-    } else if offset >= 0 {
-        (offset as usize, 1)
-    } else {
-        // No valid position available; point at the start of the file.
-        (0, 0)
-    };
+    let (offset, length) = span_from_offsets(offset, stop);
 
     let message = message.into();
     ParseDiagnostic {
@@ -953,16 +960,7 @@ fn make_diagnostic_from_token(
     token: &impl Token,
     message: impl Into<String>,
 ) -> miette::Report {
-    let offset = token.get_start();
-    let stop = token.get_stop();
-
-    let (offset, length) = if offset >= 0 && stop >= offset {
-        (offset as usize, (stop - offset + 1) as usize)
-    } else if offset >= 0 {
-        (offset as usize, 1)
-    } else {
-        (0, 0)
-    };
+    let (offset, length) = span_from_offsets(token.get_start(), token.get_stop());
 
     let message = message.into();
     ParseDiagnostic {
@@ -985,16 +983,11 @@ fn span_from_context<'input>(
     ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'input>,
 ) -> Option<miette::SourceSpan> {
     let start_token = ctx.start();
-    let offset = start_token.get_start();
-    let stop = start_token.get_stop();
+    let (offset, length) = span_from_offsets(start_token.get_start(), start_token.get_stop());
 
-    if offset >= 0 && stop >= offset {
-        Some(miette::SourceSpan::new(
-            (offset as usize).into(),
-            (stop - offset + 1) as usize,
-        ))
-    } else if offset >= 0 {
-        Some(miette::SourceSpan::new((offset as usize).into(), 1))
+    // A zero-length span at offset 0 means no valid position was available.
+    if length > 0 {
+        Some(miette::SourceSpan::new(offset.into(), length))
     } else {
         None
     }
