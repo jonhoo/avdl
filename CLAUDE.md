@@ -413,3 +413,35 @@ Each issue file should include:
 - **Affected files**: which source files are involved
 - **Reproduction**: commands or test case to reproduce
 - **Suggested fix**: approach sketch
+
+## Changelog
+
+This project keeps a changelog following
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). When making
+user-facing changes, add an entry to the `[Unreleased]` section of
+`CHANGELOG.md` under the appropriate category (Added, Changed,
+Deprecated, Removed, Fixed, Security). The `[Unreleased]` section
+always retains headings for all six categories, even when empty. Omit
+empty categories only in released version sections.
+
+Every entry must earn its place: the changelog is for users of the
+library and binary, not for contributors. Internal changes (test
+infrastructure, CI, issue tracking, code formatting, dev-only
+scripts) do not belong. When in doubt, ask: "would a user deciding
+whether to upgrade care about this?"
+
+Write entries in imperative mood ("Validate ...", "Reject ..."), not
+declarative ("Validates ...", "now rejects ..."). Describe the
+user-visible effect, not the implementation technique — e.g., "Render
+all errors with colored, annotated source excerpts" rather than "Use
+miette diagnostic rendering for all error output".
+
+Categorize by what the change *is*, not what code it touches: new
+capabilities (including new validations and warnings) go in **Added**,
+changes to existing behavior in **Changed**, and actual bug
+corrections in **Fixed**.
+
+Entries need not map one-to-one to commits: several commits may be
+unified under one entry when they contribute to a single user-visible
+change. Each entry references a primary commit by its short hash at
+the end of the line (GitHub auto-links these).
