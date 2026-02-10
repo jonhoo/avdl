@@ -40,8 +40,10 @@ jobs:
           cd avro
           CURRENT=$(git rev-parse HEAD)
           # Tags follow the pattern release-1.12.0, release-1.13.0, etc.
+          # Filter out release candidates (-rc*/-RC*) since they sort
+          # above final releases in git's version sort.
           LATEST_TAG=$(git tag --list 'release-*' --sort=-v:refname \
-                       | head -1)
+                       | grep -vi -- '-rc' | head -1)
           # Peel to commit — release tags are often annotated, so bare
           # rev-parse returns the tag object hash, not the commit hash.
           LATEST_COMMIT=$(git rev-parse "$LATEST_TAG^{commit}")
@@ -52,7 +54,7 @@ jobs:
             # (i.e., tags we haven't incorporated yet).
             MISSED=""
             for tag in $(git tag --list 'release-*' \
-                         --sort=-v:refname); do
+                         --sort=-v:refname | grep -vi -- '-rc'); do
               if ! git merge-base --is-ancestor "$tag" HEAD 2>/dev/null
               then
                 VER="${tag#release-}"
