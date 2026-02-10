@@ -817,7 +817,7 @@ fn validate_all_references(
 ) -> miette::Result<()> {
     let mut unresolved = registry.validate_references();
 
-    // `SchemaFile` and `NamedSchemasFile` store their top-level schemas outside
+    // `Schema` and `NamedSchemas` store their top-level schemas outside
     // the registry, so `validate_references` alone misses unresolved references
     // in them.
     match idl_file {

@@ -63,12 +63,6 @@ output, but deliberately differs in a few ways:
   `--import-dir` flags instead, which serve the same purpose without
   requiring a JVM.
 
-- **Schema-mode leniency.** The `idl` subcommand accepts `.avdl` files
-  containing bare named type declarations (no `protocol` or `schema`
-  keyword), returning them as a JSON array. Java's `IdlTool` CLI
-  rejects such files, though Java's internal `IdlFile.outputString()`
-  test harness supports the same output.
-
 - **Better error diagnostics.** Errors include source context with the
   offending token underlined, powered by [miette](https://docs.rs/miette).
   The Rust tool also gives clear error messages in cases where

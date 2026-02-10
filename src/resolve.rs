@@ -193,7 +193,7 @@ impl SchemaRegistry {
     ///
     /// This is used to validate schemas that are *not* themselves registered
     /// in the registry -- specifically, the top-level schema from
-    /// `IdlFile::SchemaFile`, which is stored separately and would otherwise
+    /// `IdlFile::Schema`, which is stored separately and would otherwise
     /// escape validation by `validate_references`.
     pub fn validate_schema(&self, schema: &AvroSchema) -> Vec<(String, Option<SourceSpan>)> {
         let mut unresolved = Vec::new();

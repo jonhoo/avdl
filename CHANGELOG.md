@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Support `--version` / `-V` flag to print the version
+
 ### Changed
 
 ### Deprecated
@@ -16,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 ### Fixed
+
+- Correct `local_timestamp_ms` spelling in reserved-type-name validation
+  (was `localtimestamp_ms`, silently accepting the reserved name as a type)
+- Remove duplicate keywords from expected-token help text
 
 ### Security
 

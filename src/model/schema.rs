@@ -911,7 +911,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Union defaults: must match the first type in the union
+    // Union defaults: may match any branch (matching Java's relaxed behavior)
     // =========================================================================
 
     #[test]

@@ -272,7 +272,7 @@ fn test_cli_idl2schemata_outdir_is_file() {
 }
 
 /// Run `avdl idl2schemata` with no arguments and verify a non-zero exit code,
-/// since clap requires the input argument.
+/// since the `idl2schemata` subcommand requires an input argument.
 #[test]
 fn test_cli_idl2schemata_missing_input() {
     avdl_cmd().args(["idl2schemata"]).assert().failure();

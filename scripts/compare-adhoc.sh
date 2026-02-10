@@ -278,7 +278,13 @@ compare_idl2schemata() {
     echo "  ${YELLOW}INFO${RESET}  $basename: Rust produced $(echo "$rust_files" | wc -w) .avsc file(s)"
 
     if [ "$RUST_ONLY" = true ] || [ -z "$AVRO_JAR" ]; then
-        report_skip "$basename (idl2schemata)" "${RUST_ONLY:+Rust-only}${AVRO_JAR:+Java unavailable}"
+        local reason
+        if [ "$RUST_ONLY" = true ]; then
+            reason="Rust-only"
+        else
+            reason="Java unavailable"
+        fi
+        report_skip "$basename (idl2schemata)" "$reason"
         return
     fi
 

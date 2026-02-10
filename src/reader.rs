@@ -418,12 +418,14 @@ fn build_unexpected_token_error(
 /// the SUB character `\u001A`, and `<EOF>`) and removes surrounding quotes
 /// from token names.
 fn format_expected_help(tokens: &str) -> Option<String> {
+    let mut seen = HashSet::new();
     let cleaned: Vec<&str> = tokens
         .split(',')
         .map(|t| t.trim())
         .filter(|t| !t.is_empty())
         .filter(|t| *t != "DocComment" && *t != "'\\u001A'" && *t != "<EOF>")
         .map(|t| t.trim_matches('\''))
+        .filter(|t| seen.insert(*t))
         .collect();
     if cleaned.is_empty() {
         return None;
@@ -548,7 +550,7 @@ const AVRO_KEYWORDS: &[&str] = &[
     "date",
     "time_ms",
     "timestamp_ms",
-    "localtimestamp_ms",
+    "local_timestamp_ms",
     "uuid",
 ];
 
@@ -710,7 +712,7 @@ const INVALID_TYPE_NAMES: &[&str] = &[
     "date",
     "time_ms",
     "timestamp_ms",
-    "localtimestamp_ms",
+    "local_timestamp_ms",
     "uuid",
 ];
 
@@ -732,7 +734,7 @@ pub enum IdlFile {
 }
 
 /// Import type discovered during parsing. The actual import resolution is
-/// deferred to the `import` module (not yet implemented).
+/// deferred to the `import` module.
 #[derive(Debug, Clone)]
 pub struct ImportEntry {
     pub kind: ImportKind,

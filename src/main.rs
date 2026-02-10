@@ -27,7 +27,8 @@ Commands:
   idl2schemata  Extract individual .avsc schema files from an Avro IDL protocol
 
 Options:
-  -h, --help    Print help";
+  -h, --help       Print help
+  -V, --version    Print version";
 
 const IDL_HELP: &str = "\
 Usage: avdl idl [OPTIONS] [INPUT] [OUTPUT]
@@ -146,6 +147,10 @@ fn main() -> miette::Result<()> {
         Ok(Some(Value(val))) => val.string().map_err(|e| miette::miette!("{e}"))?,
         Ok(Some(Short('h') | Long("help"))) => {
             println!("{MAIN_HELP}");
+            return Ok(());
+        }
+        Ok(Some(Short('V') | Long("version"))) => {
+            println!("avdl {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Ok(Some(other)) => {
