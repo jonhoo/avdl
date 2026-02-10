@@ -1,23 +1,13 @@
 ---
 source: src/reader.rs
-expression: err
+expression: render_error(&err)
 ---
-Error {
-    msg: "parse `<input>`",
-    source: ParseDiagnostic {
-        src: NamedSource {
-            name: "<input>",
-            source: "<redacted>",
-            language: None,
-        ,
-        span: SourceSpan {
-            offset: SourceOffset(
-                73,
-            ),
-            length: 1,
-        },
-        message: "Can't set reserved property: response",
-        label: None,
-        help: None,
-    },
-}
+  x parse `<input>`
+  `-> Can't set reserved property: response
+   ,-[<input>:4:17]
+ 3 |             protocol P {
+ 4 |                 @response("custom") void ping();
+   :                 |
+   :                 `-- Can't set reserved property: response
+ 5 |             }
+   `----

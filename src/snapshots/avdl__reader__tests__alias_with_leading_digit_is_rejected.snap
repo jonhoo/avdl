@@ -1,23 +1,13 @@
 ---
 source: src/reader.rs
-expression: err
+expression: render_error(&err)
 ---
-Error {
-    msg: "parse `<input>`",
-    source: ParseDiagnostic {
-        src: NamedSource {
-            name: "<input>",
-            source: "<redacted>",
-            language: None,
-        ,
-        span: SourceSpan {
-            offset: SourceOffset(
-                42,
-            ),
-            length: 1,
-        },
-        message: "invalid alias name: 123bad",
-        label: None,
-        help: None,
-    },
-}
+  x parse `<input>`
+  `-> invalid alias name: 123bad
+   ,-[<input>:3:17]
+ 2 |             protocol P {
+ 3 |                 @aliases(["123bad"])
+   :                 |
+   :                 `-- invalid alias name: 123bad
+ 4 |                 record Foo { string name; }
+   `----

@@ -1,23 +1,13 @@
 ---
 source: src/reader.rs
-expression: err
+expression: render_error(&err)
 ---
-Error {
-    msg: "parse `<input>`",
-    source: ParseDiagnostic {
-        src: NamedSource {
-            name: "<input>",
-            source: "<redacted>",
-            language: None,
-        ,
-        span: SourceSpan {
-            offset: SourceOffset(
-                100,
-            ),
-            length: 4,
-        },
-        message: "Duplicate in union: null",
-        label: None,
-        help: None,
-    },
-}
+  x parse `<input>`
+  `-> Duplicate in union: null
+   ,-[<input>:4:43]
+ 3 |                 record Foo {
+ 4 |                     union { null, string, null } field1;
+   :                                           ^^|^
+   :                                             `-- Duplicate in union: null
+ 5 |                 }
+   `----

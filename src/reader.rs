@@ -3159,7 +3159,21 @@ fn collect_single_import<'input>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use miette::{GraphicalReportHandler, GraphicalTheme};
     use pretty_assertions::assert_eq;
+
+    /// Render a `miette::Report` error to a deterministic string for snapshot
+    /// testing. Uses `GraphicalTheme::none()` (no box-drawing characters) to
+    /// match the `error_reporting.rs` test style.
+    fn render_error(err: &miette::Report) -> String {
+        let handler =
+            GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
+        let mut buf = String::new();
+        handler
+            .render_report(&mut buf, err.as_ref())
+            .expect("render to String is infallible");
+        buf
+    }
 
     // ------------------------------------------------------------------
     // Octal escapes (issue #5)
@@ -3317,7 +3331,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -3349,7 +3363,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -3619,7 +3633,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -3632,7 +3646,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -3646,7 +3660,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -3659,7 +3673,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -3673,7 +3687,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -3723,7 +3737,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -3736,7 +3750,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -4026,7 +4040,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -4039,7 +4053,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -4053,7 +4067,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -4104,7 +4118,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -4130,7 +4144,7 @@ mod tests {
     fn protocol_name_null_is_rejected() {
         let idl = "protocol `null` { }";
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -4194,7 +4208,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]
@@ -4256,7 +4270,7 @@ mod tests {
     fn default_int_string_is_rejected() {
         let idl = r#"protocol P { record R { int count = "hello"; } }"#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_debug_snapshot!(err);
+        insta::assert_snapshot!(render_error(&err));
     }
 
     #[test]

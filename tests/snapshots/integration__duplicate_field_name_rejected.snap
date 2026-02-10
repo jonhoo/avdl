@@ -1,26 +1,14 @@
 ---
 source: tests/integration.rs
-expression: err
+expression: render_error(&err)
 ---
-Error {
-    msg: "parse IDL source",
-    source: Error {
-        msg: "parse `<input>`",
-        source: ParseDiagnostic {
-            src: NamedSource {
-                name: "<input>",
-                source: "<redacted>",
-                language: None,
-            ,
-            span: SourceSpan {
-                offset: SourceOffset(
-                    121,
-                ),
-                length: 4,
-            },
-            message: "duplicate field 'name' in record 'R'",
-            label: None,
-            help: None,
-        },
-    },
-}
+  × parse IDL source
+  ├─▶ parse `<input>`
+  ╰─▶ duplicate field 'name' in record 'R'
+   ╭─[<input>:6:21]
+ 5 │                 string name;
+ 6 │                 int name;
+   ·                     ──┬─
+   ·                       ╰── duplicate field 'name' in record 'R'
+ 7 │             }
+   ╰────

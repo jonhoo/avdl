@@ -77,6 +77,18 @@ fn parse_idl2schemata(avdl_path: &Path, import_dirs: &[&Path]) -> HashMap<String
         .collect()
 }
 
+/// Render a single error to a deterministic string suitable for snapshot
+/// testing. Uses the same theme and width as [`render_warnings`].
+fn render_error(err: &miette::Report) -> String {
+    let handler =
+        GraphicalReportHandler::new_themed(GraphicalTheme::unicode_nocolor()).with_width(80);
+    let mut buf = String::new();
+    handler
+        .render_report(&mut buf, err.as_ref())
+        .expect("render to String is infallible");
+    buf
+}
+
 /// Render a list of warnings to a deterministic string suitable for snapshot
 /// testing. Uses miette's graphical handler with unicode-nocolor theme and
 /// fixed 80-column width for reproducible output.
@@ -380,7 +392,7 @@ fn test_nested_union_rejected() {
     "#,
     );
     let err = result.unwrap_err();
-    insta::assert_debug_snapshot!(err);
+    insta::assert_snapshot!(render_error(&err));
 }
 
 /// Type names that collide with Avro built-in types must be rejected.
@@ -388,7 +400,7 @@ fn test_nested_union_rejected() {
 fn test_reserved_type_name_rejected() {
     let result = Idl::new().convert_str(r#"record `int` { string value; }"#);
     let err = result.unwrap_err();
-    insta::assert_debug_snapshot!(err);
+    insta::assert_snapshot!(render_error(&err));
 }
 
 /// Records must not contain duplicate field names.
@@ -406,7 +418,7 @@ fn test_duplicate_field_name_rejected() {
     "#,
     );
     let err = result.unwrap_err();
-    insta::assert_debug_snapshot!(err);
+    insta::assert_snapshot!(render_error(&err));
 }
 
 /// Enum declarations must not contain duplicate symbols.
@@ -421,7 +433,7 @@ fn test_duplicate_enum_symbol_rejected() {
     "#,
     );
     let err = result.unwrap_err();
-    insta::assert_debug_snapshot!(err);
+    insta::assert_snapshot!(render_error(&err));
 }
 
 /// When a named type's identifier contains dots, the dot-derived namespace
@@ -1146,5 +1158,5 @@ fn test_annotation_on_type_reference_file() {
     let avdl_path = PathBuf::from(TEST_ROOT_DIR).join("AnnotationOnTypeReference.avdl");
     let result = Idl::new().convert(&avdl_path);
     let err = result.unwrap_err();
-    insta::assert_debug_snapshot!(err);
+    insta::assert_snapshot!(render_error(&err));
 }

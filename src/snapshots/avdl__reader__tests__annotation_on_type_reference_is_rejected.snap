@@ -1,23 +1,13 @@
 ---
 source: src/reader.rs
-expression: err
+expression: render_error(&err)
 ---
-Error {
-    msg: "parse `<input>`",
-    source: ParseDiagnostic {
-        src: NamedSource {
-            name: "<input>",
-            source: "<redacted>",
-            language: None,
-        ,
-        span: SourceSpan {
-            offset: SourceOffset(
-                135,
-            ),
-            length: 1,
-        },
-        message: "Type references may not be annotated",
-        label: None,
-        help: None,
-    },
-}
+  x parse `<input>`
+  `-> Type references may not be annotated
+   ,-[<input>:6:21]
+ 5 |                 record R {
+ 6 |                     @foo("bar") MD5 hash = "0000000000000000";
+   :                     |
+   :                     `-- Type references may not be annotated
+ 7 |                 }
+   `----
