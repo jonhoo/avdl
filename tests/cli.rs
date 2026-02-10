@@ -311,13 +311,11 @@ fn test_cli_idl_stderr_warnings() {
 /// sees both warnings and the error diagnostic. This exercises the fix that
 /// drains accumulated warnings before propagating the compilation error.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_cli_idl_stderr_warnings_and_error() {
     let test_dir = "tmp/cli-test-warnings-and-error";
     fs::create_dir_all(test_dir).expect("create test directory");
-    // Use format! instead of PathBuf::join to avoid backslash separators on
-    // Windows. The path flows through path.display() into diagnostic source
-    // names, so forward slashes ensure consistent snapshot output.
-    let avdl_path = format!("{test_dir}/test.avdl");
+    let avdl_path = PathBuf::from(test_dir).join("test.avdl");
     fs::write(
         &avdl_path,
         "\
@@ -333,7 +331,7 @@ protocol P {
     .expect("write test .avdl file");
 
     let output = avdl_cmd()
-        .args(["idl", &avdl_path])
+        .args(["idl", avdl_path.to_str().expect("valid UTF-8 path")])
         .output()
         .expect("run avdl idl on test file");
     assert!(

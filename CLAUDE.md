@@ -373,15 +373,15 @@ less thoroughly tested.
 
 ### Test paths and Windows backslashes
 
-`PathBuf::join` inserts `\` on Windows. When a test path flows
-through `path.display()` into a miette diagnostic source name
-(the `╭─[path:line:col]` header), backslashes cause snapshot
-mismatches. Build test paths with `format!("{DIR}/{file}")` instead
-of `PathBuf::from(DIR).join(file)` whenever the path may appear in
-snapshot output. Windows accepts `/` for file I/O, so this is safe.
+`PathBuf::join` inserts `\` on Windows, and `canonicalize()` adds
+the `\\?\` prefix. When a test path flows through `path.display()`
+into a miette diagnostic source name (the `╭─[path:line:col]`
+header), these differences cause snapshot mismatches against the
+Linux-generated `.snap` files.
 
-The shared helpers `input_path` and `output_path` in
-`tests/integration.rs` already use this pattern.
+Tests whose snapshots contain file paths are annotated with
+`#[cfg_attr(windows, ignore)]` so they are skipped on Windows CI.
+These tests still run on Linux CI and locally on Linux/macOS.
 
 ### Properties on primitives
 

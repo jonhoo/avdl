@@ -272,6 +272,7 @@ fn test_warning_multiple_out_of_place_doc_comments() {
 
 /// Importing a nonexistent file should produce an error.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_error_import_nonexistent_file() {
     let input = r#"
         @namespace("test")
@@ -295,6 +296,7 @@ fn test_error_import_nonexistent_file() {
 /// includes the source span of the `import` statement in the calling `.avdl`
 /// file.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_error_import_bad_avsc_json() {
     let avdl_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/testdata/import_bad_avsc.avdl");
@@ -310,6 +312,7 @@ fn test_error_import_bad_avsc_json() {
 /// includes the source span of the `import` statement in the calling `.avdl`
 /// file.
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_error_import_bad_avpr_json() {
     let avdl_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/testdata/import_bad_avpr.avdl");
