@@ -265,5 +265,23 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   test `test_error_import_nonexistent_file` contains an absolute path
   from `main/`. When run from a worktree, the path differs and the
   snapshot fails. Sub-agents should skip this test with
-  `--skip test_error_import_nonexistent_file`. The test passes
+  `-- --skip test_error_import_nonexistent_file`. The test passes
   correctly from `main/`.
+- **User-seeded issues accelerate the loop**: When the user seeds
+  issues directly (as in iteration 15), discovery still adds value
+  for finding related issues in the same area. The error UX discovery
+  agent found 4 additional issues while the user seeded 4 — almost
+  doubling the iteration's output.
+- **Error UX audits are productive even for mature codebases**: In
+  iteration 15, an error-focused discovery agent found 4 genuine
+  diagnostic quality issues (duplicate error text, lost source spans,
+  unhelpful messages) despite 14 prior iterations. Error messages are
+  a rich source of improvements because they interact with many
+  subsystems (ANTLR, miette, import resolution) that evolve
+  independently.
+- **Wave 3 parent-applied batch is efficient for small fixes**: In
+  iteration 15, three small non-functional fixes (README docs,
+  Cargo.toml include, CRLF test normalization) were applied directly
+  by the parent agent in a single worktree commit, avoiding the
+  overhead of three sub-agents for what amounted to ~60 lines of
+  changes across distinct files.
