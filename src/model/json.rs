@@ -175,19 +175,12 @@ pub fn schema_to_json(
     enclosing_namespace: Option<&str>,
     lookup: &SchemaLookup,
 ) -> Value {
-    match schema {
-        // =====================================================================
-        // Primitives: serialize as plain strings.
-        // =====================================================================
-        AvroSchema::Null => Value::String("null".to_string()),
-        AvroSchema::Boolean => Value::String("boolean".to_string()),
-        AvroSchema::Int => Value::String("int".to_string()),
-        AvroSchema::Long => Value::String("long".to_string()),
-        AvroSchema::Float => Value::String("float".to_string()),
-        AvroSchema::Double => Value::String("double".to_string()),
-        AvroSchema::Bytes => Value::String("bytes".to_string()),
-        AvroSchema::String => Value::String("string".to_string()),
+    // Primitives: serialize as plain strings.
+    if let Some(name) = schema.primitive_type_name() {
+        return Value::String(name.to_string());
+    }
 
+    match schema {
         // =====================================================================
         // Annotated primitive: a primitive with custom properties, serialized
         // as {"type": "int", ...properties} instead of bare "int".
@@ -505,6 +498,9 @@ pub fn schema_to_json(
                 enclosing_namespace,
             ))
         }
+
+        // Primitives are handled above by `primitive_type_name()`.
+        _ => unreachable!("all AvroSchema variants are covered"),
     }
 }
 

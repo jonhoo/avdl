@@ -407,34 +407,27 @@ fn json_to_schema(json: &Value, default_namespace: Option<&str>) -> Result<AvroS
 
 /// Parse a string as either a primitive type name or a named type reference.
 fn string_to_schema(s: &str, default_namespace: Option<&str>) -> Result<AvroSchema> {
-    match s {
-        "null" => Ok(AvroSchema::Null),
-        "boolean" => Ok(AvroSchema::Boolean),
-        "int" => Ok(AvroSchema::Int),
-        "long" => Ok(AvroSchema::Long),
-        "float" => Ok(AvroSchema::Float),
-        "double" => Ok(AvroSchema::Double),
-        "bytes" => Ok(AvroSchema::Bytes),
-        "string" => Ok(AvroSchema::String),
-        type_name => {
-            // Named type reference. Split into separate name and namespace
-            // so the Reference tracks them independently.
-            if let Some((ns, name)) = type_name.rsplit_once('.') {
-                Ok(AvroSchema::Reference {
-                    name: name.to_string(),
-                    namespace: Some(ns.to_string()),
-                    properties: HashMap::new(),
-                    span: None,
-                })
-            } else {
-                Ok(AvroSchema::Reference {
-                    name: type_name.to_string(),
-                    namespace: default_namespace.map(|s| s.to_string()),
-                    properties: HashMap::new(),
-                    span: None,
-                })
-            }
-        }
+    // Try parsing as a primitive type first.
+    if let Ok(prim) = s.parse::<PrimitiveType>() {
+        return Ok(prim.to_schema());
+    }
+
+    // Named type reference. Split into separate name and namespace
+    // so the Reference tracks them independently.
+    if let Some((ns, name)) = s.rsplit_once('.') {
+        Ok(AvroSchema::Reference {
+            name: name.to_string(),
+            namespace: Some(ns.to_string()),
+            properties: HashMap::new(),
+            span: None,
+        })
+    } else {
+        Ok(AvroSchema::Reference {
+            name: s.to_string(),
+            namespace: default_namespace.map(|s| s.to_string()),
+            properties: HashMap::new(),
+            span: None,
+        })
     }
 }
 
@@ -456,7 +449,7 @@ fn object_to_schema(
         "map" => parse_map(obj, default_namespace),
 
         // A primitive type with optional logical type or custom properties.
-        prim @ ("null" | "boolean" | "int" | "long" | "float" | "double" | "bytes" | "string") => {
+        prim if prim.parse::<PrimitiveType>().is_ok() => {
             parse_annotated_primitive(obj, prim, default_namespace)
         }
 
@@ -736,17 +729,9 @@ fn parse_annotated_primitive(
 
 /// Map a primitive type name string to its `AvroSchema` variant.
 fn primitive_from_str(name: &str) -> Result<AvroSchema> {
-    match name {
-        "null" => Ok(AvroSchema::Null),
-        "boolean" => Ok(AvroSchema::Boolean),
-        "int" => Ok(AvroSchema::Int),
-        "long" => Ok(AvroSchema::Long),
-        "float" => Ok(AvroSchema::Float),
-        "double" => Ok(AvroSchema::Double),
-        "bytes" => Ok(AvroSchema::Bytes),
-        "string" => Ok(AvroSchema::String),
-        other => Err(miette::miette!("unknown primitive type: {other}")),
-    }
+    name.parse::<PrimitiveType>()
+        .map(|p| p.to_schema())
+        .map_err(|e| miette::miette!("{e}"))
 }
 
 /// Map a primitive type name string to its `PrimitiveType` variant.
@@ -754,18 +739,8 @@ fn primitive_from_str(name: &str) -> Result<AvroSchema> {
 /// Only called from `parse_annotated_primitive` where the type name has
 /// already been matched as a primitive in `object_to_schema`.
 fn str_to_primitive_type(name: &str) -> PrimitiveType {
-    match name {
-        "null" => PrimitiveType::Null,
-        "boolean" => PrimitiveType::Boolean,
-        "int" => PrimitiveType::Int,
-        "long" => PrimitiveType::Long,
-        "float" => PrimitiveType::Float,
-        "double" => PrimitiveType::Double,
-        "bytes" => PrimitiveType::Bytes,
-        "string" => PrimitiveType::String,
-        // Only called from parse_annotated_primitive where type was already matched as primitive
-        _ => unreachable!("str_to_primitive_type called with non-primitive: {name}"),
-    }
+    name.parse::<PrimitiveType>()
+        .unwrap_or_else(|_| unreachable!("str_to_primitive_type called with non-primitive: {name}"))
 }
 
 // ==============================================================================

@@ -2,6 +2,8 @@ use miette::SourceSpan;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
+use std::str::FromStr;
 
 /// Compute the fully-qualified name for an Avro named type.
 ///
@@ -48,6 +50,54 @@ impl PrimitiveType {
             PrimitiveType::Double => "double",
             PrimitiveType::Bytes => "bytes",
             PrimitiveType::String => "string",
+        }
+    }
+
+    /// Convert this primitive type to its corresponding `AvroSchema` variant.
+    pub fn to_schema(&self) -> AvroSchema {
+        match self {
+            PrimitiveType::Null => AvroSchema::Null,
+            PrimitiveType::Boolean => AvroSchema::Boolean,
+            PrimitiveType::Int => AvroSchema::Int,
+            PrimitiveType::Long => AvroSchema::Long,
+            PrimitiveType::Float => AvroSchema::Float,
+            PrimitiveType::Double => AvroSchema::Double,
+            PrimitiveType::Bytes => AvroSchema::Bytes,
+            PrimitiveType::String => AvroSchema::String,
+        }
+    }
+}
+
+/// Error returned when parsing an unrecognized primitive type name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsePrimitiveTypeError {
+    name: std::string::String,
+}
+
+impl fmt::Display for ParsePrimitiveTypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown primitive type: {}", self.name)
+    }
+}
+
+impl std::error::Error for ParsePrimitiveTypeError {}
+
+impl FromStr for PrimitiveType {
+    type Err = ParsePrimitiveTypeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "null" => Ok(PrimitiveType::Null),
+            "boolean" => Ok(PrimitiveType::Boolean),
+            "int" => Ok(PrimitiveType::Int),
+            "long" => Ok(PrimitiveType::Long),
+            "float" => Ok(PrimitiveType::Float),
+            "double" => Ok(PrimitiveType::Double),
+            "bytes" => Ok(PrimitiveType::Bytes),
+            "string" => Ok(PrimitiveType::String),
+            other => Err(ParsePrimitiveTypeError {
+                name: other.to_string(),
+            }),
         }
     }
 }
@@ -183,6 +233,22 @@ pub struct Field {
 }
 
 impl AvroSchema {
+    /// If this is a primitive variant (`Null` through `String`), return its
+    /// Avro type name. Returns `None` for all non-primitive variants.
+    pub fn primitive_type_name(&self) -> Option<&'static str> {
+        match self {
+            AvroSchema::Null => Some("null"),
+            AvroSchema::Boolean => Some("boolean"),
+            AvroSchema::Int => Some("int"),
+            AvroSchema::Long => Some("long"),
+            AvroSchema::Float => Some("float"),
+            AvroSchema::Double => Some("double"),
+            AvroSchema::Bytes => Some("bytes"),
+            AvroSchema::String => Some("string"),
+            _ => None,
+        }
+    }
+
     /// Returns the full name of a named type (namespace.name), or `None` if not a named type.
     ///
     /// Returns `Cow::Borrowed` when there is no namespace (avoiding allocation),
@@ -226,17 +292,12 @@ impl AvroSchema {
     /// This mirrors Java's `Schema.getFullName()` behavior used in
     /// `UnionSchema`'s constructor for duplicate checking.
     pub fn union_type_key(&self) -> String {
-        match self {
-            // Primitives: keyed by their type name.
-            AvroSchema::Null => "null".to_string(),
-            AvroSchema::Boolean => "boolean".to_string(),
-            AvroSchema::Int => "int".to_string(),
-            AvroSchema::Long => "long".to_string(),
-            AvroSchema::Float => "float".to_string(),
-            AvroSchema::Double => "double".to_string(),
-            AvroSchema::Bytes => "bytes".to_string(),
-            AvroSchema::String => "string".to_string(),
+        // Primitives: keyed by their type name.
+        if let Some(name) = self.primitive_type_name() {
+            return name.to_string();
+        }
 
+        match self {
             // Named types and references: keyed by fully qualified name.
             AvroSchema::Record { .. }
             | AvroSchema::Enum { .. }
@@ -265,20 +326,20 @@ impl AvroSchema {
                 LogicalType::Uuid => "string".to_string(),
                 LogicalType::Decimal { .. } => "bytes".to_string(),
             },
+
+            // Primitives are handled above by `primitive_type_name()`.
+            _ => unreachable!("all AvroSchema variants are covered"),
         }
     }
 
     /// Returns a human-readable type description for use in error messages.
     pub fn type_description(&self) -> String {
+        // Primitives: use their type name directly.
+        if let Some(name) = self.primitive_type_name() {
+            return name.to_string();
+        }
+
         match self {
-            AvroSchema::Null => "null".to_string(),
-            AvroSchema::Boolean => "boolean".to_string(),
-            AvroSchema::Int => "int".to_string(),
-            AvroSchema::Long => "long".to_string(),
-            AvroSchema::Float => "float".to_string(),
-            AvroSchema::Double => "double".to_string(),
-            AvroSchema::Bytes => "bytes".to_string(),
-            AvroSchema::String => "string".to_string(),
             AvroSchema::Record { name, .. } => format!("record {name}"),
             AvroSchema::Enum { name, .. } => format!("enum {name}"),
             AvroSchema::Fixed { name, .. } => format!("fixed {name}"),
@@ -295,6 +356,9 @@ impl AvroSchema {
                 LogicalType::Decimal { .. } => "decimal".to_string(),
             },
             AvroSchema::Reference { name, .. } => name.clone(),
+
+            // Primitives are handled above by `primitive_type_name()`.
+            _ => unreachable!("all AvroSchema variants are covered"),
         }
     }
 }
@@ -388,17 +452,7 @@ pub fn is_valid_default(value: &Value, schema: &AvroSchema) -> bool {
         // Annotated primitives: validate against the underlying primitive type.
         // =====================================================================
         AvroSchema::AnnotatedPrimitive { kind, .. } => {
-            let underlying = match kind {
-                PrimitiveType::Null => AvroSchema::Null,
-                PrimitiveType::Boolean => AvroSchema::Boolean,
-                PrimitiveType::Int => AvroSchema::Int,
-                PrimitiveType::Long => AvroSchema::Long,
-                PrimitiveType::Float => AvroSchema::Float,
-                PrimitiveType::Double => AvroSchema::Double,
-                PrimitiveType::Bytes => AvroSchema::Bytes,
-                PrimitiveType::String => AvroSchema::String,
-            };
-            is_valid_default(value, &underlying)
+            is_valid_default(value, &kind.to_schema())
         }
 
         // =====================================================================
