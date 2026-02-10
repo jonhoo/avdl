@@ -17,7 +17,7 @@
 use indexmap::IndexMap;
 use miette::SourceSpan;
 
-use crate::model::schema::AvroSchema;
+use crate::model::schema::{make_full_name, AvroSchema};
 
 // ==============================================================================
 // Avro Name Validation
@@ -226,12 +226,9 @@ fn collect_unresolved_refs(
             span,
             ..
         } => {
-            let full_name = match namespace {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.clone(),
-            };
-            if !known.contains_key(&full_name) {
-                unresolved.push((full_name, *span));
+            let full_name = make_full_name(name, namespace.as_deref());
+            if !known.contains_key(full_name.as_ref()) {
+                unresolved.push((full_name.into_owned(), *span));
             }
         }
         AvroSchema::Record { fields, .. } => {

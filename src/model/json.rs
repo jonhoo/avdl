@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Map, Value};
 
 use super::protocol::{Message, Protocol};
-use super::schema::{AvroSchema, Field, FieldOrder, LogicalType};
+use super::schema::{make_full_name, AvroSchema, Field, FieldOrder, LogicalType};
 
 /// Names from Java's `Schema.Type` enum. When a named type's simple name
 /// collides with one of these, the fully-qualified name must always be used
@@ -130,10 +130,7 @@ fn collect_named_types(
             ..
         } => {
             let effective_ns = namespace.as_deref().or(default_namespace);
-            let full_name = match effective_ns {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.clone(),
-            };
+            let full_name = make_full_name(name, effective_ns).into_owned();
             lookup.insert(full_name, schema.clone());
             // Nested types inside a record's fields inherit the record's
             // effective namespace (not the protocol-level default), per the
@@ -149,10 +146,7 @@ fn collect_named_types(
             name, namespace, ..
         } => {
             let effective_ns = namespace.as_deref().or(default_namespace);
-            let full_name = match effective_ns {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.clone(),
-            };
+            let full_name = make_full_name(name, effective_ns).into_owned();
             lookup.insert(full_name, schema.clone());
         }
         AvroSchema::Array { items, .. } => {
@@ -219,10 +213,7 @@ pub fn schema_to_json(
             aliases,
             properties,
         } => {
-            let full_name = match namespace {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.clone(),
-            };
+            let full_name = make_full_name(name, namespace.as_deref()).into_owned();
             if known_names.contains(&full_name) {
                 return Value::String(schema_ref_name(
                     name,
@@ -289,10 +280,7 @@ pub fn schema_to_json(
             aliases,
             properties,
         } => {
-            let full_name = match namespace {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.clone(),
-            };
+            let full_name = make_full_name(name, namespace.as_deref()).into_owned();
             if known_names.contains(&full_name) {
                 return Value::String(schema_ref_name(
                     name,
@@ -348,10 +336,7 @@ pub fn schema_to_json(
             aliases,
             properties,
         } => {
-            let full_name = match namespace {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.clone(),
-            };
+            let full_name = make_full_name(name, namespace.as_deref()).into_owned();
             if known_names.contains(&full_name) {
                 return Value::String(schema_ref_name(
                     name,
@@ -496,10 +481,7 @@ pub fn schema_to_json(
         AvroSchema::Reference {
             name, namespace, ..
         } => {
-            let full_name = match namespace {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.clone(),
-            };
+            let full_name = make_full_name(name, namespace.as_deref()).into_owned();
 
             // If already serialized, output a bare name (possibly shortened).
             if known_names.contains(&full_name) {
@@ -628,18 +610,12 @@ fn schema_ref_name(
         if SCHEMA_TYPE_NAMES.contains(&name) {
             // Name collides with a built-in type -- must use the full name
             // to avoid ambiguity in the JSON output.
-            match namespace {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.to_string(),
-            }
+            make_full_name(name, namespace).into_owned()
         } else {
             name.to_string()
         }
     } else {
-        match namespace {
-            Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-            _ => name.to_string(),
-        }
+        make_full_name(name, namespace).into_owned()
     }
 }
 

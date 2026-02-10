@@ -3,6 +3,17 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+/// Compute the fully-qualified name for an Avro named type.
+///
+/// When `namespace` is `Some` and non-empty, the result is `"namespace.name"`.
+/// Otherwise, the bare `name` is returned without allocation.
+pub(crate) fn make_full_name<'a>(name: &'a str, namespace: Option<&str>) -> Cow<'a, str> {
+    match namespace {
+        Some(ns) if !ns.is_empty() => Cow::Owned(format!("{ns}.{name}")),
+        _ => Cow::Borrowed(name),
+    }
+}
+
 /// Field sort order in Avro schemas.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldOrder {
@@ -189,10 +200,7 @@ impl AvroSchema {
             }
             | AvroSchema::Reference {
                 name, namespace, ..
-            } => Some(match namespace {
-                Some(ns) if !ns.is_empty() => Cow::Owned(format!("{ns}.{name}")),
-                _ => Cow::Borrowed(name.as_str()),
-            }),
+            } => Some(make_full_name(name, namespace.as_deref())),
             _ => None,
         }
     }
@@ -514,10 +522,7 @@ where
         AvroSchema::Reference {
             name, namespace, ..
         } => {
-            let full_name = match namespace {
-                Some(ns) if !ns.is_empty() => format!("{ns}.{name}"),
-                _ => name.clone(),
-            };
+            let full_name = make_full_name(name, namespace.as_deref());
             resolver(&full_name)
         }
         AvroSchema::Union {
