@@ -20,6 +20,7 @@ Error {
             },
             message: "duplicate field 'name' in record 'R'",
             label: None,
+            help: None,
         },
     },
 }

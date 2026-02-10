@@ -18,5 +18,6 @@ Error {
         },
         message: "Illegal name: null",
         label: None,
+        help: None,
     },
 }

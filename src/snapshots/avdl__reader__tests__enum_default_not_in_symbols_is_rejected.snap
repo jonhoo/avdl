@@ -18,5 +18,6 @@ Error {
         },
         message: "The Enum Default: NONEXISTENT is not in the enum symbol set: [\"A\", \"B\", \"C\"]",
         label: None,
+        help: None,
     },
 }

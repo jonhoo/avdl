@@ -18,5 +18,6 @@ Error {
         },
         message: "Duplicate in union: Bar",
         label: None,
+        help: None,
     },
 }

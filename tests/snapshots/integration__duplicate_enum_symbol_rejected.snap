@@ -20,6 +20,7 @@ Error {
             },
             message: "duplicate enum symbol: RED",
             label: None,
+            help: None,
         },
     },
 }

@@ -187,6 +187,9 @@ struct SyntaxError {
     /// Shorter label for the source-underline annotation in miette output.
     /// When `None`, the full `message` is used as the label (legacy behavior).
     label: Option<String>,
+    /// Additional help text (e.g., the full expected-token list when the main
+    /// message has been simplified).
+    help: Option<String>,
 }
 
 // ==========================================================================
@@ -212,6 +215,9 @@ struct EnrichedError {
     /// Shorter label for the source annotation. `None` means the message
     /// itself should be used as the label (the legacy behavior).
     label: Option<String>,
+    /// Additional help text displayed below the error (e.g., the full
+    /// expected-token list when the main message was simplified).
+    help: Option<String>,
 }
 
 /// Rewrites known ANTLR error patterns into more user-friendly messages.
@@ -235,6 +241,7 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
                      use `@{anno_name}(\"value\")` syntax"
             ),
             label: None,
+            help: None,
         });
     }
 
@@ -250,6 +257,7 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
         return Some(EnrichedError {
             message: format!("{msg} (annotations require `@name(value)` syntax)"),
             label: None,
+            help: None,
         });
     }
 
@@ -278,6 +286,10 @@ const EXPECTING_SET_TRUNCATION_THRESHOLD: usize = 5;
 /// Detects ANTLR error messages with large expected-token sets and rewrites
 /// them into more user-friendly messages with short labels.
 ///
+/// The full expected-token list is preserved in the `help` field so that
+/// miette renders it below the error, giving the user both a concise message
+/// and the full set of valid alternatives.
+///
 /// Handles three ANTLR error patterns:
 /// - `extraneous input '<tok>' expecting {<set>}`
 /// - `mismatched input '<tok>' expecting {<set>}`
@@ -293,17 +305,21 @@ fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
         return None;
     }
 
+    let help = format_expected_help(tokens);
+
     // Determine the offending token and error shape.
     if let Some(offending) = extract_quoted_token(msg, "extraneous input ") {
         if offending == "<EOF>" {
             return Some(EnrichedError {
                 message: "unexpected end of file".to_string(),
                 label: Some("unexpected end of file".to_string()),
+                help,
             });
         }
         return Some(EnrichedError {
             message: format!("unexpected token `{offending}`"),
             label: Some(format!("unexpected `{offending}`")),
+            help,
         });
     }
 
@@ -312,15 +328,36 @@ fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
             return Some(EnrichedError {
                 message: "unexpected end of file".to_string(),
                 label: Some("unexpected end of file".to_string()),
+                help,
             });
         }
         return Some(EnrichedError {
             message: format!("unexpected token `{offending}`"),
             label: Some(format!("unexpected `{offending}`")),
+            help,
         });
     }
 
     None
+}
+
+/// Formats the ANTLR expected-token set into a human-readable help string.
+///
+/// Strips internal tokens that aren't meaningful to users (DocComment,
+/// the SUB character `\u001A`, and `<EOF>`) and removes surrounding quotes
+/// from token names.
+fn format_expected_help(tokens: &str) -> Option<String> {
+    let cleaned: Vec<&str> = tokens
+        .split(',')
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .filter(|t| *t != "DocComment" && *t != "'\\u001A'" && *t != "<EOF>")
+        .map(|t| t.trim_matches('\''))
+        .collect();
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(format!("expected one of: {}", cleaned.join(", ")))
 }
 
 /// Extracts the token set string from `expecting {<set>}` in an ANTLR
@@ -527,9 +564,9 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
         // explanation. Fall back to the original if no pattern matches.
         let enriched = enrich_antlr_error(msg);
 
-        let (display_msg, label) = match enriched {
-            Some(e) => (e.message, e.label),
-            None => (msg.to_string(), None),
+        let (display_msg, label, help) = match enriched {
+            Some(e) => (e.message, e.label, e.help),
+            None => (msg.to_string(), None, None),
         };
 
         self.errors.borrow_mut().push(SyntaxError {
@@ -537,6 +574,7 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
             length,
             message: format!("line {line}:{column} {display_msg}"),
             label,
+            help,
         });
     }
 }
@@ -710,6 +748,7 @@ pub fn parse_idl_named(
             span: miette::SourceSpan::new(first.offset.into(), first.length),
             message: first.message.clone(),
             label: first.label.clone(),
+            help: first.help.clone(),
         }
         .into());
     }
@@ -815,6 +854,7 @@ fn make_diagnostic<'input>(
         span: miette::SourceSpan::new(offset.into(), length),
         message,
         label: None,
+        help: None,
     }
     .into()
 }
@@ -844,6 +884,7 @@ fn make_diagnostic_from_token(
         span: miette::SourceSpan::new(offset.into(), length),
         message,
         label: None,
+        help: None,
     }
     .into()
 }

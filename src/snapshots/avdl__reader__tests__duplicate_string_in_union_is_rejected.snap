@@ -18,5 +18,6 @@ Error {
         },
         message: "Duplicate in union: string",
         label: None,
+        help: None,
     },
 }

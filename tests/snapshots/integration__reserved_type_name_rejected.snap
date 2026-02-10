@@ -20,6 +20,7 @@ Error {
             },
             message: "Illegal name: int",
             label: None,
+            help: None,
         },
     },
 }

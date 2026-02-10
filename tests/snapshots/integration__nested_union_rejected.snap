@@ -20,6 +20,7 @@ Error {
             },
             message: "Unions may not immediately contain other unions (per the Avro specification, §schemas). Note: Java avro-tools incorrectly accepts this syntax, producing an empty union.",
             label: None,
+            help: None,
         },
     },
 }

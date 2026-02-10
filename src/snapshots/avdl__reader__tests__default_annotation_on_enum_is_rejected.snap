@@ -18,5 +18,6 @@ Error {
         },
         message: "Can't set reserved property: default",
         label: None,
+        help: None,
     },
 }

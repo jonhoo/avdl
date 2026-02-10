@@ -18,5 +18,6 @@ Error {
         },
         message: "One-way message 'send' must return void",
         label: None,
+        help: None,
     },
 }

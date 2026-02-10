@@ -18,5 +18,6 @@ Error {
         },
         message: "Type references may not be annotated",
         label: None,
+        help: None,
     },
 }

@@ -638,6 +638,7 @@ fn process_decl_items(
                             span: *span,
                             message: msg,
                             label: None,
+                            help: None,
                         }
                         .into());
                     }
@@ -660,6 +661,7 @@ fn process_decl_items(
                             span: *span,
                             message: msg,
                             label: None,
+                            help: None,
                         }
                         .into());
                     }
@@ -694,6 +696,7 @@ fn resolve_single_import(
                     span,
                     message: format!("{e}"),
                     label: None,
+                    help: None,
                 }
                 .into());
             }
@@ -804,6 +807,7 @@ fn wrap_import_error(
             span,
             message: format!("import {} {}", kind, resolved_path.display()),
             label: None,
+            help: None,
         };
         // Place ParseDiagnostic as root so its source span is rendered,
         // and attach the downstream error (e.g., JSON parse failure) as
@@ -862,6 +866,7 @@ fn validate_all_references(
             span: *span,
             message: format!("Undefined name: {name}"),
             label: None,
+            help: None,
         }
         .into());
     }

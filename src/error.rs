@@ -18,6 +18,9 @@ pub struct ParseDiagnostic {
     /// Shorter label for the source-underline annotation. When `None`, falls
     /// back to `message`.
     pub label: Option<String>,
+    /// Additional help text displayed below the error. Used to show the full
+    /// expected-token list when the main message has been simplified.
+    pub help: Option<String>,
 }
 
 impl std::fmt::Display for ParseDiagnostic {
@@ -31,6 +34,12 @@ impl std::error::Error for ParseDiagnostic {}
 impl miette::Diagnostic for ParseDiagnostic {
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
         Some(&self.src)
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.help
+            .as_ref()
+            .map(|h| Box::new(h) as Box<dyn std::fmt::Display + 'a>)
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {

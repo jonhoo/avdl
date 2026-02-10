@@ -9,3 +9,5 @@ expression: error
    : ^^^|^^^
    :    `-- unexpected `protocl`
    `----
+  help: expected one of: protocol, namespace, import, schema, enum, fixed,
+        error, record, @
