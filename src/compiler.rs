@@ -550,6 +550,7 @@ fn process_decl_items(
                             src: miette::NamedSource::new(source_name, source.to_string()),
                             span: *span,
                             message: msg,
+                            label: None,
                         }
                         .into());
                     }
@@ -571,6 +572,7 @@ fn process_decl_items(
                             src: miette::NamedSource::new(source_name, source.to_string()),
                             span: *span,
                             message: msg,
+                            label: None,
                         }
                         .into());
                     }
@@ -604,6 +606,7 @@ fn resolve_single_import(
                     src: miette::NamedSource::new(source_name, source.to_string()),
                     span,
                     message: format!("{e}"),
+                    label: None,
                 }
                 .into());
             }
@@ -711,6 +714,7 @@ fn wrap_import_error(
             src: miette::NamedSource::new(source_name, source.to_string()),
             span,
             message: format!("import {} {}", kind, resolved_path.display()),
+            label: None,
         };
         error.context(diag)
     } else {
@@ -765,6 +769,7 @@ fn validate_all_references(
             src: miette::NamedSource::new(source_name, source.to_string()),
             span: *span,
             message: format!("Undefined name: {name}"),
+            label: None,
         }
         .into());
     }

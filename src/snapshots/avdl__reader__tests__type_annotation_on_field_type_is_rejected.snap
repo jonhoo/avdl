@@ -17,5 +17,6 @@ Error {
             length: 1,
         },
         message: "Can't set reserved property: type",
+        label: None,
     },
 }

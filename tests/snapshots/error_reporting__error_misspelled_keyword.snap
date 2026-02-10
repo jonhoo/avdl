@@ -3,11 +3,9 @@ source: tests/error_reporting.rs
 expression: error
 ---
   x parse IDL source
-  `-> line 1:0 mismatched input 'protocl' expecting {<EOF>, '\u001A',
-      DocComment, 'protocol', 'namespace', 'import', 'schema', 'enum',
-      'fixed', 'error', 'record', '@'}
+  `-> line 1:0 unexpected token `protocl`
    ,-[<input>:1:1]
  1 | protocl P { record R { int x; } }
    : ^^^|^^^
-   :    `-- line 1:0 mismatched input 'protocl' expecting {<EOF>, '\u001A', DocComment, 'protocol', 'namespace', 'import', 'schema', 'enum', 'fixed', 'error', 'record', '@'}
+   :    `-- unexpected `protocl`
    `----

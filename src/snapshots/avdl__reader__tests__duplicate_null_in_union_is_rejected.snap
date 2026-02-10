@@ -17,5 +17,6 @@ Error {
             length: 4,
         },
         message: "Duplicate in union: null",
+        label: None,
     },
 }

@@ -17,5 +17,6 @@ Error {
             length: 6,
         },
         message: "Illegal name: null",
+        label: None,
     },
 }

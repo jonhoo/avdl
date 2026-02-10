@@ -184,6 +184,9 @@ struct SyntaxError {
     length: usize,
     /// The ANTLR error message (e.g., "mismatched input '}' expecting {';', ','}").
     message: String,
+    /// Shorter label for the source-underline annotation in miette output.
+    /// When `None`, the full `message` is used as the label (legacy behavior).
+    label: Option<String>,
 }
 
 // ==========================================================================
@@ -201,10 +204,20 @@ struct SyntaxError {
 // tokens together. We pattern-match on known error shapes to produce
 // more actionable messages while preserving the original as context.
 
+/// The result of enriching an ANTLR error message. Contains a rewritten
+/// `message` for Display and an optional shorter `label` for the source
+/// underline annotation.
+struct EnrichedError {
+    message: String,
+    /// Shorter label for the source annotation. `None` means the message
+    /// itself should be used as the label (the legacy behavior).
+    label: Option<String>,
+}
+
 /// Rewrites known ANTLR error patterns into more user-friendly messages.
 /// Returns `None` if the error doesn't match any known pattern, in which
 /// case the original message is used as-is.
-fn enrich_antlr_error(msg: &str) -> Option<String> {
+fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
     // Pattern 1: "no viable alternative at input '...@<word>...'"
     //
     // This occurs when `@word` appears without `(value)`. ANTLR merges the
@@ -216,10 +229,13 @@ fn enrich_antlr_error(msg: &str) -> Option<String> {
     if let Some(input) = extract_no_viable_input(msg)
         && let Some(anno_name) = extract_annotation_name(input)
     {
-        return Some(format!(
-            "annotation `@{anno_name}` is missing its value -- \
-                 use `@{anno_name}(\"value\")` syntax"
-        ));
+        return Some(EnrichedError {
+            message: format!(
+                "annotation `@{anno_name}` is missing its value -- \
+                     use `@{anno_name}(\"value\")` syntax"
+            ),
+            label: None,
+        });
     }
 
     // Pattern 2: "mismatched input '<token>' expecting '('"
@@ -231,10 +247,112 @@ fn enrich_antlr_error(msg: &str) -> Option<String> {
     //
     // https://github.com/antlr4rust/antlr4/pull/38
     if msg.contains("expecting '('") && msg.contains("mismatched input") {
-        return Some(format!("{msg} (annotations require `@name(value)` syntax)"));
+        return Some(EnrichedError {
+            message: format!("{msg} (annotations require `@name(value)` syntax)"),
+            label: None,
+        });
+    }
+
+    // Pattern 3: errors with a large expected-token set (more than 5 tokens).
+    //
+    // ANTLR dumps the full set of expected tokens when it encounters an
+    // unexpected token. For most grammar positions this set is huge (20-30
+    // tokens covering every Avro keyword, type name, and IdentifierToken).
+    // We detect these large sets and produce a shorter, more actionable
+    // message while keeping a concise label for the source annotation.
+    if let Some(enriched) = simplify_large_expecting_set(msg) {
+        return Some(enriched);
     }
 
     None
+}
+
+// ==========================================================================
+// Large Expected-Token Set Simplification
+// ==========================================================================
+
+/// Threshold: if the expected-token set contains more than this many tokens,
+/// we simplify the message instead of showing the full list.
+const EXPECTING_SET_TRUNCATION_THRESHOLD: usize = 5;
+
+/// Detects ANTLR error messages with large expected-token sets and rewrites
+/// them into more user-friendly messages with short labels.
+///
+/// Handles three ANTLR error patterns:
+/// - `extraneous input '<tok>' expecting {<set>}`
+/// - `mismatched input '<tok>' expecting {<set>}`
+/// - `no viable alternative at input '<tok>'` (without annotation pattern)
+fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
+    // Try to extract the expected-token set from `expecting {<set>}` or
+    // `expecting '<single-token>'`.
+    let expecting_tokens = extract_expecting_tokens(msg);
+
+    // Only simplify when the token set exceeds our threshold.
+    let tokens = expecting_tokens.as_deref()?;
+    if count_tokens_in_set(tokens) <= EXPECTING_SET_TRUNCATION_THRESHOLD {
+        return None;
+    }
+
+    // Determine the offending token and error shape.
+    if let Some(offending) = extract_quoted_token(msg, "extraneous input ") {
+        if offending == "<EOF>" {
+            return Some(EnrichedError {
+                message: "unexpected end of file".to_string(),
+                label: Some("unexpected end of file".to_string()),
+            });
+        }
+        return Some(EnrichedError {
+            message: format!("unexpected token `{offending}`"),
+            label: Some(format!("unexpected `{offending}`")),
+        });
+    }
+
+    if let Some(offending) = extract_quoted_token(msg, "mismatched input ") {
+        if offending == "<EOF>" {
+            return Some(EnrichedError {
+                message: "unexpected end of file".to_string(),
+                label: Some("unexpected end of file".to_string()),
+            });
+        }
+        return Some(EnrichedError {
+            message: format!("unexpected token `{offending}`"),
+            label: Some(format!("unexpected `{offending}`")),
+        });
+    }
+
+    None
+}
+
+/// Extracts the token set string from `expecting {<set>}` in an ANTLR
+/// error message. Returns the content between the braces, or `None` if the
+/// pattern is not found.
+fn extract_expecting_tokens(msg: &str) -> Option<&str> {
+    let prefix = "expecting {";
+    let start = msg.find(prefix)? + prefix.len();
+    let end = start + msg[start..].find('}')?;
+    Some(&msg[start..end])
+}
+
+/// Counts the number of comma-separated tokens in an ANTLR expected-token
+/// set string. Handles both `{tok1, tok2, ...}` and single-token forms.
+fn count_tokens_in_set(set: &str) -> usize {
+    if set.trim().is_empty() {
+        return 0;
+    }
+    set.split(',').count()
+}
+
+/// Extracts the quoted token after a given prefix in an ANTLR error message.
+/// For example, given prefix `"extraneous input "` and message
+/// `"extraneous input '<EOF>' expecting {…}"`, returns `Some("<EOF>")`.
+fn extract_quoted_token<'a>(msg: &'a str, prefix: &str) -> Option<&'a str> {
+    let start = msg.find(prefix)? + prefix.len();
+    let rest = &msg[start..];
+    if !rest.starts_with('\'') {
+        return None;
+    }
+    let end = rest[1..].find('\'')?;
+    Some(&rest[1..1 + end])
 }
 
 /// Extracts the quoted input string from a "no viable alternative at input
@@ -408,12 +526,17 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
         // Try to enrich the raw ANTLR message with a more user-friendly
         // explanation. Fall back to the original if no pattern matches.
         let enriched = enrich_antlr_error(msg);
-        let display_msg = enriched.as_deref().unwrap_or(msg);
+
+        let (display_msg, label) = match enriched {
+            Some(e) => (e.message, e.label),
+            None => (msg.to_string(), None),
+        };
 
         self.errors.borrow_mut().push(SyntaxError {
             offset,
             length,
             message: format!("line {line}:{column} {display_msg}"),
+            label,
         });
     }
 }
@@ -586,6 +709,7 @@ pub fn parse_idl_named(
             src: miette::NamedSource::new(source_name, input.to_string()),
             span: miette::SourceSpan::new(first.offset.into(), first.length),
             message: first.message.clone(),
+            label: first.label.clone(),
         }
         .into());
     }
@@ -690,6 +814,7 @@ fn make_diagnostic<'input>(
         src: miette::NamedSource::new(src.name, src.source.to_string()),
         span: miette::SourceSpan::new(offset.into(), length),
         message,
+        label: None,
     }
     .into()
 }
@@ -718,6 +843,7 @@ fn make_diagnostic_from_token(
         src: miette::NamedSource::new(src.name, src.source.to_string()),
         span: miette::SourceSpan::new(offset.into(), length),
         message,
+        label: None,
     }
     .into()
 }
@@ -4359,7 +4485,7 @@ mod tests {
     fn enrich_no_viable_alternative_with_annotation() {
         // ANTLR merges `@beta` and `record` into `@betarecord`.
         let msg = "no viable alternative at input '@betarecord'";
-        let enriched = enrich_antlr_error(msg).expect("should match");
+        let enriched = enrich_antlr_error(msg).expect("should match").message;
         assert!(
             enriched.contains("@beta"),
             "should extract annotation name: {enriched}"
@@ -4375,7 +4501,7 @@ mod tests {
         // When a valid `@namespace(...)` precedes a bare `@version`, ANTLR
         // merges everything: `@namespace("com.example")@versionprotocol`.
         let msg = "no viable alternative at input '@namespace(\"com.example\")@versionprotocol'";
-        let enriched = enrich_antlr_error(msg).expect("should match");
+        let enriched = enrich_antlr_error(msg).expect("should match").message;
         assert!(
             enriched.contains("@version"),
             "should identify the bare annotation: {enriched}"
@@ -4390,7 +4516,7 @@ mod tests {
     #[test]
     fn enrich_mismatched_input_expecting_lparen() {
         let msg = "mismatched input 'string' expecting '('";
-        let enriched = enrich_antlr_error(msg).expect("should match");
+        let enriched = enrich_antlr_error(msg).expect("should match").message;
         assert!(
             enriched.contains("@name(value)"),
             "should explain annotation syntax: {enriched}"
@@ -4403,13 +4529,60 @@ mod tests {
     }
 
     #[test]
-    fn enrich_returns_none_for_unrecognized_errors() {
-        // Errors that don't match any known pattern should pass through.
+    fn enrich_returns_none_for_small_expecting_set() {
+        // Errors with a small expected-token set should pass through unchanged.
         let msg = "mismatched input '}' expecting {';', ','}";
         assert!(
             enrich_antlr_error(msg).is_none(),
-            "should not enrich unrecognized errors"
+            "should not enrich errors with small token sets"
         );
+    }
+
+    #[test]
+    fn enrich_large_extraneous_eof() {
+        // When <EOF> is the extraneous token and the set is large, we should
+        // produce a concise "unexpected end of file" message.
+        let msg = "extraneous input '<EOF>' expecting {DocComment, 'protocol', \
+                   'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', \
+                   'error', 'record', 'array', 'map'}";
+        let enriched = enrich_antlr_error(msg).expect("should match large set");
+        assert_eq!(enriched.message, "unexpected end of file");
+        assert_eq!(
+            enriched.label.as_deref(),
+            Some("unexpected end of file"),
+        );
+    }
+
+    #[test]
+    fn enrich_large_extraneous_token() {
+        // When a specific token is extraneous and the set is large, we should
+        // produce "unexpected token `<tok>`".
+        let msg = "extraneous input '123' expecting {DocComment, 'protocol', \
+                   'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', \
+                   'error', 'record', 'array', 'map'}";
+        let enriched = enrich_antlr_error(msg).expect("should match large set");
+        assert_eq!(enriched.message, "unexpected token `123`");
+        assert_eq!(enriched.label.as_deref(), Some("unexpected `123`"));
+    }
+
+    #[test]
+    fn enrich_large_mismatched_token() {
+        // Mismatched input with a large expected-token set.
+        let msg = "mismatched input 'protocl' expecting {<EOF>, '\\u001A', \
+                   DocComment, 'protocol', 'namespace', 'import', 'schema', \
+                   'enum', 'fixed', 'error', 'record', '@'}";
+        let enriched = enrich_antlr_error(msg).expect("should match large set");
+        assert_eq!(enriched.message, "unexpected token `protocl`");
+        assert_eq!(enriched.label.as_deref(), Some("unexpected `protocl`"));
+    }
+
+    #[test]
+    fn enrich_large_mismatched_eof() {
+        let msg = "mismatched input '<EOF>' expecting {'protocol', 'namespace', \
+                   'import', 'idl', 'schema', 'enum', 'fixed', 'error', \
+                   'record', 'array', 'map', 'union'}";
+        let enriched = enrich_antlr_error(msg).expect("should match large set");
+        assert_eq!(enriched.message, "unexpected end of file");
     }
 
     #[test]

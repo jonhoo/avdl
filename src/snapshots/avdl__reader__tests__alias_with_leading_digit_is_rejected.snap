@@ -17,5 +17,6 @@ Error {
             length: 1,
         },
         message: "invalid alias name: 123bad",
+        label: None,
     },
 }
