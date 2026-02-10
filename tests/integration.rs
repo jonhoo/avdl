@@ -1182,3 +1182,227 @@ fn test_annotation_on_type_reference_file() {
     let err = result.unwrap_err();
     insta::assert_snapshot!(render_diagnostic(&err));
 }
+
+// ==============================================================================
+// Schema Mode Tests: Standalone `schema <type>;` Declarations
+// ==============================================================================
+//
+// These tests exercise the schema mode path in `walk_idl_file`, which produces
+// a standalone `.avsc` JSON value rather than a protocol `.avpr` object. The
+// existing test coverage only covered `schema array<T>` with named types;
+// these tests fill the gaps for primitives, logical types, maps, unions,
+// nullable shorthand, and namespace interactions.
+
+#[test]
+fn test_schema_mode_primitive_int() {
+    let json = parse_inline_to_json("schema int;");
+    assert_eq!(json, serde_json::json!("int"));
+}
+
+#[test]
+fn test_schema_mode_primitive_string() {
+    let json = parse_inline_to_json("schema string;");
+    assert_eq!(json, serde_json::json!("string"));
+}
+
+#[test]
+fn test_schema_mode_primitive_boolean() {
+    let json = parse_inline_to_json("schema boolean;");
+    assert_eq!(json, serde_json::json!("boolean"));
+}
+
+#[test]
+fn test_schema_mode_primitive_long() {
+    let json = parse_inline_to_json("schema long;");
+    assert_eq!(json, serde_json::json!("long"));
+}
+
+#[test]
+fn test_schema_mode_primitive_bytes() {
+    let json = parse_inline_to_json("schema bytes;");
+    assert_eq!(json, serde_json::json!("bytes"));
+}
+
+#[test]
+fn test_schema_mode_primitive_float() {
+    let json = parse_inline_to_json("schema float;");
+    assert_eq!(json, serde_json::json!("float"));
+}
+
+#[test]
+fn test_schema_mode_primitive_double() {
+    let json = parse_inline_to_json("schema double;");
+    assert_eq!(json, serde_json::json!("double"));
+}
+
+#[test]
+fn test_schema_mode_primitive_null() {
+    let json = parse_inline_to_json("schema null;");
+    assert_eq!(json, serde_json::json!("null"));
+}
+
+#[test]
+fn test_schema_mode_logical_type_date() {
+    let json = parse_inline_to_json("schema date;");
+    assert_eq!(json["type"], "int");
+    assert_eq!(json["logicalType"], "date");
+}
+
+#[test]
+fn test_schema_mode_logical_type_uuid() {
+    let json = parse_inline_to_json("schema uuid;");
+    assert_eq!(json["type"], "string");
+    assert_eq!(json["logicalType"], "uuid");
+}
+
+#[test]
+fn test_schema_mode_logical_type_time_ms() {
+    let json = parse_inline_to_json("schema time_ms;");
+    assert_eq!(json["type"], "int");
+    assert_eq!(json["logicalType"], "time-millis");
+}
+
+#[test]
+fn test_schema_mode_logical_type_timestamp_ms() {
+    let json = parse_inline_to_json("schema timestamp_ms;");
+    assert_eq!(json["type"], "long");
+    assert_eq!(json["logicalType"], "timestamp-millis");
+}
+
+#[test]
+fn test_schema_mode_logical_type_decimal() {
+    let json = parse_inline_to_json("schema decimal(10, 2);");
+    assert_eq!(json["type"], "bytes");
+    assert_eq!(json["logicalType"], "decimal");
+    assert_eq!(json["precision"], 10);
+    assert_eq!(json["scale"], 2);
+}
+
+#[test]
+fn test_schema_mode_map() {
+    let json = parse_inline_to_json("schema map<string>;");
+    assert_eq!(json["type"], "map");
+    assert_eq!(json["values"], "string");
+}
+
+#[test]
+fn test_schema_mode_map_with_complex_values() {
+    let json = parse_inline_to_json("schema map<array<int>>;");
+    assert_eq!(json["type"], "map");
+    assert_eq!(json["values"]["type"], "array");
+    assert_eq!(json["values"]["items"], "int");
+}
+
+#[test]
+fn test_schema_mode_union() {
+    let json = parse_inline_to_json("schema union { null, string };");
+    let union = json.as_array().expect("union should serialize as a JSON array");
+    assert_eq!(union.len(), 2);
+    assert_eq!(union[0], "null");
+    assert_eq!(union[1], "string");
+}
+
+#[test]
+fn test_schema_mode_union_multiple_types() {
+    let json = parse_inline_to_json("schema union { null, string, int, long };");
+    let union = json.as_array().expect("union should serialize as a JSON array");
+    assert_eq!(union.len(), 4);
+    assert_eq!(union[0], "null");
+    assert_eq!(union[1], "string");
+    assert_eq!(union[2], "int");
+    assert_eq!(union[3], "long");
+}
+
+#[test]
+fn test_schema_mode_nullable_shorthand() {
+    let json = parse_inline_to_json("schema string?;");
+    let union = json.as_array().expect("nullable should serialize as a union array");
+    assert_eq!(union.len(), 2);
+    assert_eq!(union[0], "null");
+    assert_eq!(union[1], "string");
+}
+
+#[test]
+fn test_schema_mode_nullable_int() {
+    let json = parse_inline_to_json("schema int?;");
+    let union = json.as_array().expect("nullable should serialize as a union array");
+    assert_eq!(union.len(), 2);
+    assert_eq!(union[0], "null");
+    assert_eq!(union[1], "int");
+}
+
+#[test]
+fn test_schema_mode_array() {
+    let json = parse_inline_to_json("schema array<string>;");
+    assert_eq!(json["type"], "array");
+    assert_eq!(json["items"], "string");
+}
+
+#[test]
+fn test_schema_mode_named_type_with_namespace() {
+    // The grammar requires `schema <type>;` before named type declarations.
+    // The schema declaration forward-references the record defined below it.
+    let json = parse_inline_to_json(
+        r#"
+        namespace org.test;
+        schema Foo;
+        @namespace("org.test")
+        record Foo { string name; }
+        "#,
+    );
+    assert_eq!(json["type"], "record");
+    assert_eq!(json["name"], "Foo");
+    assert_eq!(json["namespace"], "org.test");
+    let fields = json["fields"].as_array().expect("record should have fields");
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0]["name"], "name");
+    assert_eq!(fields[0]["type"], "string");
+}
+
+#[test]
+fn test_schema_mode_namespace_directive() {
+    let json = parse_inline_to_json(
+        r#"
+        namespace org.example;
+        schema Bar;
+        record Bar { int value; }
+        "#,
+    );
+    assert_eq!(json["type"], "record");
+    assert_eq!(json["name"], "Bar");
+    assert_eq!(json["namespace"], "org.example");
+}
+
+#[test]
+fn test_schema_mode_multiple_named_types_with_schema_ref() {
+    // When multiple named types are declared and `schema` references one,
+    // all named types should be available for cross-referencing. The grammar
+    // requires `schema <type>;` before named type declarations.
+    let json = parse_inline_to_json(
+        r#"
+        namespace org.test;
+        schema Item;
+        enum Color { RED, GREEN, BLUE }
+        record Item {
+            string name;
+            Color color;
+        }
+        "#,
+    );
+    assert_eq!(json["type"], "record");
+    assert_eq!(json["name"], "Item");
+    let fields = json["fields"].as_array().expect("record should have fields");
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0]["name"], "name");
+    // The Color enum should be inlined on first occurrence within the schema.
+    let color_type = &fields[1]["type"];
+    assert_eq!(color_type["type"], "enum");
+    assert_eq!(color_type["name"], "Color");
+}
+
+#[test]
+fn test_schema_mode_custom_logical_type_annotation() {
+    let json = parse_inline_to_json("schema @logicalType(\"date\") int;");
+    assert_eq!(json["type"], "int");
+    assert_eq!(json["logicalType"], "date");
+}
