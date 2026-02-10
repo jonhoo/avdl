@@ -138,6 +138,7 @@ in CLAUDE.md.
         (`parse_idl2schemata`, `process_decl_items_test`) have the
         same bug. Past iterations had divergence from updating
         `main.rs` without updating the test helper.
+      - These agents **do not update CHANGELOG.md**.
 
       > **Sub-agent permissions:** Sub-agents launched with
       > `run_in_background` cannot perform interactive operations —
@@ -197,18 +198,20 @@ After all waves complete:
    addressed gaps, updated priorities).
 3. **Review SESSION.md**: File issues for any observations that
    warrant them. Clean up entries that have been addressed.
-4. **Review permission friction**: Look at which bash commands agents
+4. Update `CHANGELOG.md` to reflect the changes made across all the
+   waves of the iteration.
+5. **Review permission friction**: Look at which bash commands agents
    commonly needed manual approval for during this iteration. Consider
    whether wrapper scripts, allowlist entries, or other tooling could
    reduce the permission prompts for future iterations.
-5. **Attempt to improve this prompt**: Review what went well and what
+6. **Attempt to improve this prompt**: Review what went well and what
    was friction during this iteration. Update this file with any
    improvements — better instructions, new tips, corrected
    assumptions. Commit the change.
-6. Append a brief summary of the loop to a new file
+7. Append a brief summary of the loop to a new file
    `agent-logs/loop-NN.md` (zero-padded iteration number) for
    the user to peruse later.
-7. **Return to Phase 1** for the next iteration.
+8. **Return to Phase 1** for the next iteration.
 
 ---
 
