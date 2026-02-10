@@ -1,8 +1,8 @@
-# Detect when non-Cargo upstream dependencies have newer releases.
-# The avro submodule and the antlr4rust tool JAR are pinned manually,
-# so cargo update and Dependabot don't cover them. These jobs file
-# (or update) a GitHub issue with the `staleness` label when we fall
-# behind.
+# Detect when the antlr4rust tool JAR falls behind upstream releases.
+# The JAR version is pinned manually in scripts/regenerate-antlr.sh,
+# so cargo update and Dependabot don't cover it. This job files (or
+# updates) a GitHub issue with the `staleness` label when we fall
+# behind, and closes it when we catch up.
 permissions:
   contents: read
   issues: write
@@ -11,79 +11,14 @@ on:
     # Weekly on Sunday at 07:07 UTC — upstream releases are infrequent
     # so nightly checks would be wasteful.
     - cron: '7 7 * * 0'
+  push:
+    branches: [main]
+    paths:
+      - 'src/generated/**'
+      - 'scripts/regenerate-antlr.sh'
   workflow_dispatch:
-name: staleness
+name: antlr-staleness
 jobs:
-  avro-staleness:
-    runs-on: ubuntu-latest
-    name: Check for new apache/avro releases
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      # Fetch all tags from the upstream avro repo so we can compare.
-      - name: Fetch upstream tags
-        run: |
-          cd avro
-          git fetch --tags https://github.com/apache/avro.git
-
-      # Compare the pinned submodule commit against the latest
-      # release-* tag. If we're behind, collect the list of missed
-      # releases with links to their GitHub release pages.
-      - name: Check for newer releases
-        id: check
-        run: |
-          cd avro
-          CURRENT=$(git rev-parse HEAD)
-          # Tags follow the pattern release-1.12.0, release-1.13.0, etc.
-          LATEST_TAG=$(git tag --list 'release-*' --sort=-v:refname \
-                       | head -1)
-          LATEST_COMMIT=$(git rev-parse "$LATEST_TAG")
-          if [ "$CURRENT" = "$LATEST_COMMIT" ]; then
-            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
-          else
-            # List every release tag that is NOT an ancestor of HEAD
-            # (i.e., tags we haven't incorporated yet).
-            MISSED=""
-            for tag in $(git tag --list 'release-*' \
-                         --sort=-v:refname); do
-              if ! git merge-base --is-ancestor "$tag" HEAD 2>/dev/null
-              then
-                VER="${tag#release-}"
-                URL="https://github.com/apache/avro/releases/tag/$tag"
-                MISSED="${MISSED}- [\`$tag\`]($URL)\n"
-              fi
-            done
-            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
-            # Write multi-line body to a file for the issue step.
-            {
-              echo "The \`avro\` submodule is behind upstream."
-              echo "Current commit: \`$CURRENT\`"
-              echo ""
-              echo "Missed releases:"
-              echo -e "$MISSED"
-            } > /tmp/issue-body.md
-          fi
-
-      # File (or update) a GitHub issue when we're behind.
-      - name: Create or update issue
-        if: steps.check.outputs.up_to_date == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TITLE="avro submodule is behind upstream"
-          EXISTING=$(gh issue list --label staleness \
-                     --search "$TITLE" --state open --json number \
-                     --jq '.[0].number // empty')
-          BODY=$(cat /tmp/issue-body.md)
-          if [ -n "$EXISTING" ]; then
-            gh issue edit "$EXISTING" --body "$BODY"
-          else
-            gh issue create --title "$TITLE" \
-              --label staleness --body "$BODY"
-          fi
-
   antlr-staleness:
     runs-on: ubuntu-latest
     name: Check for new antlr4rust releases
@@ -187,4 +122,23 @@ jobs:
           else
             gh issue create --title "$TITLE" \
               --label staleness --body "$BODY"
+          fi
+
+      # Close the staleness issue when we're already on the latest release.
+      - name: Close resolved issue
+        if: steps.check.outputs.up_to_date == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The issue title includes the version, so search by the
+          # stable prefix to match regardless of which version was
+          # filed against.
+          PINNED="${{ steps.pinned.outputs.version }}"
+          EXISTING=$(gh issue list --label staleness \
+                     --search "antlr4rust has a newer release" \
+                     --state open --json number \
+                     --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" \
+              --comment "Resolved: now pinned to \`$PINNED\`, which is the latest release."
           fi
