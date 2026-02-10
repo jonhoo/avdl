@@ -248,7 +248,9 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   (spec compliance audit, import edge cases, property handling) were
   more effective than 5 broad agents. They produced thorough
   SESSION.md audit trails with minimal overlap and one genuine bug.
-  As the codebase matures, prefer fewer, more specialized agents.
+  As the codebase matures, prefer fewer (but still >3), more specialized
+  agents. But consider the exploration-exploitation trade-off: you
+  should still run _some_ broad agents _some_ of the time.
 - **TODO-driven discovery works well for directed investigation**:
   In iteration 11, spawning one agent per `TODOs.md` item produced
   focused, non-overlapping results. Two items were correctly triaged
