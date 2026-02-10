@@ -11,6 +11,12 @@
 // Both follow the non-consuming `&mut self` builder pattern (C-BUILDER), so the
 // same builder can be reused across multiple calls. All mutable compilation
 // state (registry, import context) is created fresh per call.
+//
+// Internally, both delegate to a shared `IdlCompiler` struct that owns the
+// common builder state (import directories, accumulated warnings) and provides
+// the shared compilation preamble (file reading, path resolution, parsing, and
+// import resolution). The type-specific serialization logic lives in each
+// builder's `*_impl` method.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -27,6 +33,135 @@ use crate::model::protocol::Message;
 use crate::model::schema::validate_record_field_defaults;
 use crate::reader::{DeclItem, IdlFile, ImportKind, parse_idl_named};
 use crate::resolve::SchemaRegistry;
+
+// ==============================================================================
+// Shared `IdlCompiler` — common builder state and compilation preamble
+// ==============================================================================
+
+/// Shared inner struct that owns the builder state common to both [`Idl`] and
+/// [`Idl2Schemata`]: import directories and accumulated warnings.
+///
+/// This is intentionally private — the public API surface is through `Idl` and
+/// `Idl2Schemata`, which wrap this struct and add their type-specific
+/// serialization logic.
+struct IdlCompiler {
+    import_dirs: Vec<PathBuf>,
+    /// Warnings accumulated during the most recent compilation call. Populated
+    /// even when the call returns `Err`, so the CLI can emit warnings before
+    /// propagating the error.
+    accumulated_warnings: Vec<miette::Report>,
+}
+
+/// The result of a successful compilation preamble: the parsed IDL file and
+/// schema registry, plus any non-fatal warnings. Passed to the type-specific
+/// serialization logic in `Idl::convert_impl` and `Idl2Schemata::extract_impl`.
+///
+/// Includes the source text and source name so that type-specific logic (e.g.,
+/// `Idl::convert_impl`'s `NamedSchemas` rejection) can produce rich
+/// `ParseDiagnostic` errors with source spans.
+struct CompileOutput {
+    idl_file: IdlFile,
+    registry: SchemaRegistry,
+    warnings: Vec<miette::Report>,
+    /// Original source text, retained for error diagnostics in type-specific
+    /// serialization logic.
+    source: String,
+    /// Name used for the source in diagnostics (e.g., file path or `"<input>"`).
+    source_name: String,
+}
+
+impl IdlCompiler {
+    fn new() -> Self {
+        IdlCompiler {
+            import_dirs: Vec::new(),
+            accumulated_warnings: Vec::new(),
+        }
+    }
+
+    fn import_dir(&mut self, dir: PathBuf) {
+        self.import_dirs.push(dir);
+    }
+
+    fn drain_warnings(&mut self) -> Vec<miette::Report> {
+        std::mem::take(&mut self.accumulated_warnings)
+    }
+
+    /// Read a `.avdl` file and resolve its path components, then compile it.
+    ///
+    /// This is the shared implementation behind `Idl::convert(path)` and
+    /// `Idl2Schemata::extract(path)`. It reads the file, determines the parent
+    /// directory and canonical path, then delegates to [`compile`](Self::compile).
+    fn compile_file(&mut self, path: &Path) -> miette::Result<CompileOutput> {
+        let source = fs::read_to_string(path)
+            .map_err(|e| miette::miette!("{e}"))
+            .with_context(|| format!("read {}", path.display()))?;
+
+        let source_name = path.display().to_string();
+        let dir = path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let dir = dir.canonicalize().unwrap_or(dir);
+        let canonical_path = path.canonicalize().ok();
+
+        self.compile(&source, &source_name, &dir, canonical_path)
+    }
+
+    /// Compile an IDL source string using the current working directory as the
+    /// import base. This is the shared implementation behind
+    /// `Idl::convert_str_named` and `Idl2Schemata::extract_str_named`.
+    fn compile_str(&mut self, source: &str, name: &str) -> miette::Result<CompileOutput> {
+        let cwd = std::env::current_dir()
+            .map_err(|e| miette::miette!("{e}"))
+            .context("determine current directory")?;
+        self.compile(source, name, &cwd, None)
+    }
+
+    /// Core compilation preamble shared by both `Idl` and `Idl2Schemata`.
+    ///
+    /// Clears accumulated warnings, creates a fresh `CompileContext`, runs
+    /// `parse_and_resolve`, and validates all type references. On success,
+    /// returns the parsed IDL file, schema registry, and non-fatal warnings.
+    /// On failure, stores warnings in `self.accumulated_warnings` so they
+    /// are available via [`drain_warnings`](Self::drain_warnings).
+    fn compile(
+        &mut self,
+        source: &str,
+        source_name: &str,
+        input_dir: &Path,
+        input_path: Option<PathBuf>,
+    ) -> miette::Result<CompileOutput> {
+        self.accumulated_warnings.clear();
+
+        let mut ctx = CompileContext::new(&self.import_dirs);
+
+        let (idl_file, registry) =
+            match parse_and_resolve(source, source_name, input_dir, input_path, &mut ctx) {
+                Ok((idl_file, registry)) => (idl_file, registry),
+                Err(e) => {
+                    self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+                    return Err(e);
+                }
+            };
+
+        // Validate that all type references resolved. Unresolved references
+        // indicate missing imports, undefined types, or cross-namespace
+        // references that need fully-qualified names.
+        if let Err(e) = validate_all_references(&idl_file, &registry, source, source_name) {
+            self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+            return Err(e);
+        }
+
+        let warnings = std::mem::take(&mut ctx.warnings);
+        Ok(CompileOutput {
+            idl_file,
+            registry,
+            warnings,
+            source: source.to_string(),
+            source_name: source_name.to_string(),
+        })
+    }
+}
 
 // ==============================================================================
 // `Idl` Builder — mirrors `avdl idl`
@@ -57,11 +192,7 @@ use crate::resolve::SchemaRegistry;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct Idl {
-    import_dirs: Vec<PathBuf>,
-    /// Warnings accumulated during the most recent `convert*` call. Populated
-    /// even when the call returns `Err`, so the CLI can emit warnings before
-    /// propagating the error. Drained via [`Idl::drain_warnings`].
-    accumulated_warnings: Vec<miette::Report>,
+    inner: IdlCompiler,
 }
 
 /// Result of compiling an Avro IDL source.
@@ -110,15 +241,14 @@ impl Idl {
     /// Create a new builder with no import directories.
     pub fn new() -> Self {
         Idl {
-            import_dirs: Vec::new(),
-            accumulated_warnings: Vec::new(),
+            inner: IdlCompiler::new(),
         }
     }
 
     /// Add an import search directory. Searched in order added, after the input
     /// file's parent directory.
     pub fn import_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
-        self.import_dirs.push(dir.into());
+        self.inner.import_dir(dir.into());
         self
     }
 
@@ -133,25 +263,13 @@ impl Idl {
     /// Each call drains the internal buffer, so a second call returns an
     /// empty `Vec`.
     pub fn drain_warnings(&mut self) -> Vec<miette::Report> {
-        std::mem::take(&mut self.accumulated_warnings)
+        self.inner.drain_warnings()
     }
 
     /// Compile a `.avdl` file to JSON.
     pub fn convert(&mut self, path: impl AsRef<Path>) -> miette::Result<IdlOutput> {
-        let path = path.as_ref();
-        let source = fs::read_to_string(path)
-            .map_err(|e| miette::miette!("{e}"))
-            .with_context(|| format!("read {}", path.display()))?;
-
-        let source_name = path.display().to_string();
-        let dir = path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let dir = dir.canonicalize().unwrap_or(dir);
-        let canonical_path = path.canonicalize().ok();
-
-        self.convert_impl(&source, &source_name, &dir, canonical_path)
+        let compiled = self.inner.compile_file(path.as_ref())?;
+        self.convert_impl(compiled)
     }
 
     /// Compile an IDL source string to JSON. Uses `"<input>"` as the source
@@ -163,36 +281,24 @@ impl Idl {
     /// Compile an IDL source string to JSON with a custom source name for
     /// diagnostics.
     pub fn convert_str_named(&mut self, source: &str, name: &str) -> miette::Result<IdlOutput> {
-        let cwd = std::env::current_dir()
-            .map_err(|e| miette::miette!("{e}"))
-            .context("determine current directory")?;
-        self.convert_impl(source, name, &cwd, None)
+        let compiled = self.inner.compile_str(source, name)?;
+        self.convert_impl(compiled)
     }
 
-    /// Shared implementation for `convert` and `convert_str_named`.
+    /// Type-specific serialization: serialize the parsed IDL to a single JSON
+    /// value (protocol or schema).
     ///
-    /// Always stores accumulated warnings in `self.accumulated_warnings`,
-    /// regardless of whether the call succeeds or fails. This enables
-    /// [`drain_warnings`](Idl::drain_warnings) on the error path.
-    fn convert_impl(
-        &mut self,
-        source: &str,
-        source_name: &str,
-        input_dir: &Path,
-        input_path: Option<PathBuf>,
-    ) -> miette::Result<IdlOutput> {
-        self.accumulated_warnings.clear();
-
-        let mut ctx = CompileContext::new(&self.import_dirs);
-
-        let (idl_file, registry) =
-            match parse_and_resolve(source, source_name, input_dir, input_path, &mut ctx) {
-                Ok((idl_file, registry)) => (idl_file, registry),
-                Err(e) => {
-                    self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
-                    return Err(e);
-                }
-            };
+    /// This is the only logic that differs from `Idl2Schemata`. It rejects
+    /// `NamedSchemas` (bare declarations without a `schema` keyword or
+    /// `protocol`), matching Java's `IdlTool` behavior.
+    fn convert_impl(&mut self, compiled: CompileOutput) -> miette::Result<IdlOutput> {
+        let CompileOutput {
+            idl_file,
+            registry,
+            warnings,
+            source,
+            source_name,
+        } = compiled;
 
         // The `idl` subcommand requires either a protocol or a `schema` keyword.
         // Schema-mode files with only bare named type declarations (records, enums,
@@ -201,10 +307,14 @@ impl Idl {
         // not contain a schema nor a protocol." The `idl2schemata` path
         // intentionally omits this check so it can extract named schemas.
         if let IdlFile::NamedSchemas(_) = &idl_file {
-            self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+            // Stash warnings before returning the error so they're available
+            // via `drain_warnings()`.
+            self.inner.accumulated_warnings = warnings;
+
+            let span_len = source.len().min(1);
             return Err(ParseDiagnostic {
-                src: miette::NamedSource::new(source_name, source.to_string()),
-                span: (0, source.len().min(1)).into(),
+                src: miette::NamedSource::new(source_name, source),
+                span: (0, span_len).into(),
                 message: "IDL file contains neither a protocol nor a schema declaration"
                     .to_string(),
                 label: Some("this file".to_string()),
@@ -229,15 +339,6 @@ impl Idl {
             IdlFile::NamedSchemas(_) => unreachable!("NamedSchemas rejected earlier"),
         };
 
-        // Validate that all type references resolved. Unresolved references
-        // indicate missing imports, undefined types, or cross-namespace
-        // references that need fully-qualified names.
-        if let Err(e) = validate_all_references(&idl_file, &registry, source, source_name) {
-            self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
-            return Err(e);
-        }
-
-        let warnings = std::mem::take(&mut ctx.warnings);
         Ok(IdlOutput { json, warnings })
     }
 }
@@ -303,11 +404,7 @@ impl std::fmt::Debug for SchemataOutput {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct Idl2Schemata {
-    import_dirs: Vec<PathBuf>,
-    /// Warnings accumulated during the most recent `extract*` call. Populated
-    /// even when the call returns `Err`, so the CLI can emit warnings before
-    /// propagating the error. Drained via [`Idl2Schemata::drain_warnings`].
-    accumulated_warnings: Vec<miette::Report>,
+    inner: IdlCompiler,
 }
 
 impl Default for Idl2Schemata {
@@ -320,14 +417,13 @@ impl Idl2Schemata {
     /// Create a new builder with no import directories.
     pub fn new() -> Self {
         Idl2Schemata {
-            import_dirs: Vec::new(),
-            accumulated_warnings: Vec::new(),
+            inner: IdlCompiler::new(),
         }
     }
 
     /// Add an import search directory.
     pub fn import_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
-        self.import_dirs.push(dir.into());
+        self.inner.import_dir(dir.into());
         self
     }
 
@@ -342,7 +438,7 @@ impl Idl2Schemata {
     /// Each call drains the internal buffer, so a second call returns an
     /// empty `Vec`.
     pub fn drain_warnings(&mut self) -> Vec<miette::Report> {
-        std::mem::take(&mut self.accumulated_warnings)
+        self.inner.drain_warnings()
     }
 
     /// Extract named schemas from a `.avdl` file or a directory of `.avdl`
@@ -355,19 +451,8 @@ impl Idl2Schemata {
             return self.extract_directory(path);
         }
 
-        let source = fs::read_to_string(path)
-            .map_err(|e| miette::miette!("{e}"))
-            .with_context(|| format!("read {}", path.display()))?;
-
-        let source_name = path.display().to_string();
-        let dir = path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let dir = dir.canonicalize().unwrap_or(dir);
-        let canonical_path = path.canonicalize().ok();
-
-        self.extract_impl(&source, &source_name, &dir, canonical_path)
+        let compiled = self.inner.compile_file(path)?;
+        Self::extract_impl(compiled)
     }
 
     /// Extract named schemas from an IDL source string.
@@ -382,10 +467,8 @@ impl Idl2Schemata {
         source: &str,
         name: &str,
     ) -> miette::Result<SchemataOutput> {
-        let cwd = std::env::current_dir()
-            .map_err(|e| miette::miette!("{e}"))
-            .context("determine current directory")?;
-        self.extract_impl(source, name, &cwd, None)
+        let compiled = self.inner.compile_str(source, name)?;
+        Self::extract_impl(compiled)
     }
 
     /// Recursively walk a directory for `.avdl` files and extract schemas from
@@ -408,19 +491,8 @@ impl Idl2Schemata {
         }
 
         for avdl_path in &avdl_paths {
-            let source = fs::read_to_string(avdl_path)
-                .map_err(|e| miette::miette!("{e}"))
-                .with_context(|| format!("read {}", avdl_path.display()))?;
-
-            let source_name = avdl_path.display().to_string();
-            let file_dir = avdl_path
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("."));
-            let file_dir = file_dir.canonicalize().unwrap_or(file_dir);
-            let canonical_path = avdl_path.canonicalize().ok();
-
-            let output = self.extract_impl(&source, &source_name, &file_dir, canonical_path)?;
+            let compiled = self.inner.compile_file(avdl_path)?;
+            let output = Self::extract_impl(compiled)?;
             all_schemas.extend(output.schemas);
             all_warnings.extend(output.warnings);
         }
@@ -431,30 +503,18 @@ impl Idl2Schemata {
         })
     }
 
-    /// Shared implementation for `extract` and `extract_str_named`.
+    /// Type-specific serialization: serialize each named schema independently
+    /// as a self-contained `.avsc` JSON value.
     ///
-    /// Always stores accumulated warnings in `self.accumulated_warnings`,
-    /// regardless of whether the call succeeds or fails. This enables
-    /// [`drain_warnings`](Idl2Schemata::drain_warnings) on the error path.
-    fn extract_impl(
-        &mut self,
-        source: &str,
-        source_name: &str,
-        input_dir: &Path,
-        input_path: Option<PathBuf>,
-    ) -> miette::Result<SchemataOutput> {
-        self.accumulated_warnings.clear();
-
-        let mut ctx = CompileContext::new(&self.import_dirs);
-
-        let (idl_file, registry) =
-            match parse_and_resolve(source, source_name, input_dir, input_path, &mut ctx) {
-                Ok((idl_file, registry)) => (idl_file, registry),
-                Err(e) => {
-                    self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
-                    return Err(e);
-                }
-            };
+    /// This is the only logic that differs from `Idl`. Unlike `Idl::convert_impl`,
+    /// this accepts `NamedSchemas` (bare declarations without `schema` keyword or
+    /// `protocol`), matching Java's `IdlToSchemataTool` behavior.
+    fn extract_impl(compiled: CompileOutput) -> miette::Result<SchemataOutput> {
+        let CompileOutput {
+            registry,
+            warnings,
+            ..
+        } = compiled;
 
         // Build a lookup table from all registered schemas so that references
         // within each schema can be resolved and inlined.
@@ -478,13 +538,6 @@ impl Idl2Schemata {
             });
         }
 
-        // Validate that all type references resolved.
-        if let Err(e) = validate_all_references(&idl_file, &registry, source, source_name) {
-            self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
-            return Err(e);
-        }
-
-        let warnings = std::mem::take(&mut ctx.warnings);
         Ok(SchemataOutput { schemas, warnings })
     }
 }
