@@ -164,6 +164,84 @@ fn collect_named_types(
     }
 }
 
+// =============================================================================
+// Helpers: shared preamble/postamble for named types (Record, Enum, Fixed)
+// =============================================================================
+//
+// Named types share identical boilerplate for:
+// 1. Computing the full name, checking/inserting `known_names`, and returning
+//    a bare string on second occurrence (preamble).
+// 2. Inserting properties and aliases into the JSON object (postamble).
+//
+// These helpers factor out that duplication so each match arm only contains
+// its type-specific fields.
+
+/// Handle the common preamble for a named type: compute its full name, check
+/// whether it has already been serialized (returning a bare-name `Value` if so),
+/// and build the initial JSON object with `"type"`, `"name"`, optional
+/// `"namespace"`, and optional `"doc"` keys.
+///
+/// Returns `Err(bare_name_value)` when the type was already serialized and the
+/// caller should return early. Returns `Ok(obj)` with the partially-built JSON
+/// object when the type is being serialized for the first time.
+fn named_type_preamble(
+    type_str: &str,
+    name: &str,
+    namespace: &Option<String>,
+    doc: &Option<String>,
+    known_names: &mut HashSet<String>,
+    enclosing_namespace: Option<&str>,
+) -> Result<Map<String, Value>, Value> {
+    let full_name = make_full_name(name, namespace.as_deref()).into_owned();
+    if known_names.contains(&full_name) {
+        return Err(Value::String(schema_ref_name(
+            name,
+            namespace.as_deref(),
+            enclosing_namespace,
+        )));
+    }
+    known_names.insert(full_name);
+
+    let mut obj = Map::new();
+    obj.insert("type".to_string(), Value::String(type_str.to_string()));
+    obj.insert("name".to_string(), Value::String(name.to_string()));
+    // Emit the namespace key when it differs from the enclosing context.
+    // Special case: when there's no enclosing namespace (standalone .avsc),
+    // treat an empty-string namespace the same as None — Java normalizes
+    // empty namespace to null, so `writeName()` omits it.
+    if namespace.as_deref() != enclosing_namespace
+        && let Some(ns) = namespace
+        && !(ns.is_empty() && enclosing_namespace.is_none())
+    {
+        obj.insert("namespace".to_string(), Value::String(ns.clone()));
+    }
+    if let Some(doc) = doc {
+        obj.insert("doc".to_string(), Value::String(doc.clone()));
+    }
+    Ok(obj)
+}
+
+/// Append the common trailing fields for a named type: custom properties and
+/// aliases. Called after the caller has inserted all type-specific keys.
+fn finish_named_type(
+    obj: &mut Map<String, Value>,
+    properties: &HashMap<String, Value>,
+    aliases: &[String],
+    namespace: &Option<String>,
+) {
+    // Java emits properties before aliases for named types.
+    for (k, v) in properties {
+        obj.insert(k.clone(), v.clone());
+    }
+    if !aliases.is_empty() {
+        let aliases_json: Vec<Value> = aliases
+            .iter()
+            .map(|a| Value::String(alias_ref_name(a, namespace.as_deref())))
+            .collect();
+        obj.insert("aliases".to_string(), Value::Array(aliases_json));
+    }
+}
+
 /// Serialize an `AvroSchema` to JSON. For named types, the first occurrence
 /// is serialized inline; subsequent occurrences are bare name strings.
 ///
@@ -206,35 +284,18 @@ pub fn schema_to_json(
             aliases,
             properties,
         } => {
-            let full_name = make_full_name(name, namespace.as_deref()).into_owned();
-            if known_names.contains(&full_name) {
-                return Value::String(schema_ref_name(
-                    name,
-                    namespace.as_deref(),
-                    enclosing_namespace,
-                ));
-            }
-            known_names.insert(full_name);
-
-            let mut obj = Map::new();
-            obj.insert(
-                "type".to_string(),
-                Value::String(if *is_error { "error" } else { "record" }.to_string()),
-            );
-            obj.insert("name".to_string(), Value::String(name.clone()));
-            // Emit the namespace key when it differs from the enclosing context.
-            // Special case: when there's no enclosing namespace (standalone .avsc),
-            // treat an empty-string namespace the same as None — Java normalizes
-            // empty namespace to null, so `writeName()` omits it.
-            if namespace.as_deref() != enclosing_namespace
-                && let Some(ns) = namespace
-                && !(ns.is_empty() && enclosing_namespace.is_none())
-            {
-                obj.insert("namespace".to_string(), Value::String(ns.clone()));
-            }
-            if let Some(doc) = doc {
-                obj.insert("doc".to_string(), Value::String(doc.clone()));
-            }
+            let type_str = if *is_error { "error" } else { "record" };
+            let mut obj = match named_type_preamble(
+                type_str,
+                name,
+                namespace,
+                doc,
+                known_names,
+                enclosing_namespace,
+            ) {
+                Ok(obj) => obj,
+                Err(bare_name) => return bare_name,
+            };
             let fields_json: Vec<Value> = fields
                 .iter()
                 .map(|f| {
@@ -247,17 +308,7 @@ pub fn schema_to_json(
                 })
                 .collect();
             obj.insert("fields".to_string(), Value::Array(fields_json));
-            // Java emits properties before aliases for named types.
-            for (k, v) in properties {
-                obj.insert(k.clone(), v.clone());
-            }
-            if !aliases.is_empty() {
-                let aliases_json: Vec<Value> = aliases
-                    .iter()
-                    .map(|a| Value::String(alias_ref_name(a, namespace.as_deref())))
-                    .collect();
-                obj.insert("aliases".to_string(), Value::Array(aliases_json));
-            }
+            finish_named_type(&mut obj, properties, aliases, namespace);
             Value::Object(obj)
         }
 
@@ -273,48 +324,24 @@ pub fn schema_to_json(
             aliases,
             properties,
         } => {
-            let full_name = make_full_name(name, namespace.as_deref()).into_owned();
-            if known_names.contains(&full_name) {
-                return Value::String(schema_ref_name(
-                    name,
-                    namespace.as_deref(),
-                    enclosing_namespace,
-                ));
-            }
-            known_names.insert(full_name);
-
-            let mut obj = Map::new();
-            obj.insert("type".to_string(), Value::String("enum".to_string()));
-            obj.insert("name".to_string(), Value::String(name.clone()));
-            // Emit the namespace key when it differs from the enclosing context.
-            // Special case: when there's no enclosing namespace (standalone .avsc),
-            // treat an empty-string namespace the same as None — Java normalizes
-            // empty namespace to null, so `writeName()` omits it.
-            if namespace.as_deref() != enclosing_namespace
-                && let Some(ns) = namespace
-                && !(ns.is_empty() && enclosing_namespace.is_none())
-            {
-                obj.insert("namespace".to_string(), Value::String(ns.clone()));
-            }
-            if let Some(doc) = doc {
-                obj.insert("doc".to_string(), Value::String(doc.clone()));
-            }
+            let mut obj = match named_type_preamble(
+                "enum",
+                name,
+                namespace,
+                doc,
+                known_names,
+                enclosing_namespace,
+            ) {
+                Ok(obj) => obj,
+                Err(bare_name) => return bare_name,
+            };
             let symbols_json: Vec<Value> =
                 symbols.iter().map(|s| Value::String(s.clone())).collect();
             obj.insert("symbols".to_string(), Value::Array(symbols_json));
             if let Some(def) = default {
                 obj.insert("default".to_string(), Value::String(def.clone()));
             }
-            for (k, v) in properties {
-                obj.insert(k.clone(), v.clone());
-            }
-            if !aliases.is_empty() {
-                let aliases_json: Vec<Value> = aliases
-                    .iter()
-                    .map(|a| Value::String(alias_ref_name(a, namespace.as_deref())))
-                    .collect();
-                obj.insert("aliases".to_string(), Value::Array(aliases_json));
-            }
+            finish_named_type(&mut obj, properties, aliases, namespace);
             Value::Object(obj)
         }
 
@@ -329,43 +356,19 @@ pub fn schema_to_json(
             aliases,
             properties,
         } => {
-            let full_name = make_full_name(name, namespace.as_deref()).into_owned();
-            if known_names.contains(&full_name) {
-                return Value::String(schema_ref_name(
-                    name,
-                    namespace.as_deref(),
-                    enclosing_namespace,
-                ));
-            }
-            known_names.insert(full_name);
-
-            let mut obj = Map::new();
-            obj.insert("type".to_string(), Value::String("fixed".to_string()));
-            obj.insert("name".to_string(), Value::String(name.clone()));
-            // Emit the namespace key when it differs from the enclosing context.
-            // Special case: when there's no enclosing namespace (standalone .avsc),
-            // treat an empty-string namespace the same as None — Java normalizes
-            // empty namespace to null, so `writeName()` omits it.
-            if namespace.as_deref() != enclosing_namespace
-                && let Some(ns) = namespace
-                && !(ns.is_empty() && enclosing_namespace.is_none())
-            {
-                obj.insert("namespace".to_string(), Value::String(ns.clone()));
-            }
-            if let Some(doc) = doc {
-                obj.insert("doc".to_string(), Value::String(doc.clone()));
-            }
+            let mut obj = match named_type_preamble(
+                "fixed",
+                name,
+                namespace,
+                doc,
+                known_names,
+                enclosing_namespace,
+            ) {
+                Ok(obj) => obj,
+                Err(bare_name) => return bare_name,
+            };
             obj.insert("size".to_string(), Value::Number((*size).into()));
-            for (k, v) in properties {
-                obj.insert(k.clone(), v.clone());
-            }
-            if !aliases.is_empty() {
-                let aliases_json: Vec<Value> = aliases
-                    .iter()
-                    .map(|a| Value::String(alias_ref_name(a, namespace.as_deref())))
-                    .collect();
-                obj.insert("aliases".to_string(), Value::Array(aliases_json));
-            }
+            finish_named_type(&mut obj, properties, aliases, namespace);
             Value::Object(obj)
         }
 
