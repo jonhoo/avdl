@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Support `--version` / `-V` flag to print the version
+- Support `--version` / `-V` flag to print the version (305c592)
 - Report all syntax errors, undefined type references, and invalid field
-  defaults at once instead of stopping at the first error
+  defaults at once instead of stopping at the first error (8685b71)
 
 ### Changed
 
@@ -23,20 +23,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Report unterminated string literals at the opening quote instead of
   at the next downstream token, which produced a misleading "unexpected
-  token" error
+  token" error (01ea32a)
 - Include enclosing record name in default-validation errors for
   primitive-typed fields, matching the format already used for
-  reference-typed fields
+  reference-typed fields (125e2fb)
 - Point default-validation source span at the offending field
   declaration, not the enclosing `record` keyword, for reference-typed
-  field defaults validated after type registration
+  field defaults validated after type registration (125e2fb)
 - Correct `local_timestamp_ms` spelling in reserved-type-name validation
-  (was `localtimestamp_ms`, silently accepting the reserved name as a type)
-- Remove duplicate keywords from expected-token help text
+  (was `localtimestamp_ms`, silently accepting the reserved name as a
+  type) (305c592)
+- Remove duplicate keywords from expected-token help text (305c592)
 - Report undefined type errors in source order instead of alphabetical
-  order
+  order (10e9962)
 - Include filename and source location in "neither protocol nor schema"
-  error
+  error (10e9962)
 
 ### Security
 
