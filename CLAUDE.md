@@ -371,6 +371,18 @@ declarations). The two modes have different serialization paths and
 different namespace/reference-resolution behaviour. Schema mode is
 less thoroughly tested.
 
+### Test paths and Windows backslashes
+
+`PathBuf::join` inserts `\` on Windows. When a test path flows
+through `path.display()` into a miette diagnostic source name
+(the `╭─[path:line:col]` header), backslashes cause snapshot
+mismatches. Build test paths with `format!("{DIR}/{file}")` instead
+of `PathBuf::from(DIR).join(file)` whenever the path may appear in
+snapshot output. Windows accepts `/` for file I/O, so this is safe.
+
+The shared helpers `input_path` and `output_path` in
+`tests/integration.rs` already use this pattern.
+
 ### Properties on primitives
 
 Primitives with annotations (e.g., `@foo("bar") int`) are wrapped in

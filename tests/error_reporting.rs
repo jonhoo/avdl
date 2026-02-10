@@ -14,7 +14,7 @@
 mod common;
 
 use avdl::Idl;
-use common::render_warnings;
+use common::render_diagnostics;
 use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
 
 // ==============================================================================
@@ -245,7 +245,7 @@ fn test_warning_out_of_place_doc_comment() {
         !warnings.is_empty(),
         "expected at least one warning for out-of-place doc comment"
     );
-    insta::assert_snapshot!(render_warnings(&warnings));
+    insta::assert_snapshot!(render_diagnostics(&warnings));
 }
 
 /// Multiple out-of-place doc comments should each generate a separate warning.
@@ -263,7 +263,7 @@ fn test_warning_multiple_out_of_place_doc_comments() {
         }
     "#;
     let warnings = compile_warnings(input);
-    insta::assert_snapshot!(render_warnings(&warnings));
+    insta::assert_snapshot!(render_diagnostics(&warnings));
 }
 
 // ==============================================================================

@@ -17,8 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use avdl::{Idl, Idl2Schemata};
-use common::{normalize_crlf, render_warnings};
-use miette::{GraphicalReportHandler, GraphicalTheme};
+use common::{normalize_crlf, render_diagnostic, render_diagnostics};
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 
@@ -63,18 +62,6 @@ fn parse_idl2schemata(avdl_path: &Path, import_dirs: &[&Path]) -> HashMap<String
         .collect()
 }
 
-/// Render a single error to a deterministic string suitable for snapshot
-/// testing. Uses the same theme and width as [`render_warnings`].
-fn render_error(err: &miette::Report) -> String {
-    let handler =
-        GraphicalReportHandler::new_themed(GraphicalTheme::unicode_nocolor()).with_width(80);
-    let mut buf = String::new();
-    handler
-        .render_report(&mut buf, err.as_ref())
-        .expect("render to String is infallible");
-    buf
-}
-
 /// Load an expected output file (`.avpr` or `.avsc`) as a `serde_json::Value`.
 /// Applies CRLF normalization so tests pass on Windows where Git checks out
 /// files with `\r\n` line endings.
@@ -87,13 +74,21 @@ fn load_expected(path: &Path) -> Value {
 }
 
 /// Helper to construct the input path for a test case.
+///
+/// Uses `format!` instead of `PathBuf::join` because `join` inserts
+/// backslash separators on Windows. Since these paths flow through
+/// `path.display()` into diagnostic source names, forward slashes
+/// ensure snapshot output is consistent across platforms. Windows
+/// accepts `/` for file I/O.
 fn input_path(filename: &str) -> PathBuf {
-    PathBuf::from(INPUT_DIR).join(filename)
+    PathBuf::from(format!("{INPUT_DIR}/{filename}"))
 }
 
 /// Helper to construct the output path for a test case.
+///
+/// Uses `format!` for the same cross-platform reason as [`input_path`].
 fn output_path(filename: &str) -> PathBuf {
-    PathBuf::from(OUTPUT_DIR).join(filename)
+    PathBuf::from(format!("{OUTPUT_DIR}/{filename}"))
 }
 
 // ==============================================================================
@@ -369,7 +364,7 @@ fn test_nested_union_rejected() {
     "#,
     );
     let err = result.unwrap_err();
-    insta::assert_snapshot!(render_error(&err));
+    insta::assert_snapshot!(render_diagnostic(&err));
 }
 
 /// Type names that collide with Avro built-in types must be rejected.
@@ -377,7 +372,7 @@ fn test_nested_union_rejected() {
 fn test_reserved_type_name_rejected() {
     let result = Idl::new().convert_str(r#"record `int` { string value; }"#);
     let err = result.unwrap_err();
-    insta::assert_snapshot!(render_error(&err));
+    insta::assert_snapshot!(render_diagnostic(&err));
 }
 
 /// Records must not contain duplicate field names.
@@ -395,7 +390,7 @@ fn test_duplicate_field_name_rejected() {
     "#,
     );
     let err = result.unwrap_err();
-    insta::assert_snapshot!(render_error(&err));
+    insta::assert_snapshot!(render_diagnostic(&err));
 }
 
 /// Enum declarations must not contain duplicate symbols.
@@ -410,7 +405,7 @@ fn test_duplicate_enum_symbol_rejected() {
     "#,
     );
     let err = result.unwrap_err();
-    insta::assert_snapshot!(render_error(&err));
+    insta::assert_snapshot!(render_diagnostic(&err));
 }
 
 /// When a named type's identifier contains dots, the dot-derived namespace
@@ -849,7 +844,7 @@ fn test_comments_warnings() {
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    insta::assert_snapshot!(render_warnings(&output.warnings));
+    insta::assert_snapshot!(render_diagnostics(&output.warnings));
 }
 
 // ==============================================================================
@@ -1108,22 +1103,26 @@ fn test_logical_types_file() {
 
 #[test]
 fn test_tools_protocol_warning() {
-    let avdl_path = PathBuf::from(TOOLS_IDL_DIR).join("protocol.avdl");
+    // Use format! instead of PathBuf::join to avoid backslash separators on
+    // Windows — the path flows into diagnostic source names via display().
+    let avdl_path = PathBuf::from(format!("{TOOLS_IDL_DIR}/protocol.avdl"));
     let output = Idl::new()
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    insta::assert_snapshot!(render_warnings(&output.warnings));
+    insta::assert_snapshot!(render_diagnostics(&output.warnings));
 }
 
 #[test]
 fn test_tools_schema_warning() {
-    let avdl_path = PathBuf::from(TOOLS_IDL_DIR).join("schema.avdl");
+    // Use format! instead of PathBuf::join to avoid backslash separators on
+    // Windows — the path flows into diagnostic source names via display().
+    let avdl_path = PathBuf::from(format!("{TOOLS_IDL_DIR}/schema.avdl"));
     let output = Idl::new()
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
 
-    insta::assert_snapshot!(render_warnings(&output.warnings));
+    insta::assert_snapshot!(render_diagnostics(&output.warnings));
 }
 
 // ==============================================================================
@@ -1132,8 +1131,10 @@ fn test_tools_schema_warning() {
 
 #[test]
 fn test_annotation_on_type_reference_file() {
-    let avdl_path = PathBuf::from(TEST_ROOT_DIR).join("AnnotationOnTypeReference.avdl");
+    // Use format! instead of PathBuf::join to avoid backslash separators on
+    // Windows — the path flows into diagnostic source names via display().
+    let avdl_path = PathBuf::from(format!("{TEST_ROOT_DIR}/AnnotationOnTypeReference.avdl"));
     let result = Idl::new().convert(&avdl_path);
     let err = result.unwrap_err();
-    insta::assert_snapshot!(render_error(&err));
+    insta::assert_snapshot!(render_diagnostic(&err));
 }

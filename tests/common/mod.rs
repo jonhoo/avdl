@@ -10,7 +10,7 @@
 // Import this module in each test file with:
 //
 //     mod common;
-//     use common::{normalize_crlf, render_warnings};
+//     use common::{normalize_crlf, render_diagnostic, render_diagnostics};
 
 use std::fmt::Write;
 
@@ -39,20 +39,26 @@ pub fn normalize_crlf(value: Value) -> Value {
     }
 }
 
-/// Render a list of warnings to a deterministic string suitable for snapshot
-/// testing. Uses miette's graphical handler with unicode-nocolor theme and
-/// fixed 80-column width for reproducible output.
-pub fn render_warnings(warnings: &[miette::Report]) -> String {
+/// Render a single diagnostic to a deterministic string for snapshot tests.
+/// Uses unicode-nocolor theme at 80 columns.
+pub fn render_diagnostic(report: &miette::Report) -> String {
     let handler =
         GraphicalReportHandler::new_themed(GraphicalTheme::unicode_nocolor()).with_width(80);
     let mut buf = String::new();
-    for (i, w) in warnings.iter().enumerate() {
+    handler
+        .render_report(&mut buf, report.as_ref())
+        .expect("render to String is infallible");
+    buf
+}
+
+/// Render multiple diagnostics, separated by blank lines.
+pub fn render_diagnostics(reports: &[miette::Report]) -> String {
+    let mut buf = String::new();
+    for (i, r) in reports.iter().enumerate() {
         if i > 0 {
             writeln!(buf).expect("write to String is infallible");
         }
-        handler
-            .render_report(&mut buf, w.as_ref())
-            .expect("render to String is infallible");
+        buf.push_str(&render_diagnostic(r));
     }
     buf
 }
