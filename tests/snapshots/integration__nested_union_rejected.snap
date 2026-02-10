@@ -10,7 +10,7 @@ expression: render_error(&err)
    ╭─[<input>:5:31]
  4 │             record Bad {
  5 │                 union { null, union { string, int } } nested;
-   ·                               ──┬──
-   ·                                 ╰── Unions may not immediately contain other unions (per the Avro specification, §schemas). Note: Java avro-tools incorrectly accepts this syntax, producing an empty union.
+   ·                               ──────────┬──────────
+   ·                                         ╰── Unions may not immediately contain other unions (per the Avro specification, §schemas). Note: Java avro-tools incorrectly accepts this syntax, producing an empty union.
  6 │             }
    ╰────

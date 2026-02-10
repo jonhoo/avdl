@@ -8,7 +8,7 @@ expression: error
    ,-[<input>:4:13]
  3 |         protocol P {
  4 |             @aliases(123) record R { string name; }
-   :             |
-   :             `-- @aliases must contain an array of strings
+   :             ^^^^^^|^^^^^^
+   :                   `-- @aliases must contain an array of strings
  5 |         }
    `----

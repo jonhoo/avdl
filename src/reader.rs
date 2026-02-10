@@ -838,8 +838,21 @@ fn make_diagnostic<'input>(
     message: impl Into<String>,
 ) -> miette::Report {
     let start_token = ctx.start();
+    let stop_token = ctx.stop();
     let offset = start_token.get_start();
-    let stop = start_token.get_stop();
+
+    // Use the stop token's end byte to span the entire context (e.g. the full
+    // `@name(value)` annotation rather than just the leading `@`). Fall back
+    // to the start token's own stop byte if the stop token has no valid
+    // position.
+    let stop = {
+        let candidate = stop_token.get_stop();
+        if candidate >= offset {
+            candidate
+        } else {
+            start_token.get_stop()
+        }
+    };
 
     // Compute a span covering at least one character. ANTLR byte offsets are
     // inclusive on both ends, so length = stop - start + 1.

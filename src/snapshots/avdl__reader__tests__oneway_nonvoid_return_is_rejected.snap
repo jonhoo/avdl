@@ -7,7 +7,7 @@ expression: render_error(&err)
    ,-[<input>:5:17]
  4 |                 record Msg { string text; }
  5 |                 Msg send(Msg m) oneway;
-   :                 ^|^
-   :                  `-- One-way message 'send' must return void
+   :                 ^^^^^^^^^^^|^^^^^^^^^^^
+   :                            `-- One-way message 'send' must return void
  6 |             }
    `----

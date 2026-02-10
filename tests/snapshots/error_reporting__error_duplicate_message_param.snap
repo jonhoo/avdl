@@ -8,7 +8,7 @@ expression: error
    ,-[<input>:5:30]
  4 |             record Msg { string text; }
  5 |             void test(Msg x, Msg x);
-   :                              ^|^
-   :                               `-- duplicate parameter 'x' in message 'test'
+   :                              ^^|^^
+   :                                `-- duplicate parameter 'x' in message 'test'
  6 |         }
    `----

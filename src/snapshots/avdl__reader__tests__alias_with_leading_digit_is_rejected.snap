@@ -7,7 +7,7 @@ expression: render_error(&err)
    ,-[<input>:3:17]
  2 |             protocol P {
  3 |                 @aliases(["123bad"])
-   :                 |
-   :                 `-- invalid alias name: 123bad
+   :                 ^^^^^^^^^^|^^^^^^^^^
+   :                           `-- invalid alias name: 123bad
  4 |                 record Foo { string name; }
    `----

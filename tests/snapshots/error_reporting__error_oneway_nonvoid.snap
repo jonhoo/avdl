@@ -8,7 +8,7 @@ expression: error
    ,-[<input>:5:13]
  4 |             record Msg { string text; }
  5 |             Msg send(Msg m) oneway;
-   :             ^|^
-   :              `-- One-way message 'send' must return void
+   :             ^^^^^^^^^^^|^^^^^^^^^^^
+   :                        `-- One-way message 'send' must return void
  6 |         }
    `----

@@ -8,7 +8,7 @@ expression: error
    ,-[<input>:5:24]
  4 |             record R {
  5 |                 string @order("BAD") x;
-   :                        |
-   :                        `-- @order must be ASCENDING, DESCENDING, or IGNORE, got: BAD
+   :                        ^^^^^^|^^^^^^
+   :                              `-- @order must be ASCENDING, DESCENDING, or IGNORE, got: BAD
  6 |             }
    `----
