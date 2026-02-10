@@ -42,7 +42,9 @@ jobs:
           # Tags follow the pattern release-1.12.0, release-1.13.0, etc.
           LATEST_TAG=$(git tag --list 'release-*' --sort=-v:refname \
                        | head -1)
-          LATEST_COMMIT=$(git rev-parse "$LATEST_TAG")
+          # Peel to commit — release tags are often annotated, so bare
+          # rev-parse returns the tag object hash, not the commit hash.
+          LATEST_COMMIT=$(git rev-parse "$LATEST_TAG^{commit}")
           if [ "$CURRENT" = "$LATEST_COMMIT" ]; then
             echo "up_to_date=true" >> "$GITHUB_OUTPUT"
           else
