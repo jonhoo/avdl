@@ -651,7 +651,7 @@ fn resolve_single_import(
                 .and_then(|n| n.to_str())
                 .unwrap_or(import.path.as_str());
             for w in import_warnings {
-                warnings.push(miette::Report::new(w).wrap_err(format!("{import_file_name}")));
+                warnings.push(miette::Report::new(w).wrap_err(import_file_name.to_string()));
             }
 
             // If the imported IDL is a protocol, merge its messages.
