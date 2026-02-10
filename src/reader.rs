@@ -211,6 +211,8 @@ fn enrich_antlr_error(msg: &str) -> Option<String> {
     // annotation name with subsequent tokens into a single error string
     // like `@betarecord`. We split the merged text at known keyword
     // boundaries to recover the annotation name.
+    //
+    // https://github.com/antlr4rust/antlr4/pull/40
     if let Some(input) = extract_no_viable_input(msg)
         && let Some(anno_name) = extract_annotation_name(input)
     {
@@ -226,6 +228,8 @@ fn enrich_antlr_error(msg: &str) -> Option<String> {
     // meaning the annotation value is missing. The error is clear about
     // `(` being expected, but doesn't explain WHY -- the user may not
     // realize annotations require parenthesized values.
+    //
+    // https://github.com/antlr4rust/antlr4/pull/38
     if msg.contains("expecting '('") && msg.contains("mismatched input") {
         return Some(format!("{msg} (annotations require `@name(value)` syntax)"));
     }

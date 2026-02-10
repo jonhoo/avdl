@@ -21,8 +21,8 @@ use crate::generated::idlparser::{Idl_DocComment, Idl_EmptyComment, Idl_WS};
 /// comments and generate warnings.
 ///
 /// antlr4rust's `CommonTokenStream` does not expose `getHiddenTokensToLeft()`
-/// the way Java ANTLR does, but `get(index)` is public and lets us access
-/// any token by index, including hidden-channel tokens.
+/// the way Java ANTLR does [yet](https://github.com/antlr4rust/antlr4/pull/39), but `get(index)`
+/// is public and lets us access any token by index, including hidden-channel tokens.
 pub fn extract_doc_comment<'input, TS>(
     token_stream: &TS,
     token_index: isize,
