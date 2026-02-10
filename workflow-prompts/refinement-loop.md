@@ -127,7 +127,9 @@ in CLAUDE.md.
       - Creates debug example in `examples/` to verify (`cargo run --example`)
       - Runs `cargo test` to check for regressions
       - Cleans up debug examples
-      - Stages changes with `git add <specific-files>`
+      - Deletes the resolved issue file with `git rm issues/<file>`
+      - Stages changes with `git add <specific-files>` (the `git rm`
+        above already stages the deletion)
       - Commits using the `commit-writer` skill
       - If modifying library code (e.g., `reader.rs`), use
         `touch src/reader.rs` before `cargo test` if test results
@@ -173,8 +175,9 @@ in CLAUDE.md.
 
 After all waves complete:
 
-1. **Update resolved issues**: Remove issue files for fixes that were
-   merged. Also close issues that are non-goals (see CLAUDE.md):
+1. **Update resolved issues**: Verify resolved issues were closed in
+   fix commits. Remove any that were missed. Also close issues that
+   are non-goals (see CLAUDE.md):
    design-choice differences from Java should be documented in the
    "Intentional divergences from Java" section of `README.md` and then
    closed; low-impact domain model gaps with zero effect on JSON output
@@ -226,9 +229,9 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   instead fixed a different issue (unresolved refs as warnings instead
   of errors). The parent should recognize and credit this correctly
   when closing issues.
-- **Sub-agent issue file deletion**: If a sub-agent deletes issue files
-  as part of its commit, the parent doesn't need a separate close
-  commit.
+- **Sub-agent issue file deletion**: Sub-agents are expected to delete
+  resolved issue files (`git rm issues/<file>`) in the same commit as
+  the fix. This avoids separate "chore: remove resolved issue" commits.
 - **Merge conflict resolution for multi-branch refactors**: When Wave 4
   (iteration 6) merged both an IdlError-to-miette refactor and an
   expect-audit that touched the same files (`main.rs`, `reader.rs`,
