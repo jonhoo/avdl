@@ -152,22 +152,27 @@ in CLAUDE.md.
       - Checks the worktree's `SESSION.md` for observations the
         sub-agent recorded. Incorporate relevant findings into `main`'s
         `SESSION.md`, then clear the worktree's `SESSION.md`.
-      - Merges into `main`:
-        If the change rebases cleanly onto `main` then prefer that,
-        otherwise merge the change:
+      - Cherry-picks the commit(s) into `main`:
         ```bash
         cd /home/jon/dev/stream/avdl/main
+        git cherry-pick fix/issue-UUID-description
+        ```
+        Cherry-pick is preferred over merge to keep a linear history.
+        If the cherry-pick has non-trivial conflicts, abort it and
+        fall back to a merge commit:
+        ```bash
+        git cherry-pick --abort
         git merge fix/issue-UUID-description
         ```
    d. Verify: `cargo test` in main
-   e. If merge conflicts occur (common when multiple agents in a wave
-      modify the same file — especially test files like
-      `integration.rs`), resolve them before proceeding. Prefer
-      merging additive changes first to create a clean base for
-      subsequent merges. For files heavily modified by prior merges
-      (e.g., `reader.rs` test section), consider `git checkout --ours`
-      and manually applying the branch's additions — this is often
-      faster and safer than resolving inline conflict markers.
+   e. If cherry-pick conflicts occur (common when multiple agents in
+      a wave modify the same file — especially test files like
+      `integration.rs`), resolve them if straightforward, or abort
+      and fall back to a merge commit. Prefer applying additive
+      changes first to create a clean base for subsequent picks.
+      For files heavily modified by prior picks (e.g., `reader.rs`
+      test section), a merge commit may be simpler than resolving
+      cherry-pick conflicts.
 
 5. Repeat for each wave until all grouped issues are resolved.
 
@@ -232,15 +237,16 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
 - **Sub-agent issue file deletion**: Sub-agents are expected to delete
   resolved issue files (`git rm issues/<file>`) in the same commit as
   the fix. This avoids separate "chore: remove resolved issue" commits.
-- **Merge conflict resolution for multi-branch refactors**: When Wave 4
+- **Cherry-pick over merge for linear history**: Prefer
+  `git cherry-pick` to bring worktree fixes back into `main`. This
+  avoids merge commits for clean single-commit branches. Only fall
+  back to `git merge` when cherry-pick conflicts are non-trivial.
+- **Conflict resolution for multi-branch refactors**: When Wave 4
   (iteration 6) merged both an IdlError-to-miette refactor and an
   expect-audit that touched the same files (`main.rs`, `reader.rs`,
-  `import.rs`), merge conflicts arose. The fix: merge the larger
-  refactor first (more structural changes), then resolve the smaller
-  change against the new code. For `main.rs`, the conflict was between
-  two patterns for the same function — take the structural improvement
-  (match instead of if/else) and the error handling improvement
-  (`.into_diagnostic()` instead of `IdlError::Io`).
+  `import.rs`), conflicts arose. The fix: apply the larger refactor
+  first (more structural changes), then resolve the smaller change
+  against the new code.
 - **Discovery agent deduplication is essential**: 5 discovery agents
   filed 7 issues but also generated ~30 SESSION.md observations, many
   overlapping. Budget time after Phase 1 to clean SESSION.md of items
