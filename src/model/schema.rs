@@ -425,28 +425,28 @@ pub fn validate_default(value: &Value, schema: &AvroSchema) -> Option<String> {
 
     // Produce a more specific message for integer values that are the right JSON
     // type but fall outside the schema's numeric range.
-    if let Value::Number(n) = value {
-        if is_json_integer(n) {
-            match schema {
-                AvroSchema::Int => {
-                    return Some(format!(
-                        "value {n} out of range for int (must be between {} and {})",
-                        i32::MIN,
-                        i32::MAX,
-                    ));
-                }
-                AvroSchema::Long => {
-                    return Some(format!(
-                        "value {n} out of range for long (must be between {} and {})",
-                        i64::MIN,
-                        i64::MAX,
-                    ));
-                }
-                // Annotated primitives and logical types delegate to their underlying
-                // type via is_valid_default, so range errors for them are caught above.
-                // We fall through to the generic message for other schemas.
-                _ => {}
+    if let Value::Number(n) = value
+        && is_json_integer(n)
+    {
+        match schema {
+            AvroSchema::Int => {
+                return Some(format!(
+                    "value {n} out of range for int (must be between {} and {})",
+                    i32::MIN,
+                    i32::MAX,
+                ));
             }
+            AvroSchema::Long => {
+                return Some(format!(
+                    "value {n} out of range for long (must be between {} and {})",
+                    i64::MIN,
+                    i64::MAX,
+                ));
+            }
+            // Annotated primitives and logical types delegate to their underlying
+            // type via is_valid_default, so range errors for them are caught above.
+            // We fall through to the generic message for other schemas.
+            _ => {}
         }
     }
 
@@ -622,7 +622,10 @@ mod tests {
     #[test]
     fn int_rejects_large_positive() {
         // 9999999999 is the example from the issue.
-        assert!(!is_valid_default(&json!(9_999_999_999_i64), &AvroSchema::Int));
+        assert!(!is_valid_default(
+            &json!(9_999_999_999_i64),
+            &AvroSchema::Int
+        ));
     }
 
     #[test]

@@ -30,9 +30,11 @@ pub fn normalize_crlf(value: Value) -> Value {
     match value {
         Value::String(s) => Value::String(s.replace("\r\n", "\n")),
         Value::Array(arr) => Value::Array(arr.into_iter().map(normalize_crlf).collect()),
-        Value::Object(obj) => {
-            Value::Object(obj.into_iter().map(|(k, v)| (k, normalize_crlf(v))).collect())
-        }
+        Value::Object(obj) => Value::Object(
+            obj.into_iter()
+                .map(|(k, v)| (k, normalize_crlf(v)))
+                .collect(),
+        ),
         other => other,
     }
 }

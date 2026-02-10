@@ -185,19 +185,14 @@ impl Idl {
 
         let mut ctx = CompileContext::new(&self.import_dirs);
 
-        let (idl_file, registry) = match parse_and_resolve(
-            source,
-            source_name,
-            input_dir,
-            input_path,
-            &mut ctx,
-        ) {
-            Ok((idl_file, registry)) => (idl_file, registry),
-            Err(e) => {
-                self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
-                return Err(e);
-            }
-        };
+        let (idl_file, registry) =
+            match parse_and_resolve(source, source_name, input_dir, input_path, &mut ctx) {
+                Ok((idl_file, registry)) => (idl_file, registry),
+                Err(e) => {
+                    self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+                    return Err(e);
+                }
+            };
 
         // The `idl` subcommand requires either a protocol or a `schema` keyword.
         // Schema-mode files with only bare named type declarations (records, enums,
@@ -207,9 +202,7 @@ impl Idl {
         // intentionally omits this check so it can extract named schemas.
         if let IdlFile::NamedSchemas(_) = &idl_file {
             self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
-            miette::bail!(
-                "IDL file contains neither a protocol nor a schema declaration"
-            );
+            miette::bail!("IDL file contains neither a protocol nor a schema declaration");
         }
 
         // Serialize the parsed IDL to JSON. Protocols become .avpr, standalone
@@ -443,19 +436,14 @@ impl Idl2Schemata {
 
         let mut ctx = CompileContext::new(&self.import_dirs);
 
-        let (idl_file, registry) = match parse_and_resolve(
-            source,
-            source_name,
-            input_dir,
-            input_path,
-            &mut ctx,
-        ) {
-            Ok((idl_file, registry)) => (idl_file, registry),
-            Err(e) => {
-                self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
-                return Err(e);
-            }
-        };
+        let (idl_file, registry) =
+            match parse_and_resolve(source, source_name, input_dir, input_path, &mut ctx) {
+                Ok((idl_file, registry)) => (idl_file, registry),
+                Err(e) => {
+                    self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+                    return Err(e);
+                }
+            };
 
         // Build a lookup table from all registered schemas so that references
         // within each schema can be resolved and inlined.

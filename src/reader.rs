@@ -342,7 +342,7 @@ fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
     let expecting_tokens = extract_expecting_tokens(msg);
 
     // Only simplify when the token set exceeds our threshold.
-    let tokens = expecting_tokens.as_deref()?;
+    let tokens = expecting_tokens?;
     if count_tokens_in_set(tokens) <= EXPECTING_SET_TRUNCATION_THRESHOLD {
         return None;
     }
@@ -352,11 +352,19 @@ fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
 
     // Determine the offending token and error shape.
     if let Some(offending) = extract_quoted_token(msg, "extraneous input ") {
-        return Some(build_unexpected_token_error(offending, help, expects_string));
+        return Some(build_unexpected_token_error(
+            offending,
+            help,
+            expects_string,
+        ));
     }
 
     if let Some(offending) = extract_quoted_token(msg, "mismatched input ") {
-        return Some(build_unexpected_token_error(offending, help, expects_string));
+        return Some(build_unexpected_token_error(
+            offending,
+            help,
+            expects_string,
+        ));
     }
 
     None
@@ -389,9 +397,7 @@ fn build_unexpected_token_error(
     if expects_string && looks_like_bare_identifier(offending) {
         let help = append_quoting_hint(help, offending);
         return EnrichedError {
-            message: format!(
-                "unexpected token `{offending}` -- did you mean `\"{offending}\"`?"
-            ),
+            message: format!("unexpected token `{offending}` -- did you mean `\"{offending}\"`?"),
             label: Some(format!(
                 "unexpected `{offending}` -- did you mean `\"{offending}\"`?"
             )),
@@ -1912,9 +1918,9 @@ fn walk_full_type<'input>(
     // because annotations are applied to the non-null branch instead.
     if !props.properties.is_empty() && is_non_nullable_union(&schema) {
         let keys: Vec<&str> = props.properties.keys().map(|k| k.as_str()).collect();
-        src.warnings.borrow_mut().push(Warning::annotations_dropped_on_union(
-            &keys, src, ctx,
-        ));
+        src.warnings
+            .borrow_mut()
+            .push(Warning::annotations_dropped_on_union(&keys, src, ctx));
     }
 
     // Apply custom properties to the schema. For nullable unions we apply
@@ -3322,8 +3328,7 @@ mod tests {
     /// testing. Uses `GraphicalTheme::none()` (no box-drawing characters) to
     /// match the `error_reporting.rs` test style.
     fn render_error(err: &miette::Report) -> String {
-        let handler =
-            GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
+        let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
         let mut buf = String::new();
         handler
             .render_report(&mut buf, err.as_ref())
@@ -4515,7 +4520,8 @@ mod tests {
     #[test]
     fn default_int_overflow_is_rejected() {
         let idl = r#"protocol P { record R { int count = 9999999999; } }"#;
-        let err = parse_idl_for_test(idl).expect_err("int with out-of-range default should be rejected");
+        let err =
+            parse_idl_for_test(idl).expect_err("int with out-of-range default should be rejected");
         let rendered = render_error(&err);
         assert!(
             rendered.contains("out of range"),
@@ -4842,10 +4848,7 @@ mod tests {
                    'error', 'record', 'array', 'map'}";
         let enriched = enrich_antlr_error(msg).expect("should match large set");
         assert_eq!(enriched.message, "unexpected end of file");
-        assert_eq!(
-            enriched.label.as_deref(),
-            Some("unexpected end of file"),
-        );
+        assert_eq!(enriched.label.as_deref(), Some("unexpected end of file"),);
     }
 
     #[test]
@@ -5009,7 +5012,11 @@ mod tests {
             enriched.message,
         );
         assert!(
-            enriched.label.as_deref().expect("should have label").contains("\"YELLOW\""),
+            enriched
+                .label
+                .as_deref()
+                .expect("should have label")
+                .contains("\"YELLOW\""),
             "label should suggest quoting: {:?}",
             enriched.label,
         );
@@ -5177,7 +5184,11 @@ mod tests {
 }"#;
         let (_, _, warnings) =
             parse_idl_for_test(idl).expect("annotations on union should parse successfully");
-        assert_eq!(warnings.len(), 1, "expected exactly one warning: {warnings:?}");
+        assert_eq!(
+            warnings.len(),
+            1,
+            "expected exactly one warning: {warnings:?}"
+        );
         insta::assert_snapshot!(render_warnings(&warnings));
     }
 
