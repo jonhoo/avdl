@@ -245,6 +245,12 @@ fn run_idl2schemata(
     }
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
+    if output_dir.exists() && !output_dir.is_dir() {
+        return Err(miette::miette!(
+            "output path `{}` exists and is not a directory",
+            output_dir.display()
+        ));
+    }
     fs::create_dir_all(&output_dir).map_err(|e| miette::miette!("{e}: create output directory"))?;
 
     for named_schema in &schemata_output.schemas {
