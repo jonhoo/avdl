@@ -1117,6 +1117,60 @@ fn test_tools_schema_warning() {
 }
 
 // ==============================================================================
+// Message Error Declaration Tests
+// ==============================================================================
+
+/// A message with `throws Err1, Err2` should produce an `"errors"` array
+/// listing both error types in the serialized JSON output.
+#[test]
+fn test_multiple_throws_error_types() {
+    let input = r#"
+        @namespace("test")
+        protocol MultiThrows {
+            error Err1 { string message; }
+            error Err2 { string reason; }
+            void dangerous() throws Err1, Err2;
+        }
+    "#;
+
+    let json = parse_inline_to_json(input);
+    let messages = json["messages"]
+        .as_object()
+        .expect("protocol should have messages");
+    let dangerous = messages
+        .get("dangerous")
+        .expect("should have 'dangerous' message");
+    let errors = dangerous["errors"]
+        .as_array()
+        .expect("throws message should have errors array");
+    assert_eq!(
+        errors,
+        &[serde_json::json!("Err1"), serde_json::json!("Err2")],
+        "errors array should list both thrown error types"
+    );
+}
+
+/// `oneway` and `throws` are grammar-level alternatives, so combining them
+/// should produce a parse error. This test guards against future grammar
+/// changes that might relax this constraint.
+#[test]
+fn test_oneway_with_throws_is_rejected() {
+    let result = Idl::new().convert_str(
+        r#"
+        @namespace("test")
+        protocol P {
+            error E { string msg; }
+            void fire(string s) oneway throws E;
+        }
+    "#,
+    );
+    assert!(
+        result.is_err(),
+        "oneway with throws should be rejected as a parse error"
+    );
+}
+
+// ==============================================================================
 // AnnotationOnTypeReference Error Test
 // ==============================================================================
 

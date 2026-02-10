@@ -5262,4 +5262,68 @@ mod tests {
             "error should explain annotation syntax: {msg}"
         );
     }
+
+    // ------------------------------------------------------------------
+    // Multiple throws error types (issue #44b640db)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn multiple_throws_errors_parsed() {
+        // A message with `throws Err1, Err2` should produce a `Message.errors`
+        // list containing both error type references.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                error Err1 { string message; }
+                error Err2 { string reason; }
+                void dangerous() throws Err1, Err2;
+            }
+        "#;
+        let (idl_file, _, _) = parse_idl_for_test(idl).unwrap();
+        let protocol = match idl_file {
+            IdlFile::Protocol(p) => p,
+            _ => panic!("expected protocol"),
+        };
+        let msg = protocol
+            .messages
+            .get("dangerous")
+            .expect("dangerous message");
+        let errors = msg
+            .errors
+            .as_ref()
+            .expect("message with throws should have errors");
+        assert_eq!(errors.len(), 2, "expected two error types");
+
+        let error_names: Vec<&str> = errors
+            .iter()
+            .map(|e| match e {
+                AvroSchema::Reference { name, .. } => name.as_str(),
+                _ => panic!("expected Reference, got: {e:?}"),
+            })
+            .collect();
+        assert_eq!(error_names, vec!["Err1", "Err2"]);
+    }
+
+    // ------------------------------------------------------------------
+    // Oneway + throws mutual exclusion (issue #f61bf2e3)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn oneway_with_throws_is_rejected() {
+        // The grammar makes `oneway` and `throws` alternatives in the same
+        // production, so combining them is a syntax error at the ANTLR level.
+        // This test protects against future grammar relaxation.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                error E { string msg; }
+                void fire(string s) oneway throws E;
+            }
+        "#;
+        let result = parse_idl_for_test(idl);
+        assert!(
+            result.is_err(),
+            "oneway with throws should be rejected as a parse error"
+        );
+    }
 }
