@@ -183,6 +183,40 @@ fn test_cli_idl2schemata() {
     }
 }
 
+/// Run `avdl idl2schemata` with an existing file as the output directory and
+/// verify that the error message clearly explains the path is not a directory.
+#[test]
+fn test_cli_idl2schemata_outdir_is_file() {
+    let blocker = PathBuf::from("tmp/cli-test-idl2schemata-outdir-is-file");
+    // Create a regular file where the output directory should go.
+    fs::create_dir_all(blocker.parent().expect("tmp/ exists")).expect("create parent dir");
+    fs::write(&blocker, "not a directory").expect("create blocker file");
+
+    let output = avdl_cmd()
+        .args([
+            "idl2schemata",
+            &format!("{INPUT_DIR}/simple.avdl"),
+            blocker.to_str().expect("valid UTF-8 path"),
+        ])
+        .output()
+        .expect("run avdl idl2schemata");
+
+    assert!(
+        !output.status.success(),
+        "should fail when output path is a file"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Miette wraps long lines, so "is not a directory" may be split across
+    // lines with box-drawing characters. Check for each key fragment separately.
+    assert!(
+        stderr.contains("not a") && stderr.contains("directory"),
+        "stderr should mention 'not a directory', got:\n{stderr}"
+    );
+
+    // Clean up.
+    let _ = fs::remove_file(&blocker);
+}
+
 /// Run `avdl idl2schemata` with no arguments and verify a non-zero exit code,
 /// since clap requires the input argument.
 #[test]
