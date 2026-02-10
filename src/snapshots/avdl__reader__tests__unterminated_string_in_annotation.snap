@@ -1,0 +1,12 @@
+---
+source: src/reader.rs
+expression: rendered
+---
+  x line 1:11 unterminated string literal
+   ,-[<input>:1:12]
+ 1 | @namespace("org.test)
+   :            |
+   :            `-- unterminated string literal
+ 2 | protocol Test {
+   `----
+  help: string literals must be closed with a `"` on the same line

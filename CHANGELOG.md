@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report unterminated string literals at the opening quote instead of
+  at the next downstream token, which produced a misleading "unexpected
+  token" error
 - Include enclosing record name in default-validation errors for
   primitive-typed fields, matching the format already used for
   reference-typed fields

@@ -1,0 +1,13 @@
+---
+source: src/reader.rs
+expression: rendered
+---
+  x line 4:18 unterminated string literal
+   ,-[<input>:4:19]
+ 3 |   record Foo {
+ 4 |     string name = "unterminated;
+   :                   |
+   :                   `-- unterminated string literal
+ 5 |   }
+   `----
+  help: string literals must be closed with a `"` on the same line

@@ -318,6 +318,44 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
 }
 
 // ==========================================================================
+// Unterminated String Literal Detection
+// ==========================================================================
+//
+// When the ANTLR lexer encounters a `"` that is not closed before a newline,
+// the `StringLiteral` rule (which excludes `\n` from the character class)
+// fails to match. The lexer reports a `token recognition error at: '"...'`
+// covering the text from the opening quote to the end of the line. Meanwhile,
+// the parser sees subsequent tokens as unexpected and reports a misleading
+// error about whatever token comes next.
+//
+// We detect this pattern by inspecting the lexer errors: if any error message
+// matches `token recognition error at: '"...'` (i.e., the unrecognized text
+// starts with a double quote), we treat it as an unterminated string and
+// promote it from a warning to the primary error.
+
+/// Checks whether a lexer error's message indicates an unterminated string
+/// literal. Returns `true` if the error text starts with `"` inside the
+/// `token recognition error at: '...'` pattern.
+fn is_unterminated_string_lexer_error(msg: &str) -> bool {
+    // ANTLR lexer errors look like:
+    //   line N:M token recognition error at: '<text>'
+    // We strip the `line N:M ` prefix that our `CollectingErrorListener`
+    // prepends, then check the raw ANTLR message.
+    let raw = msg
+        .find("token recognition error at: '\"")
+        .is_some();
+    raw
+}
+
+/// Scans a list of lexer errors for one that looks like an unterminated
+/// string literal. Returns the first match, if any.
+fn find_unterminated_string_error(lexer_errors: &[SyntaxError]) -> Option<&SyntaxError> {
+    lexer_errors
+        .iter()
+        .find(|e| is_unterminated_string_lexer_error(&e.message))
+}
+
+// ==========================================================================
 // Large Expected-Token Set Simplification
 // ==========================================================================
 
@@ -873,12 +911,50 @@ pub fn parse_idl_named(
     // malformed, even if ANTLR's error recovery produced a parse tree. This
     // matches Java's behavior of throwing on the first error.
     //
+    // Before reporting the parser error, check whether a lexer error suggests
+    // the real cause is an unterminated string literal. When the lexer fails to
+    // match a `StringLiteral` (because the closing `"` is missing before a
+    // newline), the parser sees unexpected downstream tokens and reports a
+    // misleading error. Promoting the lexer error gives users a much more
+    // actionable message.
+    //
     // When multiple syntax errors are collected, the first error becomes the
     // primary diagnostic and subsequent errors are attached as related
     // diagnostics. This lets users fix all syntax problems in one edit cycle
     // instead of the frustrating fix-one-rerun pattern.
     let collected_errors = RefCell::borrow(&syntax_errors);
     if !collected_errors.is_empty() {
+        let borrowed_lexer_errors = RefCell::borrow(&lexer_errors);
+        if let Some(unterm) = find_unterminated_string_error(&borrowed_lexer_errors) {
+            // Extract the `line N:M` prefix from the original error message
+            // so we can produce a clean message like `line 4:18 unterminated
+            // string literal` instead of forwarding the raw ANTLR text.
+            let line_prefix = unterm
+                .message
+                .find("token recognition error")
+                .map(|pos| unterm.message[..pos].trim_end())
+                .unwrap_or("");
+            let message = if line_prefix.is_empty() {
+                "unterminated string literal".to_string()
+            } else {
+                format!("{line_prefix} unterminated string literal")
+            };
+
+            return Err(ParseDiagnostic {
+                src: miette::NamedSource::new(source_name, input.to_string()),
+                span: miette::SourceSpan::new(unterm.offset.into(), unterm.length),
+                message,
+                label: Some("unterminated string literal".to_string()),
+                help: Some(
+                    "string literals must be closed with a `\"` on the same line"
+                        .to_string(),
+                ),
+                related: Vec::new(),
+            }
+            .into());
+        }
+        drop(borrowed_lexer_errors);
+
         let first = &collected_errors[0];
         let related: Vec<ParseDiagnostic> = collected_errors[1..]
             .iter()
@@ -5253,6 +5329,45 @@ mod tests {
         let (_, _, warnings) = parse_idl_for_test(idl).expect("lexer errors should not be fatal");
         assert_eq!(warnings.len(), 1);
         insta::assert_snapshot!(render_warnings(&warnings));
+    }
+
+    // ------------------------------------------------------------------
+    // Unterminated string literal detection (issue #4568f6ca)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn unterminated_string_in_default_value() {
+        // An unterminated string in a field default should report the opening
+        // quote location, not the downstream `}` that the parser sees next.
+        let idl = "@namespace(\"org.test\")\nprotocol Test {\n  record Foo {\n    string name = \"unterminated;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let rendered = render_error(&err);
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn unterminated_string_in_annotation() {
+        // An unterminated string inside an annotation value should also
+        // be caught and reported at the opening quote.
+        let idl = "@namespace(\"org.test)\nprotocol Test {\n  record Foo { string name; }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let rendered = render_error(&err);
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn is_unterminated_string_lexer_error_positive() {
+        assert!(is_unterminated_string_lexer_error(
+            "line 4:18 token recognition error at: '\"unterminated;\n'"
+        ));
+    }
+
+    #[test]
+    fn is_unterminated_string_lexer_error_negative() {
+        // A regular unrecognized-character error should not match.
+        assert!(!is_unterminated_string_lexer_error(
+            "line 1:35 token recognition error at: '\x01'"
+        ));
     }
 
     #[test]
