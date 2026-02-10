@@ -202,7 +202,18 @@ impl Idl {
         // intentionally omits this check so it can extract named schemas.
         if let IdlFile::NamedSchemas(_) = &idl_file {
             self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
-            miette::bail!("IDL file contains neither a protocol nor a schema declaration");
+            return Err(ParseDiagnostic {
+                src: miette::NamedSource::new(source_name, source.to_string()),
+                span: (0, source.len().min(1)).into(),
+                message: "IDL file contains neither a protocol nor a schema declaration"
+                    .to_string(),
+                label: Some("this file".to_string()),
+                help: Some(
+                    "wrap declarations in `protocol MyProto { ... }` or prefix with `schema <type>;`"
+                        .to_string(),
+                ),
+            }
+            .into());
         }
 
         // Serialize the parsed IDL to JSON. Protocols become .avpr, standalone
@@ -849,8 +860,17 @@ fn validate_all_references(
         }
     }
 
-    unresolved.sort_by(|a, b| a.0.cmp(&b.0));
-    unresolved.dedup_by(|a, b| a.0 == b.0);
+    // Deduplicate by name while preserving source order (first occurrence
+    // wins). We use a `HashSet` to track which names we've already seen,
+    // retaining the entry whose span appears earliest in the file.
+    {
+        let mut seen = HashSet::new();
+        unresolved.retain(|(name, _)| seen.insert(name.clone()));
+    }
+
+    // Sort by source span offset so the first error in the file is reported
+    // first. References without a span (from JSON imports) sort to the end.
+    unresolved.sort_by_key(|(_, span)| span.map_or(usize::MAX, |s| s.offset()));
 
     if unresolved.is_empty() {
         return Ok(());

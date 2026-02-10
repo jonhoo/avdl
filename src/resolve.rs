@@ -172,34 +172,36 @@ impl SchemaRegistry {
     }
 
     /// Validate that all `AvroSchema::Reference` nodes in registered schemas
-    /// point to actually registered types. Returns a sorted, deduplicated list
-    /// of `(full_name, span)` pairs for unresolved references (empty if
+    /// point to actually registered types. Returns a list of `(full_name,
+    /// span)` pairs for unresolved references in tree-walk order (empty if
     /// everything resolves). The span allows callers to produce source-
     /// highlighted diagnostics.
+    ///
+    /// The caller is responsible for deduplication and ordering -- see
+    /// `validate_all_references` in `compiler.rs`.
     pub fn validate_references(&self) -> Vec<(String, Option<SourceSpan>)> {
         let mut unresolved = Vec::new();
         for schema in self.schemas.values() {
             collect_unresolved_refs(schema, &self.schemas, &mut unresolved);
         }
-        unresolved.sort_by(|a, b| a.0.cmp(&b.0));
-        unresolved.dedup_by(|a, b| a.0 == b.0);
         unresolved
     }
 
     /// Validate that all `AvroSchema::Reference` nodes in the given schema
-    /// point to types registered in this registry. Returns a sorted,
-    /// deduplicated list of `(full_name, span)` pairs for unresolved
-    /// references (empty if everything resolves).
+    /// point to types registered in this registry. Returns a list of
+    /// `(full_name, span)` pairs for unresolved references in tree-walk
+    /// order (empty if everything resolves).
     ///
     /// This is used to validate schemas that are *not* themselves registered
     /// in the registry -- specifically, the top-level schema from
     /// `IdlFile::Schema`, which is stored separately and would otherwise
     /// escape validation by `validate_references`.
+    ///
+    /// The caller is responsible for deduplication and ordering -- see
+    /// `validate_all_references` in `compiler.rs`.
     pub fn validate_schema(&self, schema: &AvroSchema) -> Vec<(String, Option<SourceSpan>)> {
         let mut unresolved = Vec::new();
         collect_unresolved_refs(schema, &self.schemas, &mut unresolved);
-        unresolved.sort_by(|a, b| a.0.cmp(&b.0));
-        unresolved.dedup_by(|a, b| a.0 == b.0);
         unresolved
     }
 }

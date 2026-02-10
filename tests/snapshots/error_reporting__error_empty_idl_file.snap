@@ -1,5 +1,13 @@
 ---
 source: tests/error_reporting.rs
+assertion_line: 422
 expression: error
 ---
-IDL file contains neither a protocol nor a schema declaration
+  x IDL file contains neither a protocol nor a schema declaration
+   ,-[<input>:1:1]
+ 1 | /* nothing */
+   : |
+   : `-- this file
+   `----
+  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema
+        <type>;`

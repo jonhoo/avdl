@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Correct `local_timestamp_ms` spelling in reserved-type-name validation
   (was `localtimestamp_ms`, silently accepting the reserved name as a type)
 - Remove duplicate keywords from expected-token help text
+- Report undefined type errors in source order instead of alphabetical
+  order
+- Include filename and source location in "neither protocol nor schema"
+  error
 
 ### Security
 
