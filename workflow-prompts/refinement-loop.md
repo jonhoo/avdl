@@ -25,9 +25,11 @@ Launch many sub-agents (blocking, in `main/`) for **open-ended exploration** of 
 - Running `idl2schemata` on representative inputs and comparing per-schema `.avsc` output against Java tool
 - Exploring edge cases, error paths, unusual inputs, and uncommon IDL features for both subcommands
 - Reading the Java source (`IdlReader.java`, `IdlToSchemataTool.java`) to spot behaviors not yet ported
-- Auditing code quality, error handling, and test coverage
+- Auditing code quality, error handling, and test coverage of both happy and error paths
 - Scanning for `TODO` comments in `src/` that flag deferred work now worth addressing
 - Thinking of ways in which we could improve the test suite more broadly to cover more of the application's surface area and spec coverage
+- Looking for opportunities to make errors and warnings more helpful and actionable to human or agentic users that observe them
+- Finding areas of duplication across the code that should be unified (remember that duplication can be warranted if unification is overly challenging)
 - Making slight mutations to valid golden `.avdl` files (replace `;` with `,`, omit separators, misspell keywords) and verifying the error output is helpful and includes source location
 
 Each agent should pursue its own line of investigation autonomously. If it finds a discrepancy, it does first-level triage (identify root cause, affected files) and files an issue under `issues/`.
