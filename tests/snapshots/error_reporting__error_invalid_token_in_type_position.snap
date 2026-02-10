@@ -13,3 +13,16 @@ expression: error
         fixed, error, record, array, map, union, boolean, int, long, float,
         double, string, bytes, null, true, false, decimal, date, time_ms,
         timestamp_ms, local_timestamp_ms, uuid, void, oneway, throws,
+
+Error: 
+  x line 1:29 unexpected token `;`
+   ,-[<input>:1:30]
+ 1 | protocol P { record R { 123 x; } }
+   :                              |
+   :                              `-- unexpected `;`
+   `----
+  help: expected one of: protocol, namespace, import, idl, schema, enum,
+        fixed, error, record, array, map, union, boolean, int, long, float,
+        double, string, bytes, null, true, false, decimal, date, time_ms,
+        timestamp_ms, local_timestamp_ms, uuid, void, oneway, throws, @,
+        IdentifierToken

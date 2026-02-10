@@ -1,4 +1,4 @@
-use miette::{LabeledSpan, NamedSource, SourceSpan};
+use miette::{Diagnostic, LabeledSpan, NamedSource, SourceSpan};
 
 /// A parse error with source location information for rich diagnostics.
 ///
@@ -21,6 +21,11 @@ pub struct ParseDiagnostic {
     /// Additional help text displayed below the error. Used to show the full
     /// expected-token list when the main message has been simplified.
     pub help: Option<String>,
+    /// Additional diagnostics displayed below the primary error. Used when
+    /// multiple independent errors are detected (e.g., multiple ANTLR syntax
+    /// errors, multiple unresolved type references) so users can fix them all
+    /// in one edit cycle.
+    pub related: Vec<ParseDiagnostic>,
 }
 
 impl std::fmt::Display for ParseDiagnostic {
@@ -48,5 +53,15 @@ impl miette::Diagnostic for ParseDiagnostic {
             Some(label_text),
             self.span,
         ))))
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
+        if self.related.is_empty() {
+            None
+        } else {
+            Some(Box::new(
+                self.related.iter().map(|d| d as &dyn Diagnostic),
+            ))
+        }
     }
 }

@@ -872,15 +872,32 @@ pub fn parse_idl_named(
     // Check for ANTLR parser errors. Any syntax error means the input is
     // malformed, even if ANTLR's error recovery produced a parse tree. This
     // matches Java's behavior of throwing on the first error.
+    //
+    // When multiple syntax errors are collected, the first error becomes the
+    // primary diagnostic and subsequent errors are attached as related
+    // diagnostics. This lets users fix all syntax problems in one edit cycle
+    // instead of the frustrating fix-one-rerun pattern.
     let collected_errors = RefCell::borrow(&syntax_errors);
     if !collected_errors.is_empty() {
         let first = &collected_errors[0];
+        let related: Vec<ParseDiagnostic> = collected_errors[1..]
+            .iter()
+            .map(|e| ParseDiagnostic {
+                src: miette::NamedSource::new(source_name, input.to_string()),
+                span: miette::SourceSpan::new(e.offset.into(), e.length),
+                message: e.message.clone(),
+                label: e.label.clone(),
+                help: e.help.clone(),
+                related: Vec::new(),
+            })
+            .collect();
         return Err(ParseDiagnostic {
             src: miette::NamedSource::new(source_name, input.to_string()),
             span: miette::SourceSpan::new(first.offset.into(), first.length),
             message: first.message.clone(),
             label: first.label.clone(),
             help: first.help.clone(),
+            related,
         }
         .into());
     }
@@ -1014,6 +1031,7 @@ fn make_diagnostic<'input>(
         message,
         label: None,
         help: None,
+        related: Vec::new(),
     }
     .into()
 }
@@ -1035,6 +1053,7 @@ fn make_diagnostic_from_token(
         message,
         label: None,
         help: None,
+        related: Vec::new(),
     }
     .into()
 }

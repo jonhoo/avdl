@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Support `--version` / `-V` flag to print the version
+- Report all syntax errors, undefined type references, and invalid field
+  defaults at once instead of stopping at the first error
 
 ### Changed
 

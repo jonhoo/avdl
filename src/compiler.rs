@@ -322,6 +322,7 @@ impl Idl {
                     "wrap declarations in `protocol MyProto { ... }` or prefix with `schema <type>;`"
                         .to_string(),
                 ),
+                related: Vec::new(),
             }
             .into());
         }
@@ -685,6 +686,7 @@ fn process_decl_items(
                             message: msg,
                             label: None,
                             help: None,
+                            related: Vec::new(),
                         }
                         .into());
                     }
@@ -693,31 +695,58 @@ fn process_decl_items(
 
                 // Validate field defaults for Reference-typed fields now that
                 // the registry contains all previously-registered types.
+                // All validation errors are reported at once so users can fix
+                // multiple bad defaults in one edit cycle.
                 let errors = validate_record_field_defaults(schema, |full_name| {
                     registry.lookup(full_name).cloned()
                 });
-                if let Some((field_name, reason)) = errors.into_iter().next() {
-                    let type_name = schema.full_name().unwrap_or(Cow::Borrowed("<unknown>"));
-                    let msg = format!(
-                        "Invalid default for field `{field_name}` in `{type_name}`: {reason}"
-                    );
-                    // Prefer the per-field span (from the variable declaration)
-                    // over the type-level span (from the record keyword), so the
-                    // diagnostic highlights the offending field, not the record.
-                    let effective_span =
-                        field_spans.get(&field_name).copied().or_else(|| *span);
-                    if let Some(span) = effective_span {
-                        return Err(ParseDiagnostic {
+                if errors.is_empty() {
+                    continue;
+                }
+                let type_name = schema.full_name().unwrap_or(Cow::Borrowed("<unknown>"));
+                let mut error_iter = errors.into_iter();
+                let (first_field, first_reason) =
+                    error_iter.next().expect("errors is non-empty");
+
+                // Build related diagnostics from subsequent errors.
+                let related: Vec<ParseDiagnostic> = error_iter
+                    .filter_map(|(field_name, reason)| {
+                        let msg = format!(
+                            "Invalid default for field `{field_name}` in `{type_name}`: {reason}"
+                        );
+                        let effective_span =
+                            field_spans.get(&field_name).copied().or_else(|| *span);
+                        effective_span.map(|span| ParseDiagnostic {
                             src: miette::NamedSource::new(source_name, source.to_string()),
                             span,
                             message: msg,
                             label: None,
                             help: None,
-                        }
-                        .into());
+                            related: Vec::new(),
+                        })
+                    })
+                    .collect();
+
+                let first_msg = format!(
+                    "Invalid default for field `{first_field}` in `{type_name}`: {first_reason}"
+                );
+                // Prefer the per-field span (from the variable declaration)
+                // over the type-level span (from the record keyword), so the
+                // diagnostic highlights the offending field, not the record.
+                let effective_span =
+                    field_spans.get(&first_field).copied().or_else(|| *span);
+                if let Some(span) = effective_span {
+                    return Err(ParseDiagnostic {
+                        src: miette::NamedSource::new(source_name, source.to_string()),
+                        span,
+                        message: first_msg,
+                        label: None,
+                        help: None,
+                        related,
                     }
-                    return Err(miette::miette!("{msg}"));
+                    .into());
                 }
+                return Err(miette::miette!("{first_msg}"));
             }
         }
     }
@@ -748,6 +777,7 @@ fn resolve_single_import(
                     message: format!("{e}"),
                     label: None,
                     help: None,
+                    related: Vec::new(),
                 }
                 .into());
             }
@@ -859,6 +889,7 @@ fn wrap_import_error(
             message: format!("import {} {}", kind, resolved_path.display()),
             label: None,
             help: None,
+            related: Vec::new(),
         };
         // Place ParseDiagnostic as root so its source span is rendered,
         // and attach the downstream error (e.g., JSON parse failure) as
@@ -934,22 +965,62 @@ fn validate_all_references(
         return Ok(());
     }
 
-    // Report the first unresolved reference that has a source span as a
-    // ParseDiagnostic for rich source-highlighted output. If none have spans,
-    // fall back to a plain message listing all unresolved names.
-    if let Some((name, Some(span))) = unresolved.iter().find(|(_, s)| s.is_some()) {
-        return Err(ParseDiagnostic {
+    // Partition into those with source spans (can produce rich diagnostics)
+    // and those without (from JSON imports, fall back to plain text).
+    let (with_span, without_span): (Vec<_>, Vec<_>) =
+        unresolved.into_iter().partition(|(_, s)| s.is_some());
+
+    if with_span.is_empty() {
+        // No references have source spans — fall back to a plain message
+        // listing all unresolved names.
+        let names: Vec<&str> = without_span.iter().map(|(name, _)| name.as_str()).collect();
+        miette::bail!("Undefined name: {}", names.join(", "));
+    }
+
+    // The first spanned reference becomes the primary diagnostic; the rest
+    // are attached as related diagnostics so users see all undefined names
+    // in one error report.
+    let mut span_iter = with_span.into_iter();
+    let (first_name, first_span) = span_iter.next().expect("with_span is non-empty");
+    let first_span = first_span.expect("partitioned into Some");
+
+    let mut related: Vec<ParseDiagnostic> = span_iter
+        .map(|(name, span)| {
+            let span = span.expect("partitioned into Some");
+            ParseDiagnostic {
+                src: miette::NamedSource::new(source_name, source.to_string()),
+                span,
+                message: format!("Undefined name: {name}"),
+                label: None,
+                help: None,
+                related: Vec::new(),
+            }
+        })
+        .collect();
+
+    // Append spanless references as related diagnostics too. Use a zero-
+    // length span at offset 0 so miette can still render them (it just
+    // won't highlight a specific location).
+    for (name, _) in without_span {
+        related.push(ParseDiagnostic {
             src: miette::NamedSource::new(source_name, source.to_string()),
-            span: *span,
+            span: (0, 0).into(),
             message: format!("Undefined name: {name}"),
             label: None,
             help: None,
-        }
-        .into());
+            related: Vec::new(),
+        });
     }
 
-    let names: Vec<&str> = unresolved.iter().map(|(name, _)| name.as_str()).collect();
-    miette::bail!("Undefined name: {}", names.join(", "));
+    Err(ParseDiagnostic {
+        src: miette::NamedSource::new(source_name, source.to_string()),
+        span: first_span,
+        message: format!("Undefined name: {first_name}"),
+        label: None,
+        help: None,
+        related,
+    }
+    .into())
 }
 
 // ==============================================================================

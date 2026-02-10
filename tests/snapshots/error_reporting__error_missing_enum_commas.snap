@@ -9,3 +9,24 @@ expression: error
    :                         |
    :                         `-- line 1:24 mismatched input 'B' expecting {'}', ','}
    `----
+
+Error: 
+  x line 1:28 unexpected token `}`
+   ,-[<input>:1:29]
+ 1 | protocol P { enum E { A B C } }
+   :                             |
+   :                             `-- unexpected `}`
+   `----
+  help: expected one of: protocol, namespace, import, idl, schema, enum,
+        fixed, error, record, array, map, union, boolean, int, long, float,
+        double, string, bytes, null, true, false, decimal, date, time_ms,
+        timestamp_ms, local_timestamp_ms, uuid, void, oneway, throws, ?,
+        IdentifierToken
+
+Error: 
+  x line 1:30 extraneous input '}' expecting {<EOF>, '\u001A'}
+   ,-[<input>:1:31]
+ 1 | protocol P { enum E { A B C } }
+   :                               |
+   :                               `-- line 1:30 extraneous input '}' expecting {<EOF>, '\u001A'}
+   `----
