@@ -19,6 +19,7 @@ Error {
                 length: 5,
             },
             message: "Illegal name: int",
+            label: None,
         },
     },
 }

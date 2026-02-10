@@ -19,6 +19,7 @@ Error {
                 length: 3,
             },
             message: "duplicate enum symbol: RED",
+            label: None,
         },
     },
 }

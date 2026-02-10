@@ -17,5 +17,6 @@ Error {
             length: 5,
         },
         message: "Invalid default for field `count`: expected int, got string",
+        label: None,
     },
 }

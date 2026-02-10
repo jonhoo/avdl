@@ -19,6 +19,7 @@ Error {
                 length: 4,
             },
             message: "duplicate field 'name' in record 'R'",
+            label: None,
         },
     },
 }
