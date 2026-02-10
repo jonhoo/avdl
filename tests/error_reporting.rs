@@ -272,8 +272,8 @@ fn test_error_import_nonexistent_file() {
     "#;
     // Use a wide rendering width so miette does not line-wrap the absolute CWD path that
     // appears in the error message, which would prevent `str::replace` from matching it.
-    let error =
-        compile_error_with_width(input, 300).expect("should produce an error for nonexistent import");
+    let error = compile_error_with_width(input, 300)
+        .expect("should produce an error for nonexistent import");
 
     // Redact the absolute CWD path so the snapshot is portable across machines and worktrees.
     let cwd = std::env::current_dir().expect("current_dir is available during tests");

@@ -124,7 +124,6 @@ impl Warning {
             span: Some(miette::SourceSpan::new(offset.into(), length)),
         }
     }
-
 }
 
 impl std::fmt::Display for Warning {
@@ -4552,10 +4551,9 @@ mod tests {
     /// Render a list of warnings to a deterministic string for snapshot tests.
     fn render_warnings(warnings: &[Warning]) -> String {
         use std::fmt::Write;
-        let handler = miette::GraphicalReportHandler::new_themed(
-            miette::GraphicalTheme::unicode_nocolor(),
-        )
-        .with_width(80);
+        let handler =
+            miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor())
+                .with_width(80);
         let mut buf = String::new();
         for (i, w) in warnings.iter().enumerate() {
             if i > 0 {
@@ -4574,8 +4572,7 @@ mod tests {
         // produce a warning (matching Java's behavior of printing to stderr),
         // not silently succeed or fatally fail.
         let idl = "protocol Test { record Foo { string\x01 name; } }";
-        let (_, _, warnings) = parse_idl_for_test(idl)
-            .expect("lexer errors should not be fatal");
+        let (_, _, warnings) = parse_idl_for_test(idl).expect("lexer errors should not be fatal");
         assert_eq!(warnings.len(), 1);
         insta::assert_snapshot!(render_warnings(&warnings));
     }

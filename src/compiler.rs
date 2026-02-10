@@ -86,7 +86,10 @@ impl std::fmt::Debug for IdlOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IdlOutput")
             .field("json", &self.json)
-            .field("warnings", &format_args!("[{} warnings]", self.warnings.len()))
+            .field(
+                "warnings",
+                &format_args!("[{} warnings]", self.warnings.len()),
+            )
             .finish()
     }
 }
@@ -183,10 +186,7 @@ impl Idl {
         // references that need fully-qualified names.
         validate_all_references(&idl_file, &registry, source, source_name)?;
 
-        Ok(IdlOutput {
-            json,
-            warnings,
-        })
+        Ok(IdlOutput { json, warnings })
     }
 }
 
@@ -228,7 +228,10 @@ impl std::fmt::Debug for SchemataOutput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SchemataOutput")
             .field("schemas", &self.schemas)
-            .field("warnings", &format_args!("[{} warnings]", self.warnings.len()))
+            .field(
+                "warnings",
+                &format_args!("[{} warnings]", self.warnings.len()),
+            )
             .finish()
     }
 }
@@ -395,10 +398,7 @@ impl Idl2Schemata {
         // Validate that all type references resolved.
         validate_all_references(&idl_file, &registry, source, source_name)?;
 
-        Ok(SchemataOutput {
-            schemas,
-            warnings,
-        })
+        Ok(SchemataOutput { schemas, warnings })
     }
 }
 
