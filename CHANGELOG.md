@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Include enclosing record name in default-validation errors for
+  primitive-typed fields, matching the format already used for
+  reference-typed fields
+- Point default-validation source span at the offending field
+  declaration, not the enclosing `record` keyword, for reference-typed
+  field defaults validated after type registration
 - Correct `local_timestamp_ms` spelling in reserved-type-name validation
   (was `localtimestamp_ms`, silently accepting the reserved name as a type)
 - Remove duplicate keywords from expected-token help text

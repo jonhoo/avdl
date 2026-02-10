@@ -765,7 +765,16 @@ pub enum DeclItem {
     /// The optional `SourceSpan` records the byte range of the declaration in
     /// the originating IDL source, enabling source-highlighted diagnostics when
     /// registration fails (e.g., duplicate type name).
-    Type(AvroSchema, Option<miette::SourceSpan>),
+    ///
+    /// The `HashMap<String, SourceSpan>` maps field names to their source spans
+    /// for record types. This enables per-field diagnostics when validating
+    /// defaults for Reference-typed fields in the compiler (where only the
+    /// type-level span would otherwise be available).
+    Type(
+        AvroSchema,
+        Option<miette::SourceSpan>,
+        HashMap<String, miette::SourceSpan>,
+    ),
 }
 
 /// Test-only wrapper around [`parse_idl_named`] that normalizes CRLF line
@@ -1386,9 +1395,10 @@ fn walk_idl_file<'input>(
             collect_single_import(&import_ctx, decl_items);
         } else if let Ok(ns_ctx) = child.downcast_rc::<NamedSchemaDeclarationContextAll<'input>>() {
             let span = span_from_context(&*ns_ctx);
-            let schema = walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
+            let (schema, field_spans) =
+                walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
             local_schemas.push(schema.clone());
-            decl_items.push(DeclItem::Type(schema, span));
+            decl_items.push(DeclItem::Type(schema, span, field_spans));
         }
     }
 
@@ -1473,8 +1483,9 @@ fn walk_protocol<'input>(
             .downcast_rc::<NamedSchemaDeclarationContextAll<'input>>()
         {
             let span = span_from_context(&*ns_ctx);
-            let schema = walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
-            decl_items.push(DeclItem::Type(schema, span));
+            let (schema, field_spans) =
+                walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
+            decl_items.push(DeclItem::Type(schema, span, field_spans));
         } else if let Ok(msg_ctx) = child.downcast_rc::<MessageDeclarationContextAll<'input>>() {
             let (msg_name, message) = walk_message(&msg_ctx, token_stream, src, namespace)?;
             messages.insert(msg_name, message);
@@ -1503,11 +1514,17 @@ fn walk_named_schema_no_register<'input>(
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
     namespace: &mut Option<String>,
-) -> Result<AvroSchema> {
+) -> Result<(AvroSchema, HashMap<String, miette::SourceSpan>)> {
     if let Some(fixed_ctx) = ctx.fixedDeclaration() {
-        walk_fixed(&fixed_ctx, token_stream, src, namespace)
+        Ok((
+            walk_fixed(&fixed_ctx, token_stream, src, namespace)?,
+            HashMap::new(),
+        ))
     } else if let Some(enum_ctx) = ctx.enumDeclaration() {
-        walk_enum(&enum_ctx, token_stream, src, namespace)
+        Ok((
+            walk_enum(&enum_ctx, token_stream, src, namespace)?,
+            HashMap::new(),
+        ))
     } else if let Some(record_ctx) = ctx.recordDeclaration() {
         walk_record(&record_ctx, token_stream, src, namespace)
     } else {
@@ -1533,7 +1550,7 @@ fn walk_record<'input>(
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
     namespace: &mut Option<String>,
-) -> Result<AvroSchema> {
+) -> Result<(AvroSchema, HashMap<String, miette::SourceSpan>)> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
     let props = walk_schema_properties(
         &ctx.schemaProperty_all(),
@@ -1580,9 +1597,11 @@ fn walk_record<'input>(
         .ok_or_else(|| make_diagnostic(src, ctx, "missing record body"))?;
 
     let mut fields = Vec::new();
+    let mut field_spans: HashMap<String, miette::SourceSpan> = HashMap::new();
     let mut seen_field_names: HashSet<String> = HashSet::new();
     for field_ctx in body.fieldDeclaration_all() {
-        let mut field_fields = walk_field_declaration(&field_ctx, token_stream, src, namespace)?;
+        let mut field_fields =
+            walk_field_declaration(&field_ctx, token_stream, src, namespace, Some(&record_name))?;
         // Check for duplicates. We zip with the variable declaration contexts
         // so that the diagnostic highlights the duplicate field *name*, not the
         // type keyword that starts the field declaration.
@@ -1612,6 +1631,11 @@ fn walk_record<'input>(
                 };
                 return Err(diag);
             }
+            // Record each field's source span for use by the compiler when
+            // validating Reference-typed defaults after type registration.
+            if let Some(span) = span_from_context(&**var_ctx) {
+                field_spans.insert(field.name.clone(), span);
+            }
         }
         fields.append(&mut field_fields);
     }
@@ -1619,15 +1643,18 @@ fn walk_record<'input>(
     // Restore namespace.
     *namespace = saved_namespace;
 
-    Ok(AvroSchema::Record {
-        name: record_name,
-        namespace: record_namespace,
-        doc,
-        fields,
-        is_error,
-        aliases: props.aliases,
-        properties: props.properties,
-    })
+    Ok((
+        AvroSchema::Record {
+            name: record_name,
+            namespace: record_namespace,
+            doc,
+            fields,
+            is_error,
+            aliases: props.aliases,
+            properties: props.properties,
+        },
+        field_spans,
+    ))
 }
 
 // ==========================================================================
@@ -1636,11 +1663,15 @@ fn walk_record<'input>(
 
 /// Walk a field declaration, which has one fullType and one or more variable
 /// declarations sharing that type.
+///
+/// `enclosing_name` is the name of the enclosing record (if any), included in
+/// default-validation error messages for context.
 fn walk_field_declaration<'input>(
     ctx: &FieldDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
     namespace: &Option<String>,
+    enclosing_name: Option<&str>,
 ) -> Result<Vec<Field>> {
     // The doc comment on the field declaration acts as a default for variables
     // that don't have their own doc comment.
@@ -1662,6 +1693,7 @@ fn walk_field_declaration<'input>(
             token_stream,
             src,
             namespace,
+            enclosing_name,
         )?;
         fields.push(field);
     }
@@ -1670,6 +1702,9 @@ fn walk_field_declaration<'input>(
 }
 
 /// Walk a single variable declaration and create a `Field`.
+///
+/// `enclosing_name` is the name of the enclosing record (if any), included in
+/// default-validation error messages for context (e.g. "in `MyRecord`").
 fn walk_variable<'input>(
     ctx: &VariableDeclarationContextAll<'input>,
     field_type: &AvroSchema,
@@ -1677,6 +1712,7 @@ fn walk_variable<'input>(
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
     _namespace: &Option<String>,
+    enclosing_name: Option<&str>,
 ) -> Result<Field> {
     // Variable-specific doc comment overrides the field-level default.
     let var_doc = extract_doc_from_context(ctx, token_stream, src);
@@ -1718,10 +1754,14 @@ fn walk_variable<'input>(
     if let Some(ref default_val) = default_value
         && let Some(reason) = validate_default(default_val, &final_type)
     {
+        let in_clause = match enclosing_name {
+            Some(name) => format!(" in `{name}`"),
+            None => String::new(),
+        };
         return Err(make_diagnostic(
             src,
             ctx,
-            format!("Invalid default for field `{field_name}`: {reason}"),
+            format!("Invalid default for field `{field_name}`{in_clause}: {reason}"),
         ));
     }
 
@@ -2263,6 +2303,7 @@ fn walk_message<'input>(
             token_stream,
             src,
             namespace,
+            None, // message parameters have no enclosing record name
         )?;
         if !seen_param_names.insert(field.name.clone()) {
             return Err(make_diagnostic(
@@ -3980,7 +4021,7 @@ mod tests {
             parse_idl_for_test(idl).expect("IDL should parse successfully");
         // Find the record among declaration items.
         for item in &decl_items {
-            if let DeclItem::Type(AvroSchema::Record { fields, .. }, _) = item {
+            if let DeclItem::Type(AvroSchema::Record { fields, .. }, _, _) = item {
                 return fields[0].schema.clone();
             }
         }
@@ -4375,7 +4416,7 @@ mod tests {
         let record = decl_items
             .iter()
             .find_map(|item| {
-                if let DeclItem::Type(schema @ AvroSchema::Record { .. }, _) = item {
+                if let DeclItem::Type(schema @ AvroSchema::Record { .. }, _, _) = item {
                     Some(schema)
                 } else {
                     None

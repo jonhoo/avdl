@@ -623,7 +623,7 @@ fn process_decl_items(
                     source_name,
                 )?;
             }
-            DeclItem::Type(schema, span) => {
+            DeclItem::Type(schema, span, field_spans) => {
                 if let Err(msg) = registry.register(schema.clone()) {
                     if let Some(span) = span {
                         return Err(ParseDiagnostic {
@@ -648,10 +648,15 @@ fn process_decl_items(
                     let msg = format!(
                         "Invalid default for field `{field_name}` in `{type_name}`: {reason}"
                     );
-                    if let Some(span) = span {
+                    // Prefer the per-field span (from the variable declaration)
+                    // over the type-level span (from the record keyword), so the
+                    // diagnostic highlights the offending field, not the record.
+                    let effective_span =
+                        field_spans.get(&field_name).copied().or_else(|| *span);
+                    if let Some(span) = effective_span {
                         return Err(ParseDiagnostic {
                             src: miette::NamedSource::new(source_name, source.to_string()),
-                            span: *span,
+                            span,
                             message: msg,
                             label: None,
                             help: None,
