@@ -286,3 +286,25 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   (shared helpers, CRLF documentation, stdin coverage) were handled by
   a single agent since they all touched `tests/*.rs`. This was faster
   than 3 separate agents with the overhead of worktree prep and merge.
+- **Cherry-pick conflicts are manageable for single-file overlaps**:
+  In iteration 17, two Wave 4 branches both modified `reader.rs`
+  (unterminated-string detection + multi-error reporting). The
+  cherry-pick conflict was a comment block merge and a missing new
+  field on a struct. Resolving took a manual edit + `cargo insta test
+  --accept` for new snapshots. Only abort to merge if the conflict
+  spans many hunks or is semantically ambiguous.
+- **Large refactoring waves benefit from cherry-pick order**: In
+  iteration 17, cherry-picking the "report all errors" commit before
+  "unterminated string" was correct since the former restructured the
+  error path that the latter extended. When multiple Wave commits
+  touch the same file, cherry-pick the more structural change first.
+- **Java comment audits reveal undocumented behaviors**: A discovery
+  agent examining comments in the Java IDL source found behaviors
+  documented only in code comments (not the specification). These are
+  valuable for understanding edge cases our port needs to handle.
+- **Comment consistency checks across the codebase catch drift**: A
+  discovery agent auditing comments in our Rust source found stale
+  references (old type names, removed functions), misleading
+  documentation, and inconsistencies between comments and actual code.
+  These are low-cost to fix and prevent confusion during future
+  development.
