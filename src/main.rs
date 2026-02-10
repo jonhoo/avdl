@@ -194,7 +194,7 @@ fn run_idl(
     }
 
     let idl_output = match &input {
-        Some(path) if path != "-" => builder.convert(path)?,
+        Some(path) if path != "-" => builder.convert(path),
         _ => {
             // Read from stdin.
             let mut source = String::new();
@@ -202,23 +202,34 @@ fn run_idl(
                 .read_to_string(&mut source)
                 .map_err(|e| miette::miette!("{e}: read IDL from stdin"))?;
             let source_name = input.as_deref().unwrap_or("<stdin>");
-            builder.convert_str_named(&source, source_name)?
+            builder.convert_str_named(&source, source_name)
         }
     };
 
-    // Emit any warnings to stderr. When source context is available, render
-    // through miette for rich output with source underlining. Otherwise, fall
-    // back to plain text (e.g., import-prefixed warnings where source was cleared).
-    for w in &idl_output.warnings {
-        eprintln!("{w:?}");
+    // Emit warnings to stderr regardless of whether compilation succeeded.
+    // On success, warnings come from the output; on error, they come from
+    // the builder's accumulated state (since `convert` stores them before
+    // returning `Err`).
+    match idl_output {
+        Ok(idl_output) => {
+            for w in &idl_output.warnings {
+                eprintln!("{w:?}");
+            }
+
+            let json_str = serde_json::to_string_pretty(&idl_output.json)
+                .map_err(|e| miette::miette!("serialize JSON: {e}"))?;
+
+            write_output(&output, &json_str)?;
+
+            Ok(())
+        }
+        Err(e) => {
+            for w in builder.drain_warnings() {
+                eprintln!("{w:?}");
+            }
+            Err(e)
+        }
     }
-
-    let json_str = serde_json::to_string_pretty(&idl_output.json)
-        .map_err(|e| miette::miette!("serialize JSON: {e}"))?;
-
-    write_output(&output, &json_str)?;
-
-    Ok(())
 }
 
 // ==============================================================================
@@ -235,11 +246,20 @@ fn run_idl2schemata(
         builder.import_dir(dir);
     }
 
-    let schemata_output = builder.extract(&input)?;
+    let schemata_output = match builder.extract(&input) {
+        Ok(output) => output,
+        Err(e) => {
+            // Emit warnings that were accumulated before the error. These
+            // would otherwise be lost since `extract` returns `Err`.
+            for w in builder.drain_warnings() {
+                eprintln!("{w:?}");
+            }
+            return Err(e);
+        }
+    };
 
-    // Emit any warnings to stderr. When source context is available, render
-    // through miette for rich output with source underlining. Otherwise, fall
-    // back to plain text (e.g., import-prefixed warnings where source was cleared).
+    // Emit warnings to stderr. Rendered through miette for rich diagnostic
+    // output with source spans and labels when available.
     for w in &schemata_output.warnings {
         eprintln!("{w:?}");
     }

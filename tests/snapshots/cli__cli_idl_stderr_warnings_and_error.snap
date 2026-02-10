@@ -1,0 +1,22 @@
+---
+source: tests/cli.rs
+expression: stderr
+---
+  ⚠ Line 4, char 12: Ignoring out-of-place documentation comment.
+  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
+   ╭─[tmp/cli-test-warnings-and-error/test.avdl:4:12]
+ 3 │     /** Orphaned doc */
+ 4 │     record /** dangling */ R {
+   ·            ───────┬───────
+   ·                   ╰── out-of-place doc comment
+ 5 │         MissingType field;
+   ╰────
+
+Error:   × Undefined name: test.MissingType
+   ╭─[tmp/cli-test-warnings-and-error/test.avdl:5:9]
+ 4 │     record /** dangling */ R {
+ 5 │         MissingType field;
+   ·         ─────┬─────
+   ·              ╰── Undefined name: test.MissingType
+ 6 │     }
+   ╰────

@@ -191,6 +191,80 @@ fn test_cli_idl2schemata_missing_input() {
 }
 
 // ==============================================================================
+// CLI Stderr Snapshot Tests
+// ==============================================================================
+
+/// Run `avdl idl` on `comments.avdl` (which has ~27 orphaned doc-comment
+/// warnings) and snapshot the stderr output. This confirms that warnings are
+/// actually emitted through the CLI subprocess path and catches regressions
+/// in their rendering.
+#[test]
+fn test_cli_idl_stderr_warnings() {
+    let output = avdl_cmd()
+        .args(["idl", &format!("{INPUT_DIR}/comments.avdl")])
+        .output()
+        .expect("run avdl idl on comments.avdl");
+    assert!(
+        output.status.success(),
+        "avdl idl should exit 0, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid UTF-8");
+    assert!(
+        !stderr.is_empty(),
+        "comments.avdl should produce warnings on stderr"
+    );
+    insta::assert_snapshot!("cli_idl_stderr_warnings", stderr);
+}
+
+/// Run `avdl idl` on a file that has both an orphaned doc-comment warning
+/// AND an undefined-type error. Snapshot the full stderr to confirm the user
+/// sees both warnings and the error diagnostic. This exercises the fix that
+/// drains accumulated warnings before propagating the compilation error.
+#[test]
+fn test_cli_idl_stderr_warnings_and_error() {
+    let test_dir = PathBuf::from("tmp/cli-test-warnings-and-error");
+    fs::create_dir_all(&test_dir).expect("create test directory");
+    let avdl_path = test_dir.join("test.avdl");
+    fs::write(
+        &avdl_path,
+        "\
+@namespace(\"test\")
+protocol P {
+    /** Orphaned doc */
+    record /** dangling */ R {
+        MissingType field;
+    }
+}
+",
+    )
+    .expect("write test .avdl file");
+
+    let output = avdl_cmd()
+        .args(["idl", avdl_path.to_str().expect("valid UTF-8 path")])
+        .output()
+        .expect("run avdl idl on test file");
+    assert!(
+        !output.status.success(),
+        "avdl idl should exit non-zero for undefined type"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid UTF-8");
+    // The stderr should contain both a warning (orphaned doc comment) and
+    // an error (undefined type).
+    assert!(
+        stderr.contains("out-of-place doc comment"),
+        "stderr should contain orphaned doc-comment warning, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Undefined name"),
+        "stderr should contain undefined-type error, got:\n{stderr}"
+    );
+    insta::assert_snapshot!("cli_idl_stderr_warnings_and_error", stderr);
+}
+
+// ==============================================================================
 // General CLI Tests
 // ==============================================================================
 

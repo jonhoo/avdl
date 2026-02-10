@@ -58,6 +58,10 @@ use crate::resolve::SchemaRegistry;
 /// ```
 pub struct Idl {
     import_dirs: Vec<PathBuf>,
+    /// Warnings accumulated during the most recent `convert*` call. Populated
+    /// even when the call returns `Err`, so the CLI can emit warnings before
+    /// propagating the error. Drained via [`Idl::drain_warnings`].
+    accumulated_warnings: Vec<miette::Report>,
 }
 
 /// Result of compiling an Avro IDL source.
@@ -105,6 +109,7 @@ impl Idl {
     pub fn new() -> Self {
         Idl {
             import_dirs: Vec::new(),
+            accumulated_warnings: Vec::new(),
         }
     }
 
@@ -113,6 +118,20 @@ impl Idl {
     pub fn import_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
         self.import_dirs.push(dir.into());
         self
+    }
+
+    /// Drain warnings accumulated during the most recent `convert*` call.
+    ///
+    /// When `convert` or `convert_str_named` returns `Ok`, the warnings are
+    /// also available in [`IdlOutput::warnings`]. When they return `Err`,
+    /// this method is the only way to retrieve warnings that were collected
+    /// before the error occurred (e.g., orphaned doc-comment warnings from
+    /// parsing that precede a later type-resolution failure).
+    ///
+    /// Each call drains the internal buffer, so a second call returns an
+    /// empty `Vec`.
+    pub fn drain_warnings(&mut self) -> Vec<miette::Report> {
+        std::mem::take(&mut self.accumulated_warnings)
     }
 
     /// Compile a `.avdl` file to JSON.
@@ -149,17 +168,34 @@ impl Idl {
     }
 
     /// Shared implementation for `convert` and `convert_str_named`.
+    ///
+    /// Always stores accumulated warnings in `self.accumulated_warnings`,
+    /// regardless of whether the call succeeds or fails. This enables
+    /// [`drain_warnings`](Idl::drain_warnings) on the error path.
     fn convert_impl(
-        &self,
+        &mut self,
         source: &str,
         source_name: &str,
         input_dir: &Path,
         input_path: Option<PathBuf>,
     ) -> miette::Result<IdlOutput> {
+        self.accumulated_warnings.clear();
+
         let mut ctx = CompileContext::new(&self.import_dirs);
 
-        let (idl_file, registry, warnings) =
-            parse_and_resolve(source, source_name, input_dir, input_path, &mut ctx)?;
+        let (idl_file, registry) = match parse_and_resolve(
+            source,
+            source_name,
+            input_dir,
+            input_path,
+            &mut ctx,
+        ) {
+            Ok((idl_file, registry)) => (idl_file, registry),
+            Err(e) => {
+                self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+                return Err(e);
+            }
+        };
 
         // The `idl` subcommand requires either a protocol or at least one local
         // schema declaration. Import-only schema-mode files (with only namespace
@@ -168,6 +204,7 @@ impl Idl {
         // this check so it can extract schemas that come purely from imports.)
         if let IdlFile::NamedSchemas(schemas) = &idl_file {
             if schemas.is_empty() {
+                self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
                 miette::bail!(
                     "IDL file contains neither a protocol nor a schema declaration"
                 );
@@ -197,8 +234,12 @@ impl Idl {
         // Validate that all type references resolved. Unresolved references
         // indicate missing imports, undefined types, or cross-namespace
         // references that need fully-qualified names.
-        validate_all_references(&idl_file, &registry, source, source_name)?;
+        if let Err(e) = validate_all_references(&idl_file, &registry, source, source_name) {
+            self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+            return Err(e);
+        }
 
+        let warnings = std::mem::take(&mut ctx.warnings);
         Ok(IdlOutput { json, warnings })
     }
 }
@@ -265,6 +306,10 @@ impl std::fmt::Debug for SchemataOutput {
 /// ```
 pub struct Idl2Schemata {
     import_dirs: Vec<PathBuf>,
+    /// Warnings accumulated during the most recent `extract*` call. Populated
+    /// even when the call returns `Err`, so the CLI can emit warnings before
+    /// propagating the error. Drained via [`Idl2Schemata::drain_warnings`].
+    accumulated_warnings: Vec<miette::Report>,
 }
 
 impl Default for Idl2Schemata {
@@ -278,6 +323,7 @@ impl Idl2Schemata {
     pub fn new() -> Self {
         Idl2Schemata {
             import_dirs: Vec::new(),
+            accumulated_warnings: Vec::new(),
         }
     }
 
@@ -285,6 +331,20 @@ impl Idl2Schemata {
     pub fn import_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
         self.import_dirs.push(dir.into());
         self
+    }
+
+    /// Drain warnings accumulated during the most recent `extract*` call.
+    ///
+    /// When `extract` or `extract_str_named` returns `Ok`, the warnings are
+    /// also available in [`SchemataOutput::warnings`]. When they return `Err`,
+    /// this method is the only way to retrieve warnings that were collected
+    /// before the error occurred (e.g., orphaned doc-comment warnings from
+    /// parsing that precede a later type-resolution failure).
+    ///
+    /// Each call drains the internal buffer, so a second call returns an
+    /// empty `Vec`.
+    pub fn drain_warnings(&mut self) -> Vec<miette::Report> {
+        std::mem::take(&mut self.accumulated_warnings)
     }
 
     /// Extract named schemas from a `.avdl` file or a directory of `.avdl`
@@ -333,7 +393,7 @@ impl Idl2Schemata {
     /// Recursively walk a directory for `.avdl` files and extract schemas from
     /// each. Each file is processed independently with its own registry.
     /// Results are concatenated.
-    fn extract_directory(&self, dir: &Path) -> miette::Result<SchemataOutput> {
+    fn extract_directory(&mut self, dir: &Path) -> miette::Result<SchemataOutput> {
         let mut all_schemas = Vec::new();
         let mut all_warnings = Vec::new();
 
@@ -374,17 +434,34 @@ impl Idl2Schemata {
     }
 
     /// Shared implementation for `extract` and `extract_str_named`.
+    ///
+    /// Always stores accumulated warnings in `self.accumulated_warnings`,
+    /// regardless of whether the call succeeds or fails. This enables
+    /// [`drain_warnings`](Idl2Schemata::drain_warnings) on the error path.
     fn extract_impl(
-        &self,
+        &mut self,
         source: &str,
         source_name: &str,
         input_dir: &Path,
         input_path: Option<PathBuf>,
     ) -> miette::Result<SchemataOutput> {
+        self.accumulated_warnings.clear();
+
         let mut ctx = CompileContext::new(&self.import_dirs);
 
-        let (idl_file, registry, warnings) =
-            parse_and_resolve(source, source_name, input_dir, input_path, &mut ctx)?;
+        let (idl_file, registry) = match parse_and_resolve(
+            source,
+            source_name,
+            input_dir,
+            input_path,
+            &mut ctx,
+        ) {
+            Ok((idl_file, registry)) => (idl_file, registry),
+            Err(e) => {
+                self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+                return Err(e);
+            }
+        };
 
         // Build a lookup table from all registered schemas so that references
         // within each schema can be resolved and inlined.
@@ -409,8 +486,12 @@ impl Idl2Schemata {
         }
 
         // Validate that all type references resolved.
-        validate_all_references(&idl_file, &registry, source, source_name)?;
+        if let Err(e) = validate_all_references(&idl_file, &registry, source, source_name) {
+            self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
+            return Err(e);
+        }
 
+        let warnings = std::mem::take(&mut ctx.warnings);
         Ok(SchemataOutput { schemas, warnings })
     }
 }
@@ -442,19 +523,33 @@ impl CompileContext {
 
 /// Parse IDL source and recursively resolve all imports.
 ///
-/// Returns the parsed IDL file, schema registry, and any warnings. The key
-/// insight for correct type ordering: `parse_idl_named` returns declaration items
-/// (imports and local types) in source order, and we process them
-/// sequentially, so the registry reflects declaration order.
+/// Returns the parsed IDL file and schema registry. Warnings are accumulated
+/// in `ctx.warnings` rather than returned directly, so the caller can always
+/// access them — even when this function returns `Err`. This design ensures
+/// that orphaned doc-comment warnings from parsing are preserved when a
+/// later compilation step (import resolution, type registration) fails.
+///
+/// The key insight for correct type ordering: `parse_idl_named` returns
+/// declaration items (imports and local types) in source order, and we
+/// process them sequentially, so the registry reflects declaration order.
 fn parse_and_resolve(
     source: &str,
     source_name: &str,
     input_dir: &Path,
     input_path: Option<PathBuf>,
     ctx: &mut CompileContext,
-) -> miette::Result<(IdlFile, SchemaRegistry, Vec<miette::Report>)> {
+) -> miette::Result<(IdlFile, SchemaRegistry)> {
     let (idl_file, decl_items, local_warnings) =
         parse_idl_named(source, source_name).context("parse IDL source")?;
+
+    // Immediately convert local warnings into `miette::Report`s and store
+    // them in `ctx.warnings`. This must happen before any fallible operation
+    // so that warnings survive even if a later step returns `Err`.
+    let local_reports: Vec<miette::Report> = local_warnings
+        .into_iter()
+        .map(miette::Report::new)
+        .collect();
+    ctx.warnings.extend(local_reports);
 
     // Pre-size the registry based on the number of type declarations in this
     // file. This avoids incremental reallocation of the backing IndexMap.
@@ -475,7 +570,8 @@ fn parse_and_resolve(
     }
 
     // Process declaration items in source order: resolve imports when
-    // encountered, register local types when encountered.
+    // encountered, register local types when encountered. Any import-derived
+    // warnings are appended to `ctx.warnings` by `process_decl_items`.
     process_decl_items(
         &decl_items,
         &mut ctx.registry,
@@ -486,15 +582,6 @@ fn parse_and_resolve(
         source,
         source_name,
     )?;
-
-    // Convert the local `Warning` values from the top-level parse into
-    // `miette::Report`s, then append any import-derived reports that
-    // `process_decl_items` accumulated in `ctx.warnings`.
-    let mut warnings: Vec<miette::Report> = local_warnings
-        .into_iter()
-        .map(miette::Report::new)
-        .collect();
-    warnings.append(&mut ctx.warnings);
 
     // For protocol files, rebuild the types list from the registry (which now
     // includes imported types in declaration order) and prepend imported
@@ -514,7 +601,7 @@ fn parse_and_resolve(
     // so `ctx` is left in a valid state (although typically not reused).
     let registry = std::mem::take(&mut ctx.registry);
 
-    Ok((idl_file, registry, warnings))
+    Ok((idl_file, registry))
 }
 
 /// Process declaration items (imports and local types) in source order.
