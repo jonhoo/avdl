@@ -330,8 +330,15 @@ pub fn is_valid_default(value: &Value, schema: &AvroSchema) -> bool {
         // =====================================================================
         AvroSchema::Null => value.is_null(),
         AvroSchema::Boolean => value.is_boolean(),
-        AvroSchema::Int | AvroSchema::Long => {
-            matches!(value, Value::Number(n) if is_json_integer(n))
+        AvroSchema::Int => {
+            matches!(value, Value::Number(n) if n.is_i64()
+                && n.as_i64().is_some_and(|v| (i32::MIN as i64..=i32::MAX as i64).contains(&v)))
+        }
+        AvroSchema::Long => {
+            // `is_json_integer` already ensures the value fits in i64 or u64. Since
+            // Avro `long` is a signed 64-bit integer, we additionally need `is_i64()`
+            // to reject values in the u64-only range (i64::MAX+1 ..= u64::MAX).
+            matches!(value, Value::Number(n) if n.is_i64())
         }
         AvroSchema::Float | AvroSchema::Double => {
             // JSON numbers are always valid. Additionally, the special string
@@ -413,14 +420,41 @@ pub fn is_valid_default(value: &Value, schema: &AvroSchema) -> bool {
 /// or `None` if the value is valid for the schema.
 pub fn validate_default(value: &Value, schema: &AvroSchema) -> Option<String> {
     if is_valid_default(value, schema) {
-        None
-    } else {
-        Some(format!(
-            "expected {}, got {}",
-            schema.type_description(),
-            json_type_description(value),
-        ))
+        return None;
     }
+
+    // Produce a more specific message for integer values that are the right JSON
+    // type but fall outside the schema's numeric range.
+    if let Value::Number(n) = value {
+        if is_json_integer(n) {
+            match schema {
+                AvroSchema::Int => {
+                    return Some(format!(
+                        "value {n} out of range for int (must be between {} and {})",
+                        i32::MIN,
+                        i32::MAX,
+                    ));
+                }
+                AvroSchema::Long => {
+                    return Some(format!(
+                        "value {n} out of range for long (must be between {} and {})",
+                        i64::MIN,
+                        i64::MAX,
+                    ));
+                }
+                // Annotated primitives and logical types delegate to their underlying
+                // type via is_valid_default, so range errors for them are caught above.
+                // We fall through to the generic message for other schemas.
+                _ => {}
+            }
+        }
+    }
+
+    Some(format!(
+        "expected {}, got {}",
+        schema.type_description(),
+        json_type_description(value),
+    ))
 }
 
 /// Validate field defaults within a record schema, resolving `Reference` types
@@ -553,6 +587,61 @@ mod tests {
     #[test]
     fn long_accepts_integer() {
         assert!(is_valid_default(&json!(100), &AvroSchema::Long));
+    }
+
+    // =========================================================================
+    // Int/Long: boundary values
+    // =========================================================================
+
+    #[test]
+    fn int_accepts_i32_max() {
+        assert!(is_valid_default(&json!(i32::MAX), &AvroSchema::Int));
+    }
+
+    #[test]
+    fn int_accepts_i32_min() {
+        assert!(is_valid_default(&json!(i32::MIN), &AvroSchema::Int));
+    }
+
+    #[test]
+    fn int_rejects_above_i32_max() {
+        assert!(!is_valid_default(
+            &json!(i32::MAX as i64 + 1),
+            &AvroSchema::Int
+        ));
+    }
+
+    #[test]
+    fn int_rejects_below_i32_min() {
+        assert!(!is_valid_default(
+            &json!(i32::MIN as i64 - 1),
+            &AvroSchema::Int
+        ));
+    }
+
+    #[test]
+    fn int_rejects_large_positive() {
+        // 9999999999 is the example from the issue.
+        assert!(!is_valid_default(&json!(9_999_999_999_i64), &AvroSchema::Int));
+    }
+
+    #[test]
+    fn long_accepts_i64_max() {
+        assert!(is_valid_default(&json!(i64::MAX), &AvroSchema::Long));
+    }
+
+    #[test]
+    fn long_accepts_i64_min() {
+        assert!(is_valid_default(&json!(i64::MIN), &AvroSchema::Long));
+    }
+
+    #[test]
+    fn long_accepts_value_above_i32_max() {
+        // Values that overflow int but fit in long should be valid for long.
+        assert!(is_valid_default(
+            &json!(i32::MAX as i64 + 1),
+            &AvroSchema::Long
+        ));
     }
 
     #[test]
@@ -999,6 +1088,34 @@ mod tests {
         let msg = reason.expect("should have a reason");
         assert!(msg.contains("expected int"), "message was: {msg}");
         assert!(msg.contains("got string"), "message was: {msg}");
+    }
+
+    #[test]
+    fn validate_default_int_out_of_range_message() {
+        let reason = validate_default(&json!(9_999_999_999_i64), &AvroSchema::Int);
+        let msg = reason.expect("should have a reason for out-of-range int");
+        assert!(msg.contains("out of range"), "message was: {msg}");
+        assert!(msg.contains("9999999999"), "message was: {msg}");
+        assert!(msg.contains(&i32::MIN.to_string()), "message was: {msg}");
+        assert!(msg.contains(&i32::MAX.to_string()), "message was: {msg}");
+    }
+
+    #[test]
+    fn validate_default_int_below_range_message() {
+        let reason = validate_default(&json!(i32::MIN as i64 - 1), &AvroSchema::Int);
+        let msg = reason.expect("should have a reason for below-range int");
+        assert!(msg.contains("out of range"), "message was: {msg}");
+    }
+
+    #[test]
+    fn validate_default_long_out_of_range_message() {
+        // u64::MAX does not fit in i64, so serde_json stores it as u64-only.
+        // We construct this via raw JSON parsing since json!(u64::MAX) might not
+        // produce the exact representation we need.
+        let big_val: Value = serde_json::from_str("18446744073709551615").expect("valid JSON");
+        let reason = validate_default(&big_val, &AvroSchema::Long);
+        let msg = reason.expect("should have a reason for out-of-range long");
+        assert!(msg.contains("out of range"), "message was: {msg}");
     }
 
     // =========================================================================

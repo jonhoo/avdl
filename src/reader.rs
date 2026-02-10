@@ -4321,6 +4321,54 @@ mod tests {
     }
 
     #[test]
+    fn default_int_overflow_is_rejected() {
+        let idl = r#"protocol P { record R { int count = 9999999999; } }"#;
+        let err = parse_idl_for_test(idl).expect_err("int with out-of-range default should be rejected");
+        let rendered = render_error(&err);
+        assert!(
+            rendered.contains("out of range"),
+            "error should mention 'out of range', got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn default_int_negative_overflow_is_rejected() {
+        let idl = r#"protocol P { record R { int count = -2147483649; } }"#;
+        let result = parse_idl_for_test(idl);
+        assert!(
+            result.is_err(),
+            "int with below-range default should be rejected"
+        );
+    }
+
+    #[test]
+    fn default_int_max_boundary_is_accepted() {
+        let idl = r#"protocol P { record R { int count = 2147483647; } }"#;
+        assert!(
+            parse_idl_for_test(idl).is_ok(),
+            "int with i32::MAX default should be accepted"
+        );
+    }
+
+    #[test]
+    fn default_int_min_boundary_is_accepted() {
+        let idl = r#"protocol P { record R { int count = -2147483648; } }"#;
+        assert!(
+            parse_idl_for_test(idl).is_ok(),
+            "int with i32::MIN default should be accepted"
+        );
+    }
+
+    #[test]
+    fn default_long_accepts_value_above_i32_max() {
+        let idl = r#"protocol P { record R { long count = 9999999999; } }"#;
+        assert!(
+            parse_idl_for_test(idl).is_ok(),
+            "long with value above i32::MAX should be accepted"
+        );
+    }
+
+    #[test]
     fn default_bytes_int_is_rejected() {
         let idl = r#"protocol P { record R { bytes data = 42; } }"#;
         let result = parse_idl_for_test(idl);
