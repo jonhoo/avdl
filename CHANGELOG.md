@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.1.4] - 2026-02-10
+
+### Added
+
 - Validate `int` and `long` default values are within range (1aa6f24)
 - Validate type references in protocol messages resolve to known types
   (aa8b2a8)
@@ -26,10 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Render all errors with colored, annotated source excerpts (8cab18b)
 - Simplify expected-token lists in parser error messages (330b915)
 
-### Deprecated
-
-### Removed
-
 ### Fixed
 
 - Accept files containing SUB character (U+001A) (51a945f)
@@ -40,8 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve source location in errors from imported JSON files
   (824c571)
 - Widen error spans to cover full parse rule context (808715a)
-
-### Security
 
 ## [0.1.3] - 2026-02-09
 
@@ -137,7 +145,8 @@ that created the initial crate. Rust port of Apache Avro's
   one-way message return types, fixed-size bounds, decimal
   precision/scale (3ffc409)
 
-[Unreleased]: https://github.com/jonhoo/avdl/compare/v0.1.3+1.12.1...HEAD
+[Unreleased]: https://github.com/jonhoo/avdl/compare/v0.1.4+1.12.1...HEAD
+[0.1.4]: https://github.com/jonhoo/avdl/compare/v0.1.3+1.12.1...v0.1.4+1.12.1
 [0.1.3]: https://github.com/jonhoo/avdl/compare/v0.1.2+1.12.1...v0.1.3+1.12.1
 [0.1.2]: https://github.com/jonhoo/avdl/compare/v0.1.1+1.12.1...v0.1.2+1.12.1
 [0.1.1]: https://github.com/jonhoo/avdl/compare/v0.1.0+1.12.1...v0.1.1+1.12.1
