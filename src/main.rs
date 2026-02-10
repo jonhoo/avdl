@@ -210,7 +210,7 @@ fn run_idl(
     // through miette for rich output with source underlining. Otherwise, fall
     // back to plain text (e.g., import-prefixed warnings where source was cleared).
     for w in &idl_output.warnings {
-        render_warning(w);
+        eprintln!("{w:?}");
     }
 
     let json_str = serde_json::to_string_pretty(&idl_output.json)
@@ -241,7 +241,7 @@ fn run_idl2schemata(
     // through miette for rich output with source underlining. Otherwise, fall
     // back to plain text (e.g., import-prefixed warnings where source was cleared).
     for w in &schemata_output.warnings {
-        render_warning(w);
+        eprintln!("{w:?}");
     }
 
     let output_dir = outdir.unwrap_or_else(|| PathBuf::from("."));
@@ -258,16 +258,6 @@ fn run_idl2schemata(
     }
 
     Ok(())
-}
-
-// ==============================================================================
-// Warning Rendering
-// ==============================================================================
-
-/// Render a warning to stderr using miette's `Debug` format, which produces
-/// rich graphical output with source spans, labels, and severity markers.
-fn render_warning(w: &miette::Report) {
-    eprintln!("{w:?}");
 }
 
 // ==============================================================================
