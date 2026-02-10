@@ -239,6 +239,23 @@ pub struct Field {
 }
 
 impl AvroSchema {
+    /// If this is a bare primitive variant (`Null` through `String`), return
+    /// the corresponding `PrimitiveType`. Returns `None` for all other variants
+    /// (including `AnnotatedPrimitive`).
+    pub fn to_primitive_type(&self) -> Option<PrimitiveType> {
+        match self {
+            AvroSchema::Null => Some(PrimitiveType::Null),
+            AvroSchema::Boolean => Some(PrimitiveType::Boolean),
+            AvroSchema::Int => Some(PrimitiveType::Int),
+            AvroSchema::Long => Some(PrimitiveType::Long),
+            AvroSchema::Float => Some(PrimitiveType::Float),
+            AvroSchema::Double => Some(PrimitiveType::Double),
+            AvroSchema::Bytes => Some(PrimitiveType::Bytes),
+            AvroSchema::String => Some(PrimitiveType::String),
+            _ => None,
+        }
+    }
+
     /// If this is a primitive variant (`Null` through `String`), return its
     /// Avro type name. Returns `None` for all non-primitive variants.
     pub fn primitive_type_name(&self) -> Option<&'static str> {
@@ -370,6 +387,60 @@ impl AvroSchema {
 
             // Primitives are handled above by `primitive_type_name()`.
             _ => unreachable!("all AvroSchema variants are covered"),
+        }
+    }
+
+    /// Merge additional properties into this schema, returning the updated schema.
+    ///
+    /// For variants that carry a `properties` field (Record, Enum, Fixed, Array,
+    /// Map, Logical, AnnotatedPrimitive, Reference), the given properties are
+    /// merged into the existing map. Bare primitives are promoted to
+    /// `AnnotatedPrimitive` to carry the properties. Variants without a
+    /// properties field (Union) are returned unchanged.
+    ///
+    /// This does NOT perform logical type promotion — callers that need it
+    /// should apply `try_promote_logical_type` to the result.
+    pub fn with_merged_properties(self, properties: HashMap<std::string::String, Value>) -> Self {
+        // Bare primitives: wrap in AnnotatedPrimitive to carry the properties.
+        if let Some(kind) = self.to_primitive_type() {
+            return AvroSchema::AnnotatedPrimitive { kind, properties };
+        }
+
+        match self {
+            AvroSchema::Record { name, namespace, doc, fields, is_error, aliases, properties: mut existing } => {
+                existing.extend(properties);
+                AvroSchema::Record { name, namespace, doc, fields, is_error, aliases, properties: existing }
+            }
+            AvroSchema::Enum { name, namespace, doc, symbols, default, aliases, properties: mut existing } => {
+                existing.extend(properties);
+                AvroSchema::Enum { name, namespace, doc, symbols, default, aliases, properties: existing }
+            }
+            AvroSchema::Fixed { name, namespace, doc, size, aliases, properties: mut existing } => {
+                existing.extend(properties);
+                AvroSchema::Fixed { name, namespace, doc, size, aliases, properties: existing }
+            }
+            AvroSchema::Array { items, properties: mut existing } => {
+                existing.extend(properties);
+                AvroSchema::Array { items, properties: existing }
+            }
+            AvroSchema::Map { values, properties: mut existing } => {
+                existing.extend(properties);
+                AvroSchema::Map { values, properties: existing }
+            }
+            AvroSchema::Logical { logical_type, properties: mut existing } => {
+                existing.extend(properties);
+                AvroSchema::Logical { logical_type, properties: existing }
+            }
+            AvroSchema::AnnotatedPrimitive { kind, properties: mut existing } => {
+                existing.extend(properties);
+                AvroSchema::AnnotatedPrimitive { kind, properties: existing }
+            }
+            AvroSchema::Reference { name, namespace, properties: mut existing, span } => {
+                existing.extend(properties);
+                AvroSchema::Reference { name, namespace, properties: existing, span }
+            }
+            // Union and other variants don't carry top-level properties.
+            other => other,
         }
     }
 }
