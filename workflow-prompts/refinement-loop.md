@@ -30,6 +30,7 @@ Launch many sub-agents (blocking, in `main/`) for **open-ended exploration** of 
 - Thinking of ways in which we could improve the test suite more broadly to cover more of the application's surface area and spec coverage
 - Looking for opportunities to make errors and warnings more helpful and actionable to human or agentic users that observe them
 - Finding areas of duplication across the code that should be unified (remember that duplication can be warranted if unification is overly challenging)
+- Identifying unnecessary/overzealous helper functions
 - Making slight mutations to valid golden `.avdl` files (replace `;` with `,`, omit separators, misspell keywords) and verifying the error output is helpful and includes source location
 
 Each agent should pursue its own line of investigation autonomously. If it finds a discrepancy, it does first-level triage (identify root cause, affected files) and files an issue under `issues/`.
