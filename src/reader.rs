@@ -3454,6 +3454,64 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // String escape edge cases (issue #0ff1ddf7)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn trailing_backslash() {
+        // A string ending with a lone `\` should preserve it as-is.
+        assert_eq!(unescape_java(r"hello\"), r"hello\");
+    }
+
+    #[test]
+    fn malformed_unicode_escape_too_few_digits() {
+        // `\u` at end of string: take(4) collects 0 chars, from_str_radix
+        // on "" fails, emitting the raw escape.
+        assert_eq!(unescape_java(r"\u"), "\\u");
+    }
+
+    #[test]
+    fn unicode_escape_fewer_than_four_digits_still_decodes() {
+        // `\u41` — take(4) collects "41" (only 2 chars available), and
+        // u32::from_str_radix("41", 16) succeeds (= 65 = 'A'). This is
+        // a quirk of the implementation: fewer than 4 hex digits can still
+        // decode if they form a valid hex number.
+        assert_eq!(unescape_java(r"\u41"), "A");
+    }
+
+    #[test]
+    fn invalid_unicode_code_point() {
+        // \uD800 is a lone surrogate (not followed by a low surrogate or
+        // at end of string). Already tested above, but let's also test a
+        // code point that is a low surrogate without a preceding high one
+        // -- still valid for char::from_u32, so this exercises the normal
+        // path. More relevant: a code point that fails char::from_u32.
+        // In practice, surrogates 0xD800-0xDFFF are the only code points
+        // that can fail char::from_u32 when successfully parsed from hex.
+        // A lone low surrogate (not preceded by high) triggers the
+        // invalid-code-point branch.
+        assert_eq!(unescape_java(r"\uDC00"), "\\uDC00");
+    }
+
+    #[test]
+    fn high_surrogate_followed_by_backslash_non_u() {
+        // High surrogate followed by \n (not \u) — cannot form a pair,
+        // the low surrogate parser sees \ but not u, so it restores and
+        // the high surrogate is emitted raw.
+        assert_eq!(unescape_java(r"\uD800\n"), "\\uD800\n");
+    }
+
+    #[test]
+    fn high_surrogate_followed_by_too_few_hex_digits() {
+        // High surrogate followed by \u with fewer than 4 hex digits for
+        // the low surrogate. The low-surrogate parser reads \u, then finds
+        // only 2 chars ("00") so hex.len()=2 != 4, and it restores. The
+        // high surrogate is emitted raw. Then the main loop re-processes
+        // \u00 normally: from_str_radix("00", 16) = 0 = null char.
+        assert_eq!(unescape_java(r"\uD800\u00"), "\\uD800\0");
+    }
+
+    // ------------------------------------------------------------------
     // Slash escape removal (issue #16)
     // ------------------------------------------------------------------
 
@@ -3820,6 +3878,124 @@ mod tests {
         // just a suffix to distinguish from IntegerLiteral).
         let val = parse_float_text("42f").expect("integer-like float with f suffix");
         assert!((val - 42.0).abs() < f64::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // Integer literal parsing (issue #b4b0dab0)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn integer_hex() {
+        // 0xFF = 255
+        assert_eq!(parse_integer_literal("0xFF").unwrap(), serde_json::json!(255));
+    }
+
+    #[test]
+    fn integer_hex_uppercase() {
+        assert_eq!(parse_integer_literal("0XFF").unwrap(), serde_json::json!(255));
+    }
+
+    #[test]
+    fn integer_octal() {
+        // 0777 = 511
+        assert_eq!(parse_integer_literal("0777").unwrap(), serde_json::json!(511));
+    }
+
+    #[test]
+    fn integer_long_suffix() {
+        // 42L is explicitly long. Even though 42 fits in i32, the L suffix
+        // forces i64 representation.
+        let val = parse_integer_literal("42L").unwrap();
+        // serde_json represents i64 as Number; check it parses to 42
+        assert_eq!(val, serde_json::json!(42));
+    }
+
+    #[test]
+    fn integer_long_suffix_lowercase() {
+        let val = parse_integer_literal("42l").unwrap();
+        assert_eq!(val, serde_json::json!(42));
+    }
+
+    #[test]
+    fn integer_negative_hex() {
+        // -0xFF = -255
+        assert_eq!(
+            parse_integer_literal("-0xFF").unwrap(),
+            serde_json::json!(-255)
+        );
+    }
+
+    #[test]
+    fn integer_negative_octal() {
+        // -0777 = -511
+        assert_eq!(
+            parse_integer_literal("-0777").unwrap(),
+            serde_json::json!(-511)
+        );
+    }
+
+    #[test]
+    fn integer_negative_octal_long() {
+        // -0777L: negative octal with long suffix
+        assert_eq!(
+            parse_integer_literal("-0777L").unwrap(),
+            serde_json::json!(-511)
+        );
+    }
+
+    #[test]
+    fn integer_underscore_separator() {
+        // Java allows underscores in numeric literals: 1_000_000
+        assert_eq!(
+            parse_integer_literal("1_000_000").unwrap(),
+            serde_json::json!(1_000_000)
+        );
+    }
+
+    #[test]
+    fn integer_large_value_becomes_long() {
+        // Value that doesn't fit in i32 but fits in i64 should automatically
+        // use i64 representation.
+        assert_eq!(
+            parse_integer_literal("3000000000").unwrap(),
+            serde_json::json!(3_000_000_000_i64)
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Floating-point literal edge cases (issue #b4b0dab0)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn float_literal_infinity_positive() {
+        // parse_floating_point_literal should convert Infinity to a string.
+        let val = parse_floating_point_literal("Infinity").unwrap();
+        assert_eq!(val, Value::String("Infinity".to_string()));
+    }
+
+    #[test]
+    fn float_literal_infinity_negative() {
+        let val = parse_floating_point_literal("-Infinity").unwrap();
+        assert_eq!(val, Value::String("-Infinity".to_string()));
+    }
+
+    #[test]
+    fn float_literal_nan() {
+        let val = parse_floating_point_literal("NaN").unwrap();
+        assert_eq!(val, Value::String("NaN".to_string()));
+    }
+
+    #[test]
+    fn float_literal_hex_float() {
+        // 0x1.8p10 = 1.5 * 2^10 = 1536.0
+        let val = parse_floating_point_literal("0x1.8p10").unwrap();
+        assert_eq!(val, serde_json::json!(1536.0));
+    }
+
+    #[test]
+    fn float_literal_negative_hex_float() {
+        let val = parse_floating_point_literal("-0x1.0p10").unwrap();
+        assert_eq!(val, serde_json::json!(-1024.0));
     }
 
     // ------------------------------------------------------------------

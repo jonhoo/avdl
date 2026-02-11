@@ -1374,6 +1374,126 @@ mod tests {
         );
     }
 
+    // =========================================================================
+    // Field default validation for Reference-typed fields (issue #0f6b49e3)
+    // =========================================================================
+
+    /// Render an error diagnostic to a deterministic string for snapshot tests.
+    fn render_error(err: &miette::Report) -> String {
+        use miette::{GraphicalReportHandler, GraphicalTheme};
+        let handler =
+            GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
+        let mut buf = String::new();
+        handler
+            .render_report(&mut buf, err.as_ref())
+            .expect("render to String is infallible");
+        buf
+    }
+
+    #[test]
+    fn field_default_invalid_for_enum_reference() {
+        // An enum field with an integer default should be rejected after
+        // the reference is resolved. This exercises the primary diagnostic
+        // path in `process_decl_items` (lines 705-749 of compiler.rs).
+        let result = Idl::new().convert_str(
+            r#"
+            protocol P {
+                enum Color { RED, GREEN, BLUE }
+                record R {
+                    Color favorite = 42;
+                }
+            }
+            "#,
+        );
+        let err = result.expect_err("enum field with int default should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Invalid default"),
+            "should report invalid default, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn field_default_invalid_for_enum_reference_snapshot() {
+        let result = Idl::new().convert_str(
+            r#"
+            protocol P {
+                enum Color { RED, GREEN, BLUE }
+                record R {
+                    Color favorite = 42;
+                }
+            }
+            "#,
+        );
+        let err = result.unwrap_err();
+        insta::assert_snapshot!(render_error(&err));
+    }
+
+    #[test]
+    fn field_default_multiple_invalid_references() {
+        // Two fields with bad defaults exercises the `related` diagnostics
+        // loop that builds secondary error messages from additional errors.
+        let result = Idl::new().convert_str(
+            r#"
+            protocol P {
+                enum Color { RED, GREEN, BLUE }
+                record R {
+                    Color first = 1;
+                    Color second = 2;
+                }
+            }
+            "#,
+        );
+        let err = result.expect_err("multiple bad defaults should be rejected");
+        let rendered = render_error(&err);
+        // The primary diagnostic mentions the first field, and there should
+        // be a related diagnostic for the second field.
+        assert!(
+            rendered.contains("first") && rendered.contains("second"),
+            "should report both fields in diagnostics, got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn field_default_valid_for_enum_reference() {
+        // A valid string default for an enum reference should be accepted.
+        let output = Idl::new()
+            .convert_str(
+                r#"
+                protocol P {
+                    enum Color { RED, GREEN, BLUE }
+                    record R {
+                        Color favorite = "RED";
+                    }
+                }
+                "#,
+            )
+            .expect("valid enum default should be accepted");
+        assert_eq!(output.json["protocol"], "P");
+    }
+
+    #[test]
+    fn field_default_invalid_for_record_reference() {
+        // A record field with a string default should be rejected (records
+        // expect object defaults).
+        let result = Idl::new().convert_str(
+            r#"
+            protocol P {
+                record Inner { string name; }
+                record Outer {
+                    Inner nested = "not an object";
+                }
+            }
+            "#,
+        );
+        let err = result.expect_err("record field with string default should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Invalid default"),
+            "should report invalid default, got: {msg}"
+        );
+    }
+
     #[test]
     fn idl2schemata_accepts_bare_named_types() {
         let output = Idl2Schemata::new()

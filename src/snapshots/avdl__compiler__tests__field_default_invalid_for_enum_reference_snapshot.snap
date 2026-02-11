@@ -1,0 +1,14 @@
+---
+source: src/compiler.rs
+assertion_line: 1429
+expression: render_error(&err)
+---
+  x Invalid default for field `favorite` in `R`: expected enum Color, got
+  | number
+   ,-[<input>:5:27]
+ 4 |                 record R {
+ 5 |                     Color favorite = 42;
+   :                           ^^^^|^^^
+   :                               `-- Invalid default for field `favorite` in `R`: expected enum Color, got number
+ 6 |                 }
+   `----
