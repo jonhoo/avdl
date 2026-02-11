@@ -1,0 +1,23 @@
+---
+source: src/compiler.rs
+assertion_line: 1415
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Invalid default for field `first` in `R`: expected enum Color, got number
+   ,-[<input>:5:27]
+ 4 |                 record R {
+ 5 |                     Color first = 1;
+   :                           ^^|^^
+   :                             `-- Invalid default for field `first` in `R`: expected enum Color, got number
+ 6 |                     Color second = 2;
+   `----
+
+Error: 
+  x Invalid default for field `second` in `R`: expected enum Color, got number
+   ,-[<input>:6:27]
+ 5 |                     Color first = 1;
+ 6 |                     Color second = 2;
+   :                           ^^^|^^
+   :                              `-- Invalid default for field `second` in `R`: expected enum Color, got number
+ 7 |                 }
+   `----

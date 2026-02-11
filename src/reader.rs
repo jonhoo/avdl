@@ -3329,20 +3329,8 @@ fn collect_single_import<'input>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miette::{GraphicalReportHandler, GraphicalTheme};
+    use crate::error::render_diagnostic;
     use pretty_assertions::assert_eq;
-
-    /// Render a `miette::Report` error to a deterministic string for snapshot
-    /// testing. Uses `GraphicalTheme::none()` (no box-drawing characters) to
-    /// match the `error_reporting.rs` test style.
-    fn render_error(err: &miette::Report) -> String {
-        let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
-        let mut buf = String::new();
-        handler
-            .render_report(&mut buf, err.as_ref())
-            .expect("render to String is infallible");
-        buf
-    }
 
     // ------------------------------------------------------------------
     // Octal escapes (issue #5)
@@ -3558,7 +3546,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -3590,7 +3578,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4014,7 +4002,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4027,7 +4015,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4041,7 +4029,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4054,7 +4042,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4068,7 +4056,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4118,7 +4106,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4131,7 +4119,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4421,7 +4409,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4434,7 +4422,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4448,7 +4436,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4499,7 +4487,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4525,7 +4513,7 @@ mod tests {
     fn protocol_name_null_is_rejected() {
         let idl = "protocol `null` { }";
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4589,7 +4577,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4651,7 +4639,7 @@ mod tests {
     fn default_int_string_is_rejected() {
         let idl = r#"protocol P { record R { int count = "hello"; } }"#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4706,7 +4694,7 @@ mod tests {
         let idl = r#"protocol P { record R { int count = 9999999999; } }"#;
         let err =
             parse_idl_for_test(idl).expect_err("int with out-of-range default should be rejected");
-        let rendered = render_error(&err);
+        let rendered = render_diagnostic(&err);
         assert!(
             rendered.contains("out of range"),
             "error should mention 'out of range', got: {rendered}"
@@ -5366,7 +5354,7 @@ mod tests {
         // quote location, not the downstream `}` that the parser sees next.
         let idl = "@namespace(\"org.test\")\nprotocol Test {\n  record Foo {\n    string name = \"unterminated;\n  }\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let rendered = render_error(&err);
+        let rendered = render_diagnostic(&err);
         insta::assert_snapshot!(rendered);
     }
 
@@ -5376,7 +5364,7 @@ mod tests {
         // be caught and reported at the opening quote.
         let idl = "@namespace(\"org.test)\nprotocol Test {\n  record Foo { string name; }\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let rendered = render_error(&err);
+        let rendered = render_diagnostic(&err);
         insta::assert_snapshot!(rendered);
     }
 

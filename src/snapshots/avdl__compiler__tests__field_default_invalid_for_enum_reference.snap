@@ -1,7 +1,7 @@
 ---
 source: src/compiler.rs
-assertion_line: 1429
-expression: render_error(&err)
+assertion_line: 1396
+expression: "crate::error::render_diagnostic(&err)"
 ---
   x Invalid default for field `favorite` in `R`: expected enum Color, got
   | number

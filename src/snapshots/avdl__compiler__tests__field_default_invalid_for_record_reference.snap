@@ -1,0 +1,14 @@
+---
+source: src/compiler.rs
+assertion_line: 1451
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Invalid default for field `nested` in `Outer`: expected record Inner, got
+  | string
+   ,-[<input>:5:27]
+ 4 |                 record Outer {
+ 5 |                     Inner nested = "not an object";
+   :                           ^^^|^^
+   :                              `-- Invalid default for field `nested` in `Outer`: expected record Inner, got string
+ 6 |                 }
+   `----

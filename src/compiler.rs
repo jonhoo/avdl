@@ -1378,43 +1378,10 @@ mod tests {
     // Field default validation for Reference-typed fields (issue #0f6b49e3)
     // =========================================================================
 
-    /// Render an error diagnostic to a deterministic string for snapshot tests.
-    fn render_error(err: &miette::Report) -> String {
-        use miette::{GraphicalReportHandler, GraphicalTheme};
-        let handler =
-            GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
-        let mut buf = String::new();
-        handler
-            .render_report(&mut buf, err.as_ref())
-            .expect("render to String is infallible");
-        buf
-    }
-
     #[test]
     fn field_default_invalid_for_enum_reference() {
         // An enum field with an integer default should be rejected after
-        // the reference is resolved. This exercises the primary diagnostic
-        // path in `process_decl_items` (lines 705-749 of compiler.rs).
-        let result = Idl::new().convert_str(
-            r#"
-            protocol P {
-                enum Color { RED, GREEN, BLUE }
-                record R {
-                    Color favorite = 42;
-                }
-            }
-            "#,
-        );
-        let err = result.expect_err("enum field with int default should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("Invalid default"),
-            "should report invalid default, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn field_default_invalid_for_enum_reference_snapshot() {
+        // the reference is resolved.
         let result = Idl::new().convert_str(
             r#"
             protocol P {
@@ -1426,7 +1393,7 @@ mod tests {
             "#,
         );
         let err = result.unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1444,14 +1411,8 @@ mod tests {
             }
             "#,
         );
-        let err = result.expect_err("multiple bad defaults should be rejected");
-        let rendered = render_error(&err);
-        // The primary diagnostic mentions the first field, and there should
-        // be a related diagnostic for the second field.
-        assert!(
-            rendered.contains("first") && rendered.contains("second"),
-            "should report both fields in diagnostics, got:\n{rendered}"
-        );
+        let err = result.unwrap_err();
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1486,12 +1447,8 @@ mod tests {
             }
             "#,
         );
-        let err = result.expect_err("record field with string default should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("Invalid default"),
-            "should report invalid default, got: {msg}"
-        );
+        let err = result.unwrap_err();
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
