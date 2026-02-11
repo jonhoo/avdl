@@ -11,8 +11,10 @@ coverage:
         # Avoid false negatives
         threshold: 1%
 
-# Test files aren't important for coverage
+# Exclude generated code, CLI main, and test files from coverage
 ignore:
+  - "src/generated"
+  - "src/main.rs"
   - "tests"
 
 # Make comments less noisy
