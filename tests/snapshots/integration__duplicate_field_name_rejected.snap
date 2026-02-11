@@ -1,14 +1,14 @@
 ---
 source: tests/integration.rs
-expression: render_error(&err)
+expression: render_diagnostic(&err)
 ---
-  × parse IDL source
-  ├─▶ parse `<input>`
-  ╰─▶ duplicate field 'name' in record 'R'
-   ╭─[<input>:6:21]
- 5 │                 string name;
- 6 │                 int name;
-   ·                     ──┬─
-   ·                       ╰── duplicate field 'name' in record 'R'
- 7 │             }
-   ╰────
+  x parse IDL source
+  |-> parse `<input>`
+  `-> duplicate field 'name' in record 'R'
+   ,-[<input>:6:21]
+ 5 |                 string name;
+ 6 |                 int name;
+   :                     ^^|^
+   :                       `-- duplicate field 'name' in record 'R'
+ 7 |             }
+   `----

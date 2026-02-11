@@ -1,14 +1,14 @@
 ---
 source: tests/integration.rs
-expression: render_error(&err)
+expression: render_diagnostic(&err)
 ---
-  × parse IDL source
-  ├─▶ parse `avro/lang/java/idl/src/test/idl/AnnotationOnTypeReference.avdl`
-  ╰─▶ Type references may not be annotated
-    ╭─[avro/lang/java/idl/src/test/idl/AnnotationOnTypeReference.avdl:29:5]
- 28 │   record TestRecord {
- 29 │     @foo("bar") MD5 hash = "0000000000000000";
-    ·     ───────┬───────
-    ·            ╰── Type references may not be annotated
- 30 │   }
-    ╰────
+  x parse IDL source
+  |-> parse `avro/lang/java/idl/src/test/idl/AnnotationOnTypeReference.avdl`
+  `-> Type references may not be annotated
+    ,-[avro/lang/java/idl/src/test/idl/AnnotationOnTypeReference.avdl:29:5]
+ 28 |   record TestRecord {
+ 29 |     @foo("bar") MD5 hash = "0000000000000000";
+    :     ^^^^^^^|^^^^^^^
+    :            `-- Type references may not be annotated
+ 30 |   }
+    `----

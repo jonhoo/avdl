@@ -1,12 +1,12 @@
 ---
 source: tests/integration.rs
-expression: render_error(&err)
+expression: render_diagnostic(&err)
 ---
-  × parse IDL source
-  ├─▶ parse `<input>`
-  ╰─▶ Illegal name: int
-   ╭─[<input>:1:8]
- 1 │ record `int` { string value; }
-   ·        ──┬──
-   ·          ╰── Illegal name: int
-   ╰────
+  x parse IDL source
+  |-> parse `<input>`
+  `-> Illegal name: int
+   ,-[<input>:1:8]
+ 1 | record `int` { string value; }
+   :        ^^|^^
+   :          `-- Illegal name: int
+   `----

@@ -1,16 +1,16 @@
 ---
 source: tests/integration.rs
-expression: render_error(&err)
+expression: render_diagnostic(&err)
 ---
-  × parse IDL source
-  ├─▶ parse `<input>`
-  ╰─▶ Unions may not immediately contain other unions (per the Avro
+  x parse IDL source
+  |-> parse `<input>`
+  `-> Unions may not immediately contain other unions (per the Avro
       specification, §schemas). Note: Java avro-tools incorrectly accepts this
       syntax, producing an empty union.
-   ╭─[<input>:5:31]
- 4 │             record Bad {
- 5 │                 union { null, union { string, int } } nested;
-   ·                               ──────────┬──────────
-   ·                                         ╰── Unions may not immediately contain other unions (per the Avro specification, §schemas). Note: Java avro-tools incorrectly accepts this syntax, producing an empty union.
- 6 │             }
-   ╰────
+   ,-[<input>:5:31]
+ 4 |             record Bad {
+ 5 |                 union { null, union { string, int } } nested;
+   :                               ^^^^^^^^^^|^^^^^^^^^^
+   :                                         `-- Unions may not immediately contain other unions (per the Avro specification, §schemas). Note: Java avro-tools incorrectly accepts this syntax, producing an empty union.
+ 6 |             }
+   `----

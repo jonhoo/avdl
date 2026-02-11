@@ -40,10 +40,9 @@ pub fn normalize_crlf(value: Value) -> Value {
 }
 
 /// Render a single diagnostic to a deterministic string for snapshot tests.
-/// Uses unicode-nocolor theme at 80 columns.
+/// Uses non-unicode theme at 80 columns.
 pub fn render_diagnostic(report: &miette::Report) -> String {
-    let handler =
-        GraphicalReportHandler::new_themed(GraphicalTheme::unicode_nocolor()).with_width(80);
+    let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
     let mut buf = String::new();
     handler
         .render_report(&mut buf, report.as_ref())

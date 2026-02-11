@@ -1,243 +1,243 @@
 ---
 source: tests/integration.rs
-expression: render_warnings(&output.warnings)
+expression: render_diagnostics(&output.warnings)
 ---
-  ⚠ Line 21, char 8: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:21:8]
- 20 │   /** Documented Enum */
- 21 │   enum /** Dangling Enum1 */ DocumentedEnum /** Dangling Enum2 */ {
-    ·        ──────────┬──────────
-    ·                  ╰── out-of-place doc comment
- 22 │     /** Dangling Enum3 */ A,
-    ╰────
+  ! Line 21, char 8: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:21:8]
+ 20 |   /** Documented Enum */
+ 21 |   enum /** Dangling Enum1 */ DocumentedEnum /** Dangling Enum2 */ {
+    :        ^^^^^^^^^^|^^^^^^^^^^
+    :                  `-- out-of-place doc comment
+ 22 |     /** Dangling Enum3 */ A,
+    `----
 
-  ⚠ Line 21, char 45: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:21:45]
- 20 │   /** Documented Enum */
- 21 │   enum /** Dangling Enum1 */ DocumentedEnum /** Dangling Enum2 */ {
-    ·                                             ──────────┬──────────
-    ·                                                       ╰── out-of-place doc comment
- 22 │     /** Dangling Enum3 */ A,
-    ╰────
+  ! Line 21, char 45: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:21:45]
+ 20 |   /** Documented Enum */
+ 21 |   enum /** Dangling Enum1 */ DocumentedEnum /** Dangling Enum2 */ {
+    :                                             ^^^^^^^^^^|^^^^^^^^^^
+    :                                                       `-- out-of-place doc comment
+ 22 |     /** Dangling Enum3 */ A,
+    `----
 
-  ⚠ Line 22, char 5: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:22:5]
- 21 │   enum /** Dangling Enum1 */ DocumentedEnum /** Dangling Enum2 */ {
- 22 │     /** Dangling Enum3 */ A,
-    ·     ──────────┬──────────
-    ·               ╰── out-of-place doc comment
- 23 │     /** Dangling Enum4 */ B,
-    ╰────
+  ! Line 22, char 5: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:22:5]
+ 21 |   enum /** Dangling Enum1 */ DocumentedEnum /** Dangling Enum2 */ {
+ 22 |     /** Dangling Enum3 */ A,
+    :     ^^^^^^^^^^|^^^^^^^^^^
+    :               `-- out-of-place doc comment
+ 23 |     /** Dangling Enum4 */ B,
+    `----
 
-  ⚠ Line 23, char 5: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:23:5]
- 22 │     /** Dangling Enum3 */ A,
- 23 │     /** Dangling Enum4 */ B,
-    ·     ──────────┬──────────
-    ·               ╰── out-of-place doc comment
- 24 │     /** Dangling Enum5 */ C
-    ╰────
+  ! Line 23, char 5: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:23:5]
+ 22 |     /** Dangling Enum3 */ A,
+ 23 |     /** Dangling Enum4 */ B,
+    :     ^^^^^^^^^^|^^^^^^^^^^
+    :               `-- out-of-place doc comment
+ 24 |     /** Dangling Enum5 */ C
+    `----
 
-  ⚠ Line 24, char 5: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:24:5]
- 23 │     /** Dangling Enum4 */ B,
- 24 │     /** Dangling Enum5 */ C
-    ·     ──────────┬──────────
-    ·               ╰── out-of-place doc comment
- 25 │     /** Dangling Enum6 */}
-    ╰────
+  ! Line 24, char 5: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:24:5]
+ 23 |     /** Dangling Enum4 */ B,
+ 24 |     /** Dangling Enum5 */ C
+    :     ^^^^^^^^^^|^^^^^^^^^^
+    :               `-- out-of-place doc comment
+ 25 |     /** Dangling Enum6 */}
+    `----
 
-  ⚠ Line 25, char 5: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:25:5]
- 24 │     /** Dangling Enum5 */ C
- 25 │     /** Dangling Enum6 */}
-    ·     ──────────┬──────────
-    ·               ╰── out-of-place doc comment
- 26 │       /** Dangling Enum7 */=
-    ╰────
+  ! Line 25, char 5: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:25:5]
+ 24 |     /** Dangling Enum5 */ C
+ 25 |     /** Dangling Enum6 */}
+    :     ^^^^^^^^^^|^^^^^^^^^^
+    :               `-- out-of-place doc comment
+ 26 |       /** Dangling Enum7 */=
+    `----
 
-  ⚠ Line 26, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:26:7]
- 25 │     /** Dangling Enum6 */}
- 26 │       /** Dangling Enum7 */=
-    ·       ──────────┬──────────
-    ·                 ╰── out-of-place doc comment
- 27 │       /** Dangling Enum8 */ A
-    ╰────
+  ! Line 26, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:26:7]
+ 25 |     /** Dangling Enum6 */}
+ 26 |       /** Dangling Enum7 */=
+    :       ^^^^^^^^^^|^^^^^^^^^^
+    :                 `-- out-of-place doc comment
+ 27 |       /** Dangling Enum8 */ A
+    `----
 
-  ⚠ Line 27, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:27:7]
- 26 │       /** Dangling Enum7 */=
- 27 │       /** Dangling Enum8 */ A
-    ·       ──────────┬──────────
-    ·                 ╰── out-of-place doc comment
- 28 │       /** Dangling Enum9 */;
-    ╰────
+  ! Line 27, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:27:7]
+ 26 |       /** Dangling Enum7 */=
+ 27 |       /** Dangling Enum8 */ A
+    :       ^^^^^^^^^^|^^^^^^^^^^
+    :                 `-- out-of-place doc comment
+ 28 |       /** Dangling Enum9 */;
+    `----
 
-  ⚠ Line 28, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:28:7]
- 27 │       /** Dangling Enum8 */ A
- 28 │       /** Dangling Enum9 */;
-    ·       ──────────┬──────────
-    ·                 ╰── out-of-place doc comment
- 29 │ 
-    ╰────
+  ! Line 28, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:28:7]
+ 27 |       /** Dangling Enum8 */ A
+ 28 |       /** Dangling Enum9 */;
+    :       ^^^^^^^^^^|^^^^^^^^^^
+    :                 `-- out-of-place doc comment
+ 29 | 
+    `----
 
-  ⚠ Line 33, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:33:7]
- 32 │   /** Documented Fixed Type */ fixed
- 33 │       /** Dangling Fixed1 */ DocumentedFixed
-    ·       ───────────┬──────────
-    ·                  ╰── out-of-place doc comment
- 34 │       /** Dangling Fixed2 */(
-    ╰────
+  ! Line 33, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:33:7]
+ 32 |   /** Documented Fixed Type */ fixed
+ 33 |       /** Dangling Fixed1 */ DocumentedFixed
+    :       ^^^^^^^^^^^|^^^^^^^^^^
+    :                  `-- out-of-place doc comment
+ 34 |       /** Dangling Fixed2 */(
+    `----
 
-  ⚠ Line 34, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:34:7]
- 33 │       /** Dangling Fixed1 */ DocumentedFixed
- 34 │       /** Dangling Fixed2 */(
-    ·       ───────────┬──────────
-    ·                  ╰── out-of-place doc comment
- 35 │     /** Dangling Fixed3 */ 16
-    ╰────
+  ! Line 34, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:34:7]
+ 33 |       /** Dangling Fixed1 */ DocumentedFixed
+ 34 |       /** Dangling Fixed2 */(
+    :       ^^^^^^^^^^^|^^^^^^^^^^
+    :                  `-- out-of-place doc comment
+ 35 |     /** Dangling Fixed3 */ 16
+    `----
 
-  ⚠ Line 35, char 5: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:35:5]
- 34 │       /** Dangling Fixed2 */(
- 35 │     /** Dangling Fixed3 */ 16
-    ·     ───────────┬──────────
-    ·                ╰── out-of-place doc comment
- 36 │     /** Dangling Fixed4 */)
-    ╰────
+  ! Line 35, char 5: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:35:5]
+ 34 |       /** Dangling Fixed2 */(
+ 35 |     /** Dangling Fixed3 */ 16
+    :     ^^^^^^^^^^^|^^^^^^^^^^
+    :                `-- out-of-place doc comment
+ 36 |     /** Dangling Fixed4 */)
+    `----
 
-  ⚠ Line 36, char 5: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:36:5]
- 35 │     /** Dangling Fixed3 */ 16
- 36 │     /** Dangling Fixed4 */)
-    ·     ───────────┬──────────
-    ·                ╰── out-of-place doc comment
- 37 │       /** Dangling Fixed5 */;
-    ╰────
+  ! Line 36, char 5: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:36:5]
+ 35 |     /** Dangling Fixed3 */ 16
+ 36 |     /** Dangling Fixed4 */)
+    :     ^^^^^^^^^^^|^^^^^^^^^^
+    :                `-- out-of-place doc comment
+ 37 |       /** Dangling Fixed5 */;
+    `----
 
-  ⚠ Line 37, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:37:7]
- 36 │     /** Dangling Fixed4 */)
- 37 │       /** Dangling Fixed5 */;
-    ·       ───────────┬──────────
-    ·                  ╰── out-of-place doc comment
- 38 │ 
-    ╰────
+  ! Line 37, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:37:7]
+ 36 |     /** Dangling Fixed4 */)
+ 37 |       /** Dangling Fixed5 */;
+    :       ^^^^^^^^^^^|^^^^^^^^^^
+    :                  `-- out-of-place doc comment
+ 38 | 
+    `----
 
-  ⚠ Line 42, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:42:7]
- 41 │   /** Documented Error */ error
- 42 │       /** Dangling Error1 */ DocumentedError
-    ·       ───────────┬──────────
-    ·                  ╰── out-of-place doc comment
- 43 │       /** Dangling Field1 */{
-    ╰────
+  ! Line 42, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:42:7]
+ 41 |   /** Documented Error */ error
+ 42 |       /** Dangling Error1 */ DocumentedError
+    :       ^^^^^^^^^^^|^^^^^^^^^^
+    :                  `-- out-of-place doc comment
+ 43 |       /** Dangling Field1 */{
+    `----
 
-  ⚠ Line 43, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:43:7]
- 42 │       /** Dangling Error1 */ DocumentedError
- 43 │       /** Dangling Field1 */{
-    ·       ───────────┬──────────
-    ·                  ╰── out-of-place doc comment
- 44 │     /** Default Doc Explanation Field */string
-    ╰────
+  ! Line 43, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:43:7]
+ 42 |       /** Dangling Error1 */ DocumentedError
+ 43 |       /** Dangling Field1 */{
+    :       ^^^^^^^^^^^|^^^^^^^^^^
+    :                  `-- out-of-place doc comment
+ 44 |     /** Default Doc Explanation Field */string
+    `----
 
-  ⚠ Line 46, char 9: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:46:9]
- 45 │         /** Documented Reason Field */reason, explanation
- 46 │         /** Dangling Field2 */;
-    ·         ───────────┬──────────
-    ·                    ╰── out-of-place doc comment
- 47 │     /** Dangling Error2 */}
-    ╰────
+  ! Line 46, char 9: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:46:9]
+ 45 |         /** Documented Reason Field */reason, explanation
+ 46 |         /** Dangling Field2 */;
+    :         ^^^^^^^^^^^|^^^^^^^^^^
+    :                    `-- out-of-place doc comment
+ 47 |     /** Dangling Error2 */}
+    `----
 
-  ⚠ Line 47, char 5: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:47:5]
- 46 │         /** Dangling Field2 */;
- 47 │     /** Dangling Error2 */}
-    ·     ───────────┬──────────
-    ·                ╰── out-of-place doc comment
- 48 │ 
-    ╰────
+  ! Line 47, char 5: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:47:5]
+ 46 |         /** Dangling Field2 */;
+ 47 |     /** Dangling Error2 */}
+    :     ^^^^^^^^^^^|^^^^^^^^^^
+    :                `-- out-of-place doc comment
+ 48 | 
+    `----
 
-  ⚠ Line 54, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:54:7]
- 53 │   /** Documented Method */ void
- 54 │       /** Dangling Param1 */ documentedMethod
-    ·       ───────────┬──────────
-    ·                  ╰── out-of-place doc comment
- 55 │       /** Dangling Param2 */(
-    ╰────
+  ! Line 54, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:54:7]
+ 53 |   /** Documented Method */ void
+ 54 |       /** Dangling Param1 */ documentedMethod
+    :       ^^^^^^^^^^^|^^^^^^^^^^
+    :                  `-- out-of-place doc comment
+ 55 |       /** Dangling Param2 */(
+    `----
 
-  ⚠ Line 55, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:55:7]
- 54 │       /** Dangling Param1 */ documentedMethod
- 55 │       /** Dangling Param2 */(
-    ·       ───────────┬──────────
-    ·                  ╰── out-of-place doc comment
- 56 │     string /** Documented Parameter */ message,
-    ╰────
+  ! Line 55, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:55:7]
+ 54 |       /** Dangling Param1 */ documentedMethod
+ 55 |       /** Dangling Param2 */(
+    :       ^^^^^^^^^^^|^^^^^^^^^^
+    :                  `-- out-of-place doc comment
+ 56 |     string /** Documented Parameter */ message,
+    `----
 
-  ⚠ Line 58, char 9: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:58:9]
- 57 │     /** Default Documented Parameter */ string defMsg
- 58 │         /** Dangling Param3 */)
-    ·         ───────────┬──────────
-    ·                    ╰── out-of-place doc comment
- 59 │       /** Dangling Method1 */ throws
-    ╰────
+  ! Line 58, char 9: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:58:9]
+ 57 |     /** Default Documented Parameter */ string defMsg
+ 58 |         /** Dangling Param3 */)
+    :         ^^^^^^^^^^^|^^^^^^^^^^
+    :                    `-- out-of-place doc comment
+ 59 |       /** Dangling Method1 */ throws
+    `----
 
-  ⚠ Line 59, char 7: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:59:7]
- 58 │         /** Dangling Param3 */)
- 59 │       /** Dangling Method1 */ throws
-    ·       ───────────┬───────────
-    ·                  ╰── out-of-place doc comment
- 60 │           /** Dangling Method2 */ DocumentedError
-    ╰────
+  ! Line 59, char 7: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:59:7]
+ 58 |         /** Dangling Param3 */)
+ 59 |       /** Dangling Method1 */ throws
+    :       ^^^^^^^^^^^|^^^^^^^^^^^
+    :                  `-- out-of-place doc comment
+ 60 |           /** Dangling Method2 */ DocumentedError
+    `----
 
-  ⚠ Line 60, char 11: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:60:11]
- 59 │       /** Dangling Method1 */ throws
- 60 │           /** Dangling Method2 */ DocumentedError
-    ·           ───────────┬───────────
-    ·                      ╰── out-of-place doc comment
- 61 │           /** Dangling Method3 */;
-    ╰────
+  ! Line 60, char 11: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:60:11]
+ 59 |       /** Dangling Method1 */ throws
+ 60 |           /** Dangling Method2 */ DocumentedError
+    :           ^^^^^^^^^^^|^^^^^^^^^^^
+    :                      `-- out-of-place doc comment
+ 61 |           /** Dangling Method3 */;
+    `----
 
-  ⚠ Line 61, char 11: Ignoring out-of-place documentation comment.
-  │ Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ╭─[avro/lang/java/idl/src/test/idl/input/comments.avdl:61:11]
- 60 │           /** Dangling Method2 */ DocumentedError
- 61 │           /** Dangling Method3 */;
-    ·           ───────────┬───────────
-    ·                      ╰── out-of-place doc comment
- 62 │ 
-    ╰────
+  ! Line 61, char 11: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[avro/lang/java/idl/src/test/idl/input/comments.avdl:61:11]
+ 60 |           /** Dangling Method2 */ DocumentedError
+ 61 |           /** Dangling Method3 */;
+    :           ^^^^^^^^^^^|^^^^^^^^^^^
+    :                      `-- out-of-place doc comment
+ 62 | 
+    `----

@@ -5341,9 +5341,8 @@ mod tests {
     /// Render a list of warnings to a deterministic string for snapshot tests.
     fn render_warnings(warnings: &[Warning]) -> String {
         use std::fmt::Write;
-        let handler =
-            miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor())
-                .with_width(80);
+        let handler = miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::none())
+            .with_width(80);
         let mut buf = String::new();
         for (i, w) in warnings.iter().enumerate() {
             if i > 0 {

@@ -2,9 +2,9 @@
 source: src/reader.rs
 expression: render_warnings(&warnings)
 ---
-  ⚠ line 1:35 token recognition error at: ''
-   ╭─[<input>:1:36]
- 1 │ protocol Test { record Foo { string name; } }
-   ·                                    ┬
-   ·                                    ╰── unrecognized token
-   ╰────
+  ! line 1:35 token recognition error at: ''
+   ,-[<input>:1:36]
+ 1 | protocol Test { record Foo { string name; } }
+   :                                    |
+   :                                    `-- unrecognized token
+   `----

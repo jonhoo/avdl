@@ -1,14 +1,14 @@
 ---
 source: tests/integration.rs
-expression: render_error(&err)
+expression: render_diagnostic(&err)
 ---
-  × parse IDL source
-  ├─▶ parse `<input>`
-  ╰─▶ duplicate enum symbol: RED
-   ╭─[<input>:4:44]
- 3 │         protocol P {
- 4 │             enum Color { RED, GREEN, BLUE, RED }
-   ·                                            ─┬─
-   ·                                             ╰── duplicate enum symbol: RED
- 5 │         }
-   ╰────
+  x parse IDL source
+  |-> parse `<input>`
+  `-> duplicate enum symbol: RED
+   ,-[<input>:4:44]
+ 3 |         protocol P {
+ 4 |             enum Color { RED, GREEN, BLUE, RED }
+   :                                            ^|^
+   :                                             `-- duplicate enum symbol: RED
+ 5 |         }
+   `----
