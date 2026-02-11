@@ -804,10 +804,12 @@ pub enum DeclItem {
     /// the originating IDL source, enabling source-highlighted diagnostics when
     /// registration fails (e.g., duplicate type name).
     ///
-    /// The `HashMap<String, SourceSpan>` maps field names to their source spans
-    /// for record types. This enables per-field diagnostics when validating
-    /// defaults for Reference-typed fields in the compiler (where only the
-    /// type-level span would otherwise be available).
+    /// The `HashMap<String, SourceSpan>` maps field names to their default
+    /// value's source span for record types. When a field has a default value,
+    /// the span covers the `jsonValue` node; otherwise it falls back to the
+    /// `variableDeclaration` node. This enables per-field diagnostics that
+    /// highlight the offending default value when validating Reference-typed
+    /// fields in the compiler.
     Type(
         AvroSchema,
         Option<miette::SourceSpan>,
@@ -1726,9 +1728,15 @@ fn walk_record<'input>(
                 };
                 return Err(diag);
             }
-            // Record each field's source span for use by the compiler when
-            // validating Reference-typed defaults after type registration.
-            if let Some(span) = span_from_context(&**var_ctx) {
+            // Record each field's default-value source span for use by the
+            // compiler when validating Reference-typed defaults after type
+            // registration. Prefer the jsonValue span (the `= <value>` part)
+            // so diagnostics highlight the offending value, not the field name.
+            let default_span = var_ctx
+                .jsonValue()
+                .and_then(|jv| span_from_context(&*jv))
+                .or_else(|| span_from_context(&**var_ctx));
+            if let Some(span) = default_span {
                 field_spans.insert(field.name.clone(), span);
             }
         }
@@ -1853,11 +1861,20 @@ fn walk_variable<'input>(
             Some(name) => format!(" in `{name}`"),
             None => String::new(),
         };
-        return Err(make_diagnostic(
-            src,
-            ctx,
-            format!("Invalid default for field `{field_name}`{in_clause}: {reason}"),
-        ));
+        // Point the diagnostic at the default value expression, not the
+        // entire variable declaration (which includes the field name).
+        return Err(match ctx.jsonValue() {
+            Some(ref jv) => make_diagnostic(
+                src,
+                &**jv,
+                format!("Invalid default for field `{field_name}`{in_clause}: {reason}"),
+            ),
+            None => make_diagnostic(
+                src,
+                ctx,
+                format!("Invalid default for field `{field_name}`{in_clause}: {reason}"),
+            ),
+        });
     }
 
     Ok(Field {

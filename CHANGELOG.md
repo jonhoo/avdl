@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token" error (01ea32a)
 - Include enclosing record name and point source span at the offending
   field declaration in default-validation errors (125e2fb)
+- Highlight the default value expression instead of the field name in
+  invalid-default diagnostics
 - Report undefined type errors in source order instead of alphabetical
   order (10e9962)
 - Include filename and source location in "neither protocol nor schema"
