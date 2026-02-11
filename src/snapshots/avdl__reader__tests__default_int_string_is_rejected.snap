@@ -1,11 +1,12 @@
 ---
 source: src/reader.rs
-expression: render_error(&err)
+assertion_line: 4659
+expression: render_diagnostic(&err)
 ---
   x parse `<input>`
   `-> Invalid default for field `count` in `R`: expected int, got string
-   ,-[<input>:1:29]
+   ,-[<input>:1:37]
  1 | protocol P { record R { int count = "hello"; } }
-   :                             ^^^^^^^|^^^^^^^
-   :                                    `-- Invalid default for field `count` in `R`: expected int, got string
+   :                                     ^^^|^^^
+   :                                        `-- Invalid default for field `count` in `R`: expected int, got string
    `----

@@ -1374,6 +1374,83 @@ mod tests {
         );
     }
 
+    // =========================================================================
+    // Field default validation for Reference-typed fields (issue #0f6b49e3)
+    // =========================================================================
+
+    #[test]
+    fn field_default_invalid_for_enum_reference() {
+        // An enum field with an integer default should be rejected after
+        // the reference is resolved.
+        let result = Idl::new().convert_str(
+            r#"
+            protocol P {
+                enum Color { RED, GREEN, BLUE }
+                record R {
+                    Color favorite = 42;
+                }
+            }
+            "#,
+        );
+        let err = result.unwrap_err();
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
+    }
+
+    #[test]
+    fn field_default_multiple_invalid_references() {
+        // Two fields with bad defaults exercises the `related` diagnostics
+        // loop that builds secondary error messages from additional errors.
+        let result = Idl::new().convert_str(
+            r#"
+            protocol P {
+                enum Color { RED, GREEN, BLUE }
+                record R {
+                    Color first = 1;
+                    Color second = 2;
+                }
+            }
+            "#,
+        );
+        let err = result.unwrap_err();
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
+    }
+
+    #[test]
+    fn field_default_valid_for_enum_reference() {
+        // A valid string default for an enum reference should be accepted.
+        let output = Idl::new()
+            .convert_str(
+                r#"
+                protocol P {
+                    enum Color { RED, GREEN, BLUE }
+                    record R {
+                        Color favorite = "RED";
+                    }
+                }
+                "#,
+            )
+            .expect("valid enum default should be accepted");
+        assert_eq!(output.json["protocol"], "P");
+    }
+
+    #[test]
+    fn field_default_invalid_for_record_reference() {
+        // A record field with a string default should be rejected (records
+        // expect object defaults).
+        let result = Idl::new().convert_str(
+            r#"
+            protocol P {
+                record Inner { string name; }
+                record Outer {
+                    Inner nested = "not an object";
+                }
+            }
+            "#,
+        );
+        let err = result.unwrap_err();
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
+    }
+
     #[test]
     fn idl2schemata_accepts_bare_named_types() {
         let output = Idl2Schemata::new()

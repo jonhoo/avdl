@@ -36,6 +36,21 @@ impl std::fmt::Display for ParseDiagnostic {
 
 impl std::error::Error for ParseDiagnostic {}
 
+/// Render a `miette::Report` to a deterministic string for snapshot testing.
+///
+/// Uses `GraphicalTheme::none()` (no box-drawing characters) at 80-column
+/// width so that snapshot output is readable in diffs.
+#[cfg(test)]
+pub(crate) fn render_diagnostic(report: &miette::Report) -> String {
+    use miette::{GraphicalReportHandler, GraphicalTheme};
+    let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
+    let mut buf = String::new();
+    handler
+        .render_report(&mut buf, report.as_ref())
+        .expect("render to String is infallible");
+    buf
+}
+
 impl miette::Diagnostic for ParseDiagnostic {
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
         Some(&self.src)

@@ -804,10 +804,12 @@ pub enum DeclItem {
     /// the originating IDL source, enabling source-highlighted diagnostics when
     /// registration fails (e.g., duplicate type name).
     ///
-    /// The `HashMap<String, SourceSpan>` maps field names to their source spans
-    /// for record types. This enables per-field diagnostics when validating
-    /// defaults for Reference-typed fields in the compiler (where only the
-    /// type-level span would otherwise be available).
+    /// The `HashMap<String, SourceSpan>` maps field names to their default
+    /// value's source span for record types. When a field has a default value,
+    /// the span covers the `jsonValue` node; otherwise it falls back to the
+    /// `variableDeclaration` node. This enables per-field diagnostics that
+    /// highlight the offending default value when validating Reference-typed
+    /// fields in the compiler.
     Type(
         AvroSchema,
         Option<miette::SourceSpan>,
@@ -1726,9 +1728,15 @@ fn walk_record<'input>(
                 };
                 return Err(diag);
             }
-            // Record each field's source span for use by the compiler when
-            // validating Reference-typed defaults after type registration.
-            if let Some(span) = span_from_context(&**var_ctx) {
+            // Record each field's default-value source span for use by the
+            // compiler when validating Reference-typed defaults after type
+            // registration. Prefer the jsonValue span (the `= <value>` part)
+            // so diagnostics highlight the offending value, not the field name.
+            let default_span = var_ctx
+                .jsonValue()
+                .and_then(|jv| span_from_context(&*jv))
+                .or_else(|| span_from_context(&**var_ctx));
+            if let Some(span) = default_span {
                 field_spans.insert(field.name.clone(), span);
             }
         }
@@ -1853,11 +1861,20 @@ fn walk_variable<'input>(
             Some(name) => format!(" in `{name}`"),
             None => String::new(),
         };
-        return Err(make_diagnostic(
-            src,
-            ctx,
-            format!("Invalid default for field `{field_name}`{in_clause}: {reason}"),
-        ));
+        // Point the diagnostic at the default value expression, not the
+        // entire variable declaration (which includes the field name).
+        return Err(match ctx.jsonValue() {
+            Some(ref jv) => make_diagnostic(
+                src,
+                &**jv,
+                format!("Invalid default for field `{field_name}`{in_clause}: {reason}"),
+            ),
+            None => make_diagnostic(
+                src,
+                ctx,
+                format!("Invalid default for field `{field_name}`{in_clause}: {reason}"),
+            ),
+        });
     }
 
     Ok(Field {
@@ -3329,20 +3346,8 @@ fn collect_single_import<'input>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miette::{GraphicalReportHandler, GraphicalTheme};
+    use crate::error::render_diagnostic;
     use pretty_assertions::assert_eq;
-
-    /// Render a `miette::Report` error to a deterministic string for snapshot
-    /// testing. Uses `GraphicalTheme::none()` (no box-drawing characters) to
-    /// match the `error_reporting.rs` test style.
-    fn render_error(err: &miette::Report) -> String {
-        let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
-        let mut buf = String::new();
-        handler
-            .render_report(&mut buf, err.as_ref())
-            .expect("render to String is infallible");
-        buf
-    }
 
     // ------------------------------------------------------------------
     // Octal escapes (issue #5)
@@ -3454,6 +3459,64 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // String escape edge cases (issue #0ff1ddf7)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn trailing_backslash() {
+        // A string ending with a lone `\` should preserve it as-is.
+        assert_eq!(unescape_java(r"hello\"), r"hello\");
+    }
+
+    #[test]
+    fn malformed_unicode_escape_too_few_digits() {
+        // `\u` at end of string: take(4) collects 0 chars, from_str_radix
+        // on "" fails, emitting the raw escape.
+        assert_eq!(unescape_java(r"\u"), "\\u");
+    }
+
+    #[test]
+    fn unicode_escape_fewer_than_four_digits_still_decodes() {
+        // `\u41` — take(4) collects "41" (only 2 chars available), and
+        // u32::from_str_radix("41", 16) succeeds (= 65 = 'A'). This is
+        // a quirk of the implementation: fewer than 4 hex digits can still
+        // decode if they form a valid hex number.
+        assert_eq!(unescape_java(r"\u41"), "A");
+    }
+
+    #[test]
+    fn invalid_unicode_code_point() {
+        // \uD800 is a lone surrogate (not followed by a low surrogate or
+        // at end of string). Already tested above, but let's also test a
+        // code point that is a low surrogate without a preceding high one
+        // -- still valid for char::from_u32, so this exercises the normal
+        // path. More relevant: a code point that fails char::from_u32.
+        // In practice, surrogates 0xD800-0xDFFF are the only code points
+        // that can fail char::from_u32 when successfully parsed from hex.
+        // A lone low surrogate (not preceded by high) triggers the
+        // invalid-code-point branch.
+        assert_eq!(unescape_java(r"\uDC00"), "\\uDC00");
+    }
+
+    #[test]
+    fn high_surrogate_followed_by_backslash_non_u() {
+        // High surrogate followed by \n (not \u) — cannot form a pair,
+        // the low surrogate parser sees \ but not u, so it restores and
+        // the high surrogate is emitted raw.
+        assert_eq!(unescape_java(r"\uD800\n"), "\\uD800\n");
+    }
+
+    #[test]
+    fn high_surrogate_followed_by_too_few_hex_digits() {
+        // High surrogate followed by \u with fewer than 4 hex digits for
+        // the low surrogate. The low-surrogate parser reads \u, then finds
+        // only 2 chars ("00") so hex.len()=2 != 4, and it restores. The
+        // high surrogate is emitted raw. Then the main loop re-processes
+        // \u00 normally: from_str_radix("00", 16) = 0 = null char.
+        assert_eq!(unescape_java(r"\uD800\u00"), "\\uD800\0");
+    }
+
+    // ------------------------------------------------------------------
     // Slash escape removal (issue #16)
     // ------------------------------------------------------------------
 
@@ -3500,7 +3563,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -3532,7 +3595,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -3823,6 +3886,124 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // Integer literal parsing (issue #b4b0dab0)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn integer_hex() {
+        // 0xFF = 255
+        assert_eq!(parse_integer_literal("0xFF").unwrap(), serde_json::json!(255));
+    }
+
+    #[test]
+    fn integer_hex_uppercase() {
+        assert_eq!(parse_integer_literal("0XFF").unwrap(), serde_json::json!(255));
+    }
+
+    #[test]
+    fn integer_octal() {
+        // 0777 = 511
+        assert_eq!(parse_integer_literal("0777").unwrap(), serde_json::json!(511));
+    }
+
+    #[test]
+    fn integer_long_suffix() {
+        // 42L is explicitly long. Even though 42 fits in i32, the L suffix
+        // forces i64 representation.
+        let val = parse_integer_literal("42L").unwrap();
+        // serde_json represents i64 as Number; check it parses to 42
+        assert_eq!(val, serde_json::json!(42));
+    }
+
+    #[test]
+    fn integer_long_suffix_lowercase() {
+        let val = parse_integer_literal("42l").unwrap();
+        assert_eq!(val, serde_json::json!(42));
+    }
+
+    #[test]
+    fn integer_negative_hex() {
+        // -0xFF = -255
+        assert_eq!(
+            parse_integer_literal("-0xFF").unwrap(),
+            serde_json::json!(-255)
+        );
+    }
+
+    #[test]
+    fn integer_negative_octal() {
+        // -0777 = -511
+        assert_eq!(
+            parse_integer_literal("-0777").unwrap(),
+            serde_json::json!(-511)
+        );
+    }
+
+    #[test]
+    fn integer_negative_octal_long() {
+        // -0777L: negative octal with long suffix
+        assert_eq!(
+            parse_integer_literal("-0777L").unwrap(),
+            serde_json::json!(-511)
+        );
+    }
+
+    #[test]
+    fn integer_underscore_separator() {
+        // Java allows underscores in numeric literals: 1_000_000
+        assert_eq!(
+            parse_integer_literal("1_000_000").unwrap(),
+            serde_json::json!(1_000_000)
+        );
+    }
+
+    #[test]
+    fn integer_large_value_becomes_long() {
+        // Value that doesn't fit in i32 but fits in i64 should automatically
+        // use i64 representation.
+        assert_eq!(
+            parse_integer_literal("3000000000").unwrap(),
+            serde_json::json!(3_000_000_000_i64)
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Floating-point literal edge cases (issue #b4b0dab0)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn float_literal_infinity_positive() {
+        // parse_floating_point_literal should convert Infinity to a string.
+        let val = parse_floating_point_literal("Infinity").unwrap();
+        assert_eq!(val, Value::String("Infinity".to_string()));
+    }
+
+    #[test]
+    fn float_literal_infinity_negative() {
+        let val = parse_floating_point_literal("-Infinity").unwrap();
+        assert_eq!(val, Value::String("-Infinity".to_string()));
+    }
+
+    #[test]
+    fn float_literal_nan() {
+        let val = parse_floating_point_literal("NaN").unwrap();
+        assert_eq!(val, Value::String("NaN".to_string()));
+    }
+
+    #[test]
+    fn float_literal_hex_float() {
+        // 0x1.8p10 = 1.5 * 2^10 = 1536.0
+        let val = parse_floating_point_literal("0x1.8p10").unwrap();
+        assert_eq!(val, serde_json::json!(1536.0));
+    }
+
+    #[test]
+    fn float_literal_negative_hex_float() {
+        let val = parse_floating_point_literal("-0x1.0p10").unwrap();
+        assert_eq!(val, serde_json::json!(-1024.0));
+    }
+
+    // ------------------------------------------------------------------
     // Reserved property name validation (issue #ee3a2bca)
     // ------------------------------------------------------------------
 
@@ -3838,7 +4019,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -3851,7 +4032,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -3865,7 +4046,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -3878,7 +4059,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -3892,7 +4073,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -3942,7 +4123,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -3955,7 +4136,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4245,7 +4426,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4258,7 +4439,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4272,7 +4453,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4323,7 +4504,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4349,7 +4530,7 @@ mod tests {
     fn protocol_name_null_is_rejected() {
         let idl = "protocol `null` { }";
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4413,7 +4594,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4475,7 +4656,7 @@ mod tests {
     fn default_int_string_is_rejected() {
         let idl = r#"protocol P { record R { int count = "hello"; } }"#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_error(&err));
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -4530,7 +4711,7 @@ mod tests {
         let idl = r#"protocol P { record R { int count = 9999999999; } }"#;
         let err =
             parse_idl_for_test(idl).expect_err("int with out-of-range default should be rejected");
-        let rendered = render_error(&err);
+        let rendered = render_diagnostic(&err);
         assert!(
             rendered.contains("out of range"),
             "error should mention 'out of range', got: {rendered}"
@@ -5190,7 +5371,7 @@ mod tests {
         // quote location, not the downstream `}` that the parser sees next.
         let idl = "@namespace(\"org.test\")\nprotocol Test {\n  record Foo {\n    string name = \"unterminated;\n  }\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let rendered = render_error(&err);
+        let rendered = render_diagnostic(&err);
         insta::assert_snapshot!(rendered);
     }
 
@@ -5200,7 +5381,7 @@ mod tests {
         // be caught and reported at the opening quote.
         let idl = "@namespace(\"org.test)\nprotocol Test {\n  record Foo { string name; }\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let rendered = render_error(&err);
+        let rendered = render_diagnostic(&err);
         insta::assert_snapshot!(rendered);
     }
 
