@@ -341,10 +341,8 @@ fn is_unterminated_string_lexer_error(msg: &str) -> bool {
     //   line N:M token recognition error at: '<text>'
     // We strip the `line N:M ` prefix that our `CollectingErrorListener`
     // prepends, then check the raw ANTLR message.
-    let raw = msg
-        .find("token recognition error at: '\"")
-        .is_some();
-    raw
+
+    msg.contains("token recognition error at: '\"")
 }
 
 /// Scans a list of lexer errors for one that looks like an unterminated
@@ -948,8 +946,7 @@ pub fn parse_idl_named(
                 message,
                 label: Some("unterminated string literal".to_string()),
                 help: Some(
-                    "string literals must be closed with a `\"` on the same line"
-                        .to_string(),
+                    "string literals must be closed with a `\"` on the same line".to_string(),
                 ),
                 related: Vec::new(),
             }
@@ -3892,18 +3889,27 @@ mod tests {
     #[test]
     fn integer_hex() {
         // 0xFF = 255
-        assert_eq!(parse_integer_literal("0xFF").unwrap(), serde_json::json!(255));
+        assert_eq!(
+            parse_integer_literal("0xFF").unwrap(),
+            serde_json::json!(255)
+        );
     }
 
     #[test]
     fn integer_hex_uppercase() {
-        assert_eq!(parse_integer_literal("0XFF").unwrap(), serde_json::json!(255));
+        assert_eq!(
+            parse_integer_literal("0XFF").unwrap(),
+            serde_json::json!(255)
+        );
     }
 
     #[test]
     fn integer_octal() {
         // 0777 = 511
-        assert_eq!(parse_integer_literal("0777").unwrap(), serde_json::json!(511));
+        assert_eq!(
+            parse_integer_literal("0777").unwrap(),
+            serde_json::json!(511)
+        );
     }
 
     #[test]

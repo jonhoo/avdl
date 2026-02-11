@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Map, Value};
 
 use super::protocol::{Message, Protocol};
-use super::schema::{make_full_name, AvroSchema, Field, FieldOrder, LogicalType};
+use super::schema::{AvroSchema, Field, FieldOrder, LogicalType, make_full_name};
 
 /// Names from Java's `Schema.Type` enum. When a named type's simple name
 /// collides with one of these, the fully-qualified name must always be used

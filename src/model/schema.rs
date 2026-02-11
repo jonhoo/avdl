@@ -407,37 +407,117 @@ impl AvroSchema {
         }
 
         match self {
-            AvroSchema::Record { name, namespace, doc, fields, is_error, aliases, properties: mut existing } => {
+            AvroSchema::Record {
+                name,
+                namespace,
+                doc,
+                fields,
+                is_error,
+                aliases,
+                properties: mut existing,
+            } => {
                 existing.extend(properties);
-                AvroSchema::Record { name, namespace, doc, fields, is_error, aliases, properties: existing }
+                AvroSchema::Record {
+                    name,
+                    namespace,
+                    doc,
+                    fields,
+                    is_error,
+                    aliases,
+                    properties: existing,
+                }
             }
-            AvroSchema::Enum { name, namespace, doc, symbols, default, aliases, properties: mut existing } => {
+            AvroSchema::Enum {
+                name,
+                namespace,
+                doc,
+                symbols,
+                default,
+                aliases,
+                properties: mut existing,
+            } => {
                 existing.extend(properties);
-                AvroSchema::Enum { name, namespace, doc, symbols, default, aliases, properties: existing }
+                AvroSchema::Enum {
+                    name,
+                    namespace,
+                    doc,
+                    symbols,
+                    default,
+                    aliases,
+                    properties: existing,
+                }
             }
-            AvroSchema::Fixed { name, namespace, doc, size, aliases, properties: mut existing } => {
+            AvroSchema::Fixed {
+                name,
+                namespace,
+                doc,
+                size,
+                aliases,
+                properties: mut existing,
+            } => {
                 existing.extend(properties);
-                AvroSchema::Fixed { name, namespace, doc, size, aliases, properties: existing }
+                AvroSchema::Fixed {
+                    name,
+                    namespace,
+                    doc,
+                    size,
+                    aliases,
+                    properties: existing,
+                }
             }
-            AvroSchema::Array { items, properties: mut existing } => {
+            AvroSchema::Array {
+                items,
+                properties: mut existing,
+            } => {
                 existing.extend(properties);
-                AvroSchema::Array { items, properties: existing }
+                AvroSchema::Array {
+                    items,
+                    properties: existing,
+                }
             }
-            AvroSchema::Map { values, properties: mut existing } => {
+            AvroSchema::Map {
+                values,
+                properties: mut existing,
+            } => {
                 existing.extend(properties);
-                AvroSchema::Map { values, properties: existing }
+                AvroSchema::Map {
+                    values,
+                    properties: existing,
+                }
             }
-            AvroSchema::Logical { logical_type, properties: mut existing } => {
+            AvroSchema::Logical {
+                logical_type,
+                properties: mut existing,
+            } => {
                 existing.extend(properties);
-                AvroSchema::Logical { logical_type, properties: existing }
+                AvroSchema::Logical {
+                    logical_type,
+                    properties: existing,
+                }
             }
-            AvroSchema::AnnotatedPrimitive { kind, properties: mut existing } => {
+            AvroSchema::AnnotatedPrimitive {
+                kind,
+                properties: mut existing,
+            } => {
                 existing.extend(properties);
-                AvroSchema::AnnotatedPrimitive { kind, properties: existing }
+                AvroSchema::AnnotatedPrimitive {
+                    kind,
+                    properties: existing,
+                }
             }
-            AvroSchema::Reference { name, namespace, properties: mut existing, span } => {
+            AvroSchema::Reference {
+                name,
+                namespace,
+                properties: mut existing,
+                span,
+            } => {
                 existing.extend(properties);
-                AvroSchema::Reference { name, namespace, properties: existing, span }
+                AvroSchema::Reference {
+                    name,
+                    namespace,
+                    properties: existing,
+                    span,
+                }
             }
             // Union and other variants don't carry top-level properties.
             other => other,
@@ -533,9 +613,7 @@ pub fn is_valid_default(value: &Value, schema: &AvroSchema) -> bool {
         // =====================================================================
         // Annotated primitives: validate against the underlying primitive type.
         // =====================================================================
-        AvroSchema::AnnotatedPrimitive { kind, .. } => {
-            is_valid_default(value, &kind.to_schema())
-        }
+        AvroSchema::AnnotatedPrimitive { kind, .. } => is_valid_default(value, &kind.to_schema()),
 
         // =====================================================================
         // Logical types: validate against the underlying physical type.

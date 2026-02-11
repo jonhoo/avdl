@@ -1296,7 +1296,9 @@ fn test_schema_mode_map_with_complex_values() {
 #[test]
 fn test_schema_mode_union() {
     let json = parse_inline_to_json("schema union { null, string };");
-    let union = json.as_array().expect("union should serialize as a JSON array");
+    let union = json
+        .as_array()
+        .expect("union should serialize as a JSON array");
     assert_eq!(union.len(), 2);
     assert_eq!(union[0], "null");
     assert_eq!(union[1], "string");
@@ -1305,7 +1307,9 @@ fn test_schema_mode_union() {
 #[test]
 fn test_schema_mode_union_multiple_types() {
     let json = parse_inline_to_json("schema union { null, string, int, long };");
-    let union = json.as_array().expect("union should serialize as a JSON array");
+    let union = json
+        .as_array()
+        .expect("union should serialize as a JSON array");
     assert_eq!(union.len(), 4);
     assert_eq!(union[0], "null");
     assert_eq!(union[1], "string");
@@ -1316,7 +1320,9 @@ fn test_schema_mode_union_multiple_types() {
 #[test]
 fn test_schema_mode_nullable_shorthand() {
     let json = parse_inline_to_json("schema string?;");
-    let union = json.as_array().expect("nullable should serialize as a union array");
+    let union = json
+        .as_array()
+        .expect("nullable should serialize as a union array");
     assert_eq!(union.len(), 2);
     assert_eq!(union[0], "null");
     assert_eq!(union[1], "string");
@@ -1325,7 +1331,9 @@ fn test_schema_mode_nullable_shorthand() {
 #[test]
 fn test_schema_mode_nullable_int() {
     let json = parse_inline_to_json("schema int?;");
-    let union = json.as_array().expect("nullable should serialize as a union array");
+    let union = json
+        .as_array()
+        .expect("nullable should serialize as a union array");
     assert_eq!(union.len(), 2);
     assert_eq!(union[0], "null");
     assert_eq!(union[1], "int");
@@ -1353,7 +1361,9 @@ fn test_schema_mode_named_type_with_namespace() {
     assert_eq!(json["type"], "record");
     assert_eq!(json["name"], "Foo");
     assert_eq!(json["namespace"], "org.test");
-    let fields = json["fields"].as_array().expect("record should have fields");
+    let fields = json["fields"]
+        .as_array()
+        .expect("record should have fields");
     assert_eq!(fields.len(), 1);
     assert_eq!(fields[0]["name"], "name");
     assert_eq!(fields[0]["type"], "string");
@@ -1391,7 +1401,9 @@ fn test_schema_mode_multiple_named_types_with_schema_ref() {
     );
     assert_eq!(json["type"], "record");
     assert_eq!(json["name"], "Item");
-    let fields = json["fields"].as_array().expect("record should have fields");
+    let fields = json["fields"]
+        .as_array()
+        .expect("record should have fields");
     assert_eq!(fields.len(), 2);
     assert_eq!(fields[0]["name"], "name");
     // The Color enum should be inlined on first occurrence within the schema.

@@ -512,9 +512,7 @@ impl Idl2Schemata {
     /// `protocol`), matching Java's `IdlToSchemataTool` behavior.
     fn extract_impl(compiled: CompileOutput) -> miette::Result<SchemataOutput> {
         let CompileOutput {
-            registry,
-            warnings,
-            ..
+            registry, warnings, ..
         } = compiled;
 
         // Build a lookup table from all registered schemas so that references
@@ -705,8 +703,7 @@ fn process_decl_items(
                 }
                 let type_name = schema.full_name().unwrap_or(Cow::Borrowed("<unknown>"));
                 let mut error_iter = errors.into_iter();
-                let (first_field, first_reason) =
-                    error_iter.next().expect("errors is non-empty");
+                let (first_field, first_reason) = error_iter.next().expect("errors is non-empty");
 
                 // Build related diagnostics from subsequent errors.
                 let related: Vec<ParseDiagnostic> = error_iter
@@ -714,8 +711,7 @@ fn process_decl_items(
                         let msg = format!(
                             "Invalid default for field `{field_name}` in `{type_name}`: {reason}"
                         );
-                        let effective_span =
-                            field_spans.get(&field_name).copied().or_else(|| *span);
+                        let effective_span = field_spans.get(&field_name).copied().or(*span);
                         effective_span.map(|span| ParseDiagnostic {
                             src: miette::NamedSource::new(source_name, source.to_string()),
                             span,
@@ -733,8 +729,7 @@ fn process_decl_items(
                 // Prefer the per-field span (from the variable declaration)
                 // over the type-level span (from the record keyword), so the
                 // diagnostic highlights the offending field, not the record.
-                let effective_span =
-                    field_spans.get(&first_field).copied().or_else(|| *span);
+                let effective_span = field_spans.get(&first_field).copied().or(*span);
                 if let Some(span) = effective_span {
                     return Err(ParseDiagnostic {
                         src: miette::NamedSource::new(source_name, source.to_string()),

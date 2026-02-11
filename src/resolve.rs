@@ -17,7 +17,7 @@
 use indexmap::IndexMap;
 use miette::SourceSpan;
 
-use crate::model::schema::{make_full_name, AvroSchema};
+use crate::model::schema::{AvroSchema, make_full_name};
 
 // ==============================================================================
 // Avro Name Validation

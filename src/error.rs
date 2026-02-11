@@ -74,9 +74,7 @@ impl miette::Diagnostic for ParseDiagnostic {
         if self.related.is_empty() {
             None
         } else {
-            Some(Box::new(
-                self.related.iter().map(|d| d as &dyn Diagnostic),
-            ))
+            Some(Box::new(self.related.iter().map(|d| d as &dyn Diagnostic)))
         }
     }
 }
