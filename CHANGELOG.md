@@ -9,15 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add `--version` / `-V` flag to print the version (305c592)
-- Report all syntax errors, undefined type references, and invalid field
-  defaults at once instead of stopping at the first error (8685b71)
-
 ### Changed
 
 ### Deprecated
 
 ### Removed
+
+### Fixed
+
+### Security
+
+## [0.1.5] - 2026-02-11
+
+### Added
+
+- Add `--version` / `-V` flag to print the version (305c592)
+- Report all syntax errors, undefined type references, and invalid field
+  defaults at once instead of stopping at the first error (8685b71)
 
 ### Fixed
 
@@ -30,15 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Include enclosing record name and point source span at the offending
   field declaration in default-validation errors (125e2fb)
 - Highlight the default value expression instead of the field name in
-  invalid-default diagnostics
+  invalid-default diagnostics (7e73fa8)
 - Report undefined type errors in source order instead of alphabetical
   order (10e9962)
 - Include filename and source location in "neither protocol nor schema"
   error, matching the diagnostic format used for other errors since
   0.1.4 (10e9962)
 - Remove duplicate keywords from expected-token help text (305c592)
-
-### Security
 
 ## [0.1.4] - 2026-02-10
 
@@ -166,7 +172,8 @@ that created the initial crate. Rust port of Apache Avro's
   one-way message return types, fixed-size bounds, decimal
   precision/scale (3ffc409)
 
-[Unreleased]: https://github.com/jonhoo/avdl/compare/v0.1.4+1.12.1...HEAD
+[Unreleased]: https://github.com/jonhoo/avdl/compare/v0.1.5+1.12.1...HEAD
+[0.1.5]: https://github.com/jonhoo/avdl/compare/v0.1.4+1.12.1...v0.1.5+1.12.1
 [0.1.4]: https://github.com/jonhoo/avdl/compare/v0.1.3+1.12.1...v0.1.4+1.12.1
 [0.1.3]: https://github.com/jonhoo/avdl/compare/v0.1.2+1.12.1...v0.1.3+1.12.1
 [0.1.2]: https://github.com/jonhoo/avdl/compare/v0.1.1+1.12.1...v0.1.2+1.12.1

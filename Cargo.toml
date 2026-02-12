@@ -1,6 +1,6 @@
 [package]
 name = "avdl"
-version = "0.1.4+1.12.1"
+version = "0.1.5+1.12.1"
 edition = "2024"
 description = "Avro IDL compiler that turns .avdl into .avpr and .avsc JSON files"
 license = "Apache-2.0"
