@@ -1253,6 +1253,135 @@ mod tests {
     }
 
     // =========================================================================
+    // Record default validation: partial defaults with missing required fields
+    // =========================================================================
+    //
+    // Java rejects record defaults that omit required fields (fields without
+    // their own defaults). Our Rust implementation must also reject these.
+
+    #[test]
+    fn record_default_partial_missing_required_field_rejected() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record Inner {
+                    string name;
+                    int value;  // required - no default
+                }
+                record Outer { Inner inner = {"name": "partial"}; }
+            }
+            "#,
+        );
+        let err = result.expect_err("partial record default should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("missing required field"),
+            "should report missing field, got: {msg}"
+        );
+        assert!(
+            msg.contains("value"),
+            "should mention the missing field name, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn record_default_complete_with_all_fields_accepted() {
+        let output = Idl::new()
+            .convert_str(
+                r#"
+            @namespace("test")
+            protocol P {
+                record Inner {
+                    string name;
+                    int value;
+                }
+                record Outer { Inner inner = {"name": "test", "value": 42}; }
+            }
+            "#,
+            )
+            .expect("complete record default should be accepted");
+        assert_eq!(output.json["protocol"], "P");
+    }
+
+    #[test]
+    fn record_default_partial_with_field_default_allowed() {
+        // Fields with defaults in the schema can be omitted.
+        let output = Idl::new()
+            .convert_str(
+                r#"
+            @namespace("test")
+            protocol P {
+                record Inner {
+                    string name;
+                    int value = 0;  // has default
+                }
+                record Outer { Inner inner = {"name": "test"}; }
+            }
+            "#,
+            )
+            .expect("record default omitting field with default should be accepted");
+        assert_eq!(output.json["protocol"], "P");
+    }
+
+    #[test]
+    fn record_default_nested_validates_inner() {
+        let output = Idl::new()
+            .convert_str(
+                r#"
+            @namespace("test")
+            protocol P {
+                record Inner { int x; }
+                record Middle { Inner inner; }
+                record Outer { Middle m = {"inner": {"x": 1}}; }
+            }
+            "#,
+            )
+            .expect("nested complete record defaults should be accepted");
+        assert_eq!(output.json["protocol"], "P");
+    }
+
+    #[test]
+    fn record_default_nested_incomplete_rejected() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record Inner { int x; }
+                record Middle { Inner inner; }
+                record Outer { Middle m = {"inner": {}}; }
+            }
+            "#,
+        );
+        let err = result.expect_err("incomplete nested record default should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("missing required field"),
+            "should report missing field, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn record_default_wrong_field_type_rejected() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record Inner { int count; }
+                record Outer { Inner inner = {"count": "not_an_int"}; }
+            }
+            "#,
+        );
+        let err = result.expect_err("record default with wrong field type should fail");
+        let msg = format!("{err}");
+        // The error should mention something about the invalid value.
+        assert!(
+            msg.contains("count") || msg.contains("int"),
+            "should mention the field or expected type, got: {msg}"
+        );
+    }
+
+    // =========================================================================
     // Import-only schema-mode files
     // =========================================================================
     //

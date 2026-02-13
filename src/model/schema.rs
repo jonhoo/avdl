@@ -588,15 +588,55 @@ pub fn is_valid_default(value: &Value, schema: &AvroSchema) -> bool {
         // =====================================================================
         // Named types
         // =====================================================================
-        AvroSchema::Record { .. } => value.is_object(),
+        AvroSchema::Record { fields, .. } => {
+            // The default must be a JSON object that provides values for all
+            // required fields (fields without their own defaults). For each
+            // field:
+            // - If the default object provides a value, validate it against
+            //   the field's schema
+            // - Otherwise, the field must have its own default value
+            let obj = match value.as_object() {
+                Some(o) => o,
+                None => return false,
+            };
+            for field in fields {
+                if let Some(field_val) = obj.get(&field.name) {
+                    // Default object provides a value for this field -- validate it.
+                    if !is_valid_default(field_val, &field.schema) {
+                        return false;
+                    }
+                } else if field.default.is_none() {
+                    // Field is required (no default in schema) but not provided.
+                    return false;
+                }
+                // Field has its own default and isn't overridden -- valid.
+            }
+            true
+        }
         AvroSchema::Enum { .. } => value.is_string(),
         AvroSchema::Fixed { .. } => value.is_string(),
 
         // =====================================================================
         // Complex types
         // =====================================================================
-        AvroSchema::Array { .. } => value.is_array(),
-        AvroSchema::Map { .. } => value.is_object(),
+        AvroSchema::Array { items, .. } => {
+            // The default must be a JSON array where every element is valid
+            // for the array's item type.
+            let arr = match value.as_array() {
+                Some(a) => a,
+                None => return false,
+            };
+            arr.iter().all(|elem| is_valid_default(elem, items))
+        }
+        AvroSchema::Map { values, .. } => {
+            // The default must be a JSON object where every value is valid
+            // for the map's value type.
+            let obj = match value.as_object() {
+                Some(o) => o,
+                None => return false,
+            };
+            obj.values().all(|val| is_valid_default(val, values))
+        }
 
         // Java's `Schema.isValidDefault` checks whether the default matches
         // *any* branch of the union, not just the first. The Avro spec says
@@ -674,6 +714,33 @@ pub fn validate_default(value: &Value, schema: &AvroSchema) -> Option<String> {
         }
     }
 
+    // Produce specific messages for record defaults that fail field validation.
+    if let AvroSchema::Record { fields, name, .. } = schema
+        && let Some(obj) = value.as_object()
+    {
+        // Collect required fields that are missing from the default object.
+        let missing_required: Vec<&str> = fields
+            .iter()
+            .filter(|f| f.default.is_none() && !obj.contains_key(&f.name))
+            .map(|f| f.name.as_str())
+            .collect();
+        if !missing_required.is_empty() {
+            return Some(format!(
+                "missing required field{} in record `{name}`: {}",
+                if missing_required.len() > 1 { "s" } else { "" },
+                missing_required.join(", ")
+            ));
+        }
+        // Check for fields with invalid default values.
+        for field in fields {
+            if let Some(field_val) = obj.get(&field.name) {
+                if let Some(reason) = validate_default(field_val, &field.schema) {
+                    return Some(format!("invalid value for field `{}`: {reason}", field.name));
+                }
+            }
+        }
+    }
+
     Some(format!(
         "expected {}, got {}",
         schema.type_description(),
@@ -730,7 +797,26 @@ where
 /// Returns `Some(resolved_schema)` if all references in the schema can be
 /// resolved, or `None` if any reference is unresolvable (forward reference).
 /// For non-Reference types, returns the schema unchanged.
+///
+/// This function performs deep resolution: it recursively resolves References
+/// inside record fields, array items, map values, and union branches. This is
+/// necessary for validating nested record defaults where inner types may also
+/// be References.
 fn resolve_for_validation<F>(schema: &AvroSchema, resolver: &F) -> Option<AvroSchema>
+where
+    F: Fn(&str) -> Option<AvroSchema>,
+{
+    use std::collections::HashSet;
+    let mut visited = HashSet::new();
+    resolve_for_validation_inner(schema, resolver, &mut visited)
+}
+
+/// Inner recursive function with cycle detection via a `visited` set.
+fn resolve_for_validation_inner<F>(
+    schema: &AvroSchema,
+    resolver: &F,
+    visited: &mut std::collections::HashSet<String>,
+) -> Option<AvroSchema>
 where
     F: Fn(&str) -> Option<AvroSchema>,
 {
@@ -738,8 +824,20 @@ where
         AvroSchema::Reference {
             name, namespace, ..
         } => {
-            let full_name = make_full_name(name, namespace.as_deref());
+            let full_name = make_full_name(name, namespace.as_deref()).into_owned();
+            // Cycle detection: if we've already seen this type, return a
+            // placeholder that will pass basic JSON type validation.
+            // Cyclic types can still have valid defaults (e.g., a tree node
+            // where child references are nullable), so we don't fail here.
+            if visited.contains(&full_name) {
+                // Return the Reference as-is; is_valid_default treats Reference
+                // as "skip validation", which is appropriate for cyclic refs.
+                return Some(schema.clone());
+            }
+            // Resolve the reference first, then recursively resolve any nested
+            // References inside the resolved type.
             resolver(&full_name)
+                .and_then(|resolved| resolve_for_validation_inner(&resolved, resolver, visited))
         }
         AvroSchema::Union {
             types,
@@ -750,7 +848,7 @@ where
             // entire union.
             let mut resolved_types = Vec::with_capacity(types.len());
             for branch in types {
-                match resolve_for_validation(branch, resolver) {
+                match resolve_for_validation_inner(branch, resolver, visited) {
                     Some(resolved) => resolved_types.push(resolved),
                     None => return None,
                 }
@@ -760,8 +858,65 @@ where
                 is_nullable_type: *is_nullable_type,
             })
         }
-        // For all other types (primitives, records, enums, etc.), the schema
-        // is already concrete and does not need resolution.
+        AvroSchema::Record {
+            name,
+            namespace,
+            doc,
+            fields,
+            is_error,
+            aliases,
+            properties,
+        } => {
+            // Mark this record as being visited to detect cycles.
+            let full_name = make_full_name(name, namespace.as_deref()).into_owned();
+            visited.insert(full_name.clone());
+
+            // Recursively resolve References inside record fields so that
+            // nested record default validation can see the full types.
+            let mut resolved_fields = Vec::with_capacity(fields.len());
+            for field in fields {
+                let resolved_schema =
+                    resolve_for_validation_inner(&field.schema, resolver, visited)?;
+                resolved_fields.push(Field {
+                    name: field.name.clone(),
+                    schema: resolved_schema,
+                    doc: field.doc.clone(),
+                    default: field.default.clone(),
+                    order: field.order.clone(),
+                    aliases: field.aliases.clone(),
+                    properties: field.properties.clone(),
+                });
+            }
+
+            // Unmark after processing this record's fields.
+            visited.remove(&full_name);
+
+            Some(AvroSchema::Record {
+                name: name.clone(),
+                namespace: namespace.clone(),
+                doc: doc.clone(),
+                fields: resolved_fields,
+                is_error: *is_error,
+                aliases: aliases.clone(),
+                properties: properties.clone(),
+            })
+        }
+        AvroSchema::Array { items, properties } => {
+            let resolved_items = resolve_for_validation_inner(items, resolver, visited)?;
+            Some(AvroSchema::Array {
+                items: Box::new(resolved_items),
+                properties: properties.clone(),
+            })
+        }
+        AvroSchema::Map { values, properties } => {
+            let resolved_values = resolve_for_validation_inner(values, resolver, visited)?;
+            Some(AvroSchema::Map {
+                values: Box::new(resolved_values),
+                properties: properties.clone(),
+            })
+        }
+        // For primitives, enums, fixed, logical types, and annotated primitives,
+        // the schema is already concrete and does not need resolution.
         other => Some(other.clone()),
     }
 }
@@ -1029,6 +1184,276 @@ mod tests {
     }
 
     #[test]
+    fn record_with_required_field_accepts_complete_default() {
+        let schema = AvroSchema::Record {
+            name: "Inner".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![
+                Field {
+                    name: "name".to_string(),
+                    schema: AvroSchema::String,
+                    doc: None,
+                    default: None, // required
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                },
+                Field {
+                    name: "value".to_string(),
+                    schema: AvroSchema::Int,
+                    doc: None,
+                    default: None, // required
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                },
+            ],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        // Both required fields are provided with correct types.
+        assert!(is_valid_default(
+            &json!({"name": "test", "value": 42}),
+            &schema
+        ));
+    }
+
+    #[test]
+    fn record_with_required_field_rejects_partial_default() {
+        let schema = AvroSchema::Record {
+            name: "Inner".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![
+                Field {
+                    name: "name".to_string(),
+                    schema: AvroSchema::String,
+                    doc: None,
+                    default: None, // required
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                },
+                Field {
+                    name: "value".to_string(),
+                    schema: AvroSchema::Int,
+                    doc: None,
+                    default: None, // required
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                },
+            ],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        // "value" is required but not provided.
+        assert!(!is_valid_default(&json!({"name": "partial"}), &schema));
+    }
+
+    #[test]
+    fn record_with_field_default_accepts_partial_default() {
+        let schema = AvroSchema::Record {
+            name: "Inner".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![
+                Field {
+                    name: "name".to_string(),
+                    schema: AvroSchema::String,
+                    doc: None,
+                    default: None, // required
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                },
+                Field {
+                    name: "value".to_string(),
+                    schema: AvroSchema::Int,
+                    doc: None,
+                    default: Some(json!(0)), // has default
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                },
+            ],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        // "value" has a default in the schema, so omitting it is valid.
+        assert!(is_valid_default(&json!({"name": "valid"}), &schema));
+    }
+
+    #[test]
+    fn record_rejects_wrong_field_type_in_default() {
+        let schema = AvroSchema::Record {
+            name: "Inner".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![Field {
+                name: "count".to_string(),
+                schema: AvroSchema::Int,
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: HashMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        // Field is provided but with wrong type (string instead of int).
+        assert!(!is_valid_default(&json!({"count": "not_an_int"}), &schema));
+    }
+
+    #[test]
+    fn record_nested_validates_inner_record() {
+        let inner_schema = AvroSchema::Record {
+            name: "Inner".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![Field {
+                name: "x".to_string(),
+                schema: AvroSchema::Int,
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: HashMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        let outer_schema = AvroSchema::Record {
+            name: "Outer".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![Field {
+                name: "inner".to_string(),
+                schema: inner_schema,
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: HashMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        // Inner record must also be complete.
+        assert!(is_valid_default(
+            &json!({"inner": {"x": 1}}),
+            &outer_schema
+        ));
+        assert!(!is_valid_default(&json!({"inner": {}}), &outer_schema));
+    }
+
+    #[test]
+    fn validate_default_reports_missing_required_field() {
+        let schema = AvroSchema::Record {
+            name: "TestRecord".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![
+                Field {
+                    name: "required_field".to_string(),
+                    schema: AvroSchema::String,
+                    doc: None,
+                    default: None, // required
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                },
+            ],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        let reason = validate_default(&json!({}), &schema);
+        let msg = reason.expect("should have a reason for missing required field");
+        assert!(
+            msg.contains("missing required field"),
+            "message was: {msg}"
+        );
+        assert!(msg.contains("required_field"), "message was: {msg}");
+    }
+
+    #[test]
+    fn validate_default_reports_multiple_missing_fields() {
+        let schema = AvroSchema::Record {
+            name: "TestRecord".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![
+                Field {
+                    name: "field_a".to_string(),
+                    schema: AvroSchema::String,
+                    doc: None,
+                    default: None,
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                },
+                Field {
+                    name: "field_b".to_string(),
+                    schema: AvroSchema::Int,
+                    doc: None,
+                    default: None,
+                    order: None,
+                    aliases: vec![],
+                    properties: HashMap::new(),
+                },
+            ],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        let reason = validate_default(&json!({}), &schema);
+        let msg = reason.expect("should have a reason for missing fields");
+        assert!(
+            msg.contains("missing required fields"),
+            "message was: {msg}"
+        );
+        assert!(msg.contains("field_a"), "message was: {msg}");
+        assert!(msg.contains("field_b"), "message was: {msg}");
+    }
+
+    #[test]
+    fn validate_default_reports_invalid_field_value() {
+        let schema = AvroSchema::Record {
+            name: "TestRecord".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![Field {
+                name: "count".to_string(),
+                schema: AvroSchema::Int,
+                doc: None,
+                default: None,
+                order: None,
+                aliases: vec![],
+                properties: HashMap::new(),
+            }],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        };
+        let reason = validate_default(&json!({"count": "not_an_int"}), &schema);
+        let msg = reason.expect("should have a reason for invalid field value");
+        assert!(
+            msg.contains("invalid value for field"),
+            "message was: {msg}"
+        );
+        assert!(msg.contains("count"), "message was: {msg}");
+    }
+
+    #[test]
     fn enum_accepts_string() {
         let schema = AvroSchema::Enum {
             name: "Suit".to_string(),
@@ -1129,6 +1554,30 @@ mod tests {
             properties: HashMap::new(),
         };
         assert!(!is_valid_default(&json!([1, 2]), &schema));
+    }
+
+    #[test]
+    fn array_validates_element_types() {
+        let schema = AvroSchema::Array {
+            items: Box::new(AvroSchema::Int),
+            properties: HashMap::new(),
+        };
+        // Array with all valid elements.
+        assert!(is_valid_default(&json!([1, 2, 3]), &schema));
+        // Array with invalid element (string instead of int).
+        assert!(!is_valid_default(&json!([1, "two", 3]), &schema));
+    }
+
+    #[test]
+    fn map_validates_value_types() {
+        let schema = AvroSchema::Map {
+            values: Box::new(AvroSchema::Int),
+            properties: HashMap::new(),
+        };
+        // Map with all valid values.
+        assert!(is_valid_default(&json!({"a": 1, "b": 2}), &schema));
+        // Map with invalid value (string instead of int).
+        assert!(!is_valid_default(&json!({"a": 1, "b": "two"}), &schema));
     }
 
     // =========================================================================
