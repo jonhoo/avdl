@@ -41,7 +41,8 @@ use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{
-    AvroSchema, Field, FieldOrder, LogicalType, PrimitiveType, validate_default,
+    AvroSchema, Field, FieldOrder, LogicalType, PRIMITIVE_TYPE_NAMES, PrimitiveType,
+    validate_default,
 };
 use crate::resolve::is_valid_avro_name;
 use miette::{Context, Result};
@@ -734,23 +735,22 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
     }
 }
 
-/// Type names that collide with Avro built-in types. Matches Java's
-/// `IdlReader.INVALID_TYPE_NAMES`.
-const INVALID_TYPE_NAMES: &[&str] = &[
-    "boolean",
-    "int",
-    "long",
-    "float",
-    "double",
-    "bytes",
-    "string",
-    "null",
+/// Logical type aliases that are also invalid as user-defined type names.
+/// Combined with `PRIMITIVE_TYPE_NAMES` from `schema.rs`, these form the full
+/// set of names that Java's `IdlReader.INVALID_TYPE_NAMES` rejects.
+const INVALID_LOGICAL_TYPE_NAMES: &[&str] = &[
     "date",
     "time_ms",
     "timestamp_ms",
     "local_timestamp_ms",
     "uuid",
 ];
+
+/// Returns whether `name` collides with an Avro built-in type (primitive or
+/// logical type alias) and therefore cannot be used as a user-defined type name.
+fn is_invalid_type_name(name: &str) -> bool {
+    PRIMITIVE_TYPE_NAMES.contains(&name) || INVALID_LOGICAL_TYPE_NAMES.contains(&name)
+}
 
 // ==========================================================================
 // Public API
@@ -1544,7 +1544,7 @@ fn walk_protocol<'input>(
     *namespace = compute_namespace(&raw_identifier, &props.namespace);
     let protocol_name = extract_name(&raw_identifier);
 
-    if INVALID_TYPE_NAMES.contains(&protocol_name.as_str()) {
+    if is_invalid_type_name(&protocol_name) {
         return Err(make_diagnostic(
             src,
             &*name_ctx,
@@ -1670,7 +1670,7 @@ fn walk_record<'input>(
         compute_namespace(&raw_identifier, &props.namespace).or_else(|| namespace.clone());
     let record_name = extract_name(&raw_identifier);
 
-    if INVALID_TYPE_NAMES.contains(&record_name.as_str()) {
+    if is_invalid_type_name(&record_name) {
         return Err(make_diagnostic(
             src,
             &*name_ctx,
@@ -1909,7 +1909,7 @@ fn walk_enum<'input>(
         .or_else(|| enclosing_namespace.clone());
     let enum_name = extract_name(&raw_identifier);
 
-    if INVALID_TYPE_NAMES.contains(&enum_name.as_str()) {
+    if is_invalid_type_name(&enum_name) {
         return Err(make_diagnostic(
             src,
             &*name_ctx,
@@ -1997,7 +1997,7 @@ fn walk_fixed<'input>(
         .or_else(|| enclosing_namespace.clone());
     let fixed_name = extract_name(&raw_identifier);
 
-    if INVALID_TYPE_NAMES.contains(&fixed_name.as_str()) {
+    if is_invalid_type_name(&fixed_name) {
         return Err(make_diagnostic(
             src,
             &*name_ctx,

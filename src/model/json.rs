@@ -22,24 +22,28 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Map, Value};
 
 use super::protocol::{Message, Protocol};
-use super::schema::{AvroSchema, Field, FieldOrder, LogicalType, make_full_name};
+use super::schema::{
+    AvroSchema, Field, FieldOrder, LogicalType, PRIMITIVE_TYPE_NAMES, make_full_name,
+};
 
-/// Names from Java's `Schema.Type` enum. When a named type's simple name
-/// collides with one of these, the fully-qualified name must always be used
-/// in JSON references and aliases — otherwise a JSON parser would interpret
-/// the bare name as the built-in Avro type rather than as a reference to
-/// the user-defined named type. This mirrors Java's `Name.shouldWriteFull()`
-/// logic in `Schema.java`.
+/// Complex type keywords from Java's `Schema.Type` enum. Combined with
+/// `PRIMITIVE_TYPE_NAMES`, these form the full set of names that require
+/// fully-qualified references in JSON output (Java's `Name.shouldWriteFull()`
+/// in `Schema.java`).
 ///
 /// The primitive names (`string`, `bytes`, etc.) are already blocked from
-/// being used as type names by `INVALID_TYPE_NAMES` in `reader.rs`, so in
-/// practice only the complex-type names (`record`, `enum`, `array`, `map`,
-/// `union`, `fixed`) can trigger this code path. We include all of them for
-/// completeness and to stay aligned with the Java implementation.
-const SCHEMA_TYPE_NAMES: &[&str] = &[
-    "record", "enum", "array", "map", "union", "fixed", "string", "bytes", "int", "long", "float",
-    "double", "boolean", "null",
-];
+/// being used as type names by `is_invalid_type_name` in `reader.rs`, so in
+/// practice only these complex-type keywords can trigger this code path.
+/// We include all of them for completeness and to stay aligned with the Java
+/// implementation.
+const COMPLEX_TYPE_NAMES: &[&str] = &["record", "enum", "array", "map", "union", "fixed"];
+
+/// Returns whether `name` is a built-in Avro schema type name (primitive or
+/// complex) that requires fully-qualified references to avoid ambiguity in
+/// JSON output.
+fn is_schema_type_name(name: &str) -> bool {
+    PRIMITIVE_TYPE_NAMES.contains(&name) || COMPLEX_TYPE_NAMES.contains(&name)
+}
 
 /// A lookup table from full type name to the actual schema definition. This
 /// allows `Reference` nodes to be resolved and inlined at their first use.
@@ -627,7 +631,7 @@ fn schema_ref_name(
     enclosing_namespace: Option<&str>,
 ) -> String {
     if namespace == enclosing_namespace {
-        if SCHEMA_TYPE_NAMES.contains(&name) {
+        if is_schema_type_name(name) {
             // Name collides with a built-in type -- must use the full name
             // to avoid ambiguity in the JSON output.
             make_full_name(name, namespace).into_owned()

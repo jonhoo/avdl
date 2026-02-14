@@ -5,6 +5,16 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
+/// The eight Avro primitive type names.
+///
+/// Both `is_invalid_type_name` in `reader.rs` and `is_schema_type_name` in
+/// `json.rs` include these primitives as a subset, combined with context-specific
+/// extras (logical type aliases and complex type keywords, respectively). This
+/// shared constant makes that relationship explicit.
+pub(crate) const PRIMITIVE_TYPE_NAMES: &[&str] = &[
+    "null", "boolean", "int", "long", "float", "double", "bytes", "string",
+];
+
 /// Compute the fully-qualified name for an Avro named type.
 ///
 /// When `namespace` is `Some` and non-empty, the result is `"namespace.name"`.
