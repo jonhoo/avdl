@@ -150,6 +150,62 @@ pub enum LogicalType {
     Decimal { precision: u32, scale: u32 },
 }
 
+impl LogicalType {
+    /// Return the primitive base type that this logical type requires.
+    ///
+    /// This is used by the IDL reader to validate that a `@logicalType`
+    /// annotation is applied to a compatible primitive. For example, `date`
+    /// requires `int`, and `timestamp-millis` requires `long`.
+    pub(crate) fn expected_base_type(&self) -> PrimitiveType {
+        match self {
+            LogicalType::Date | LogicalType::TimeMillis => PrimitiveType::Int,
+            LogicalType::TimeMicros
+            | LogicalType::TimestampMillis
+            | LogicalType::TimestampMicros
+            | LogicalType::LocalTimestampMillis
+            | LogicalType::LocalTimestampMicros => PrimitiveType::Long,
+            LogicalType::Uuid => PrimitiveType::String,
+            LogicalType::Decimal { .. } => PrimitiveType::Bytes,
+        }
+    }
+}
+
+/// Try to construct a `LogicalType` from its type name string and optional
+/// precision/scale values.
+///
+/// Returns `None` for unrecognized logical type names, allowing callers to
+/// fall back to `AnnotatedPrimitive` or other handling. This is the single
+/// source of truth for mapping logical type name strings to `LogicalType`
+/// variants, used by both the IDL reader and the JSON importer.
+///
+/// Note: this function does NOT validate base-type compatibility (e.g., that
+/// `date` is only applied to `int`). Callers that need base-type validation
+/// (like the IDL reader) should check that separately.
+pub(crate) fn parse_logical_type(
+    name: &str,
+    precision: Option<u32>,
+    scale: Option<u32>,
+) -> Option<LogicalType> {
+    match name {
+        "date" => Some(LogicalType::Date),
+        "time-millis" => Some(LogicalType::TimeMillis),
+        "time-micros" => Some(LogicalType::TimeMicros),
+        "timestamp-millis" => Some(LogicalType::TimestampMillis),
+        "timestamp-micros" => Some(LogicalType::TimestampMicros),
+        "local-timestamp-millis" => Some(LogicalType::LocalTimestampMillis),
+        "local-timestamp-micros" => Some(LogicalType::LocalTimestampMicros),
+        "uuid" => Some(LogicalType::Uuid),
+        "decimal" => {
+            let precision = precision?;
+            Some(LogicalType::Decimal {
+                precision,
+                scale: scale.unwrap_or(0),
+            })
+        }
+        _ => None,
+    }
+}
+
 /// An Avro schema.
 ///
 /// We use our own domain model rather than depending on the `apache-avro` crate,

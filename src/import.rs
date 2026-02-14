@@ -27,7 +27,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::model::protocol::Message;
-use crate::model::schema::{AvroSchema, FieldOrder, LogicalType, PrimitiveType, split_full_name};
+use crate::model::schema::{
+    AvroSchema, FieldOrder, LogicalType, PrimitiveType, parse_logical_type, split_full_name,
+};
 use crate::resolve::SchemaRegistry;
 use miette::Result;
 
@@ -668,44 +670,46 @@ fn parse_map(
 ///
 /// If a `logicalType` annotation is present and recognized, we produce an
 /// `AvroSchema::Logical`. Otherwise, we return the bare primitive.
+///
+/// Uses the shared `parse_logical_type` helper for name-to-variant mapping,
+/// ensuring consistent logical type recognition with the IDL reader.
 fn parse_annotated_primitive(
     obj: &serde_json::Map<String, Value>,
     prim: &str,
     _default_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     if let Some(logical) = obj.get("logicalType").and_then(|l| l.as_str()) {
-        let lt = match logical {
-            "date" => LogicalType::Date,
-            "time-millis" => LogicalType::TimeMillis,
-            "timestamp-millis" => LogicalType::TimestampMillis,
-            "local-timestamp-millis" => LogicalType::LocalTimestampMillis,
-            "uuid" => LogicalType::Uuid,
-            "decimal" => {
-                let precision_u64 = obj.get("precision").and_then(|p| p.as_u64()).unwrap_or(0);
-                if precision_u64 < 1 {
+        // Extract precision and scale for `decimal`. For non-decimal types
+        // these are ignored by `parse_logical_type`.
+        let precision_u64 = obj.get("precision").and_then(|p| p.as_u64());
+        let precision = precision_u64
+            .and_then(|v| u32::try_from(v).ok());
+        let scale_u64 = obj.get("scale").and_then(|s| s.as_u64());
+        let scale = scale_u64
+            .and_then(|v| u32::try_from(v).ok());
+
+        if let Some(lt) = parse_logical_type(logical, precision, scale) {
+            // For decimal, validate that precision >= 1 (the shared helper
+            // returns None when precision is absent, but we also need to
+            // reject explicit zero).
+            if let LogicalType::Decimal { precision, .. } = &lt {
+                if *precision < 1 {
                     miette::bail!("decimal precision must be >= 1");
                 }
-                let precision = u32::try_from(precision_u64)
-                    .map_err(|_| miette::miette!("decimal precision too large"))?;
-                let scale_u64 = obj.get("scale").and_then(|s| s.as_u64()).unwrap_or(0);
-                let scale = u32::try_from(scale_u64)
-                    .map_err(|_| miette::miette!("decimal scale too large"))?;
-                LogicalType::Decimal { precision, scale }
             }
-            _ => {
-                // Unknown logical type -- preserve as properties on AnnotatedPrimitive.
-                let properties = collect_extra_properties(obj, &["type"]);
-                return Ok(AvroSchema::AnnotatedPrimitive {
-                    kind: str_to_primitive_type(prim),
-                    properties,
-                });
-            }
-        };
 
-        let properties =
-            collect_extra_properties(obj, &["type", "logicalType", "precision", "scale"]);
-        return Ok(AvroSchema::Logical {
-            logical_type: lt,
+            let properties =
+                collect_extra_properties(obj, &["type", "logicalType", "precision", "scale"]);
+            return Ok(AvroSchema::Logical {
+                logical_type: lt,
+                properties,
+            });
+        }
+
+        // Unknown logical type -- preserve as properties on AnnotatedPrimitive.
+        let properties = collect_extra_properties(obj, &["type"]);
+        return Ok(AvroSchema::AnnotatedPrimitive {
+            kind: str_to_primitive_type(prim),
             properties,
         });
     }

@@ -41,7 +41,7 @@ use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{
-    AvroSchema, Field, FieldOrder, LogicalType, PRIMITIVE_TYPE_NAMES, PrimitiveType,
+    AvroSchema, Field, FieldOrder, LogicalType, PRIMITIVE_TYPE_NAMES, parse_logical_type,
     split_full_name, validate_default,
 };
 use crate::resolve::is_valid_avro_name;
@@ -3112,13 +3112,9 @@ fn apply_properties_to_schema(
 /// base primitive, promote it to `AvroSchema::Logical`. This mirrors Java's
 /// `LogicalTypes.fromSchemaIgnoreInvalid()` call in `SchemaProperties.copyProperties()`.
 ///
-/// Known logical types and their required base types:
-/// - `date` -> int
-/// - `time-millis` -> int
-/// - `timestamp-millis` -> long
-/// - `local-timestamp-millis` -> long
-/// - `uuid` -> string
-/// - `decimal` -> bytes (also requires `precision`; `scale` defaults to 0)
+/// Uses the shared `parse_logical_type` helper for name-to-variant mapping,
+/// then validates that the base primitive type is compatible (e.g., `date`
+/// requires `int`, `timestamp-millis` requires `long`).
 fn try_promote_logical_type(schema: AvroSchema) -> AvroSchema {
     let AvroSchema::AnnotatedPrimitive {
         kind,
@@ -3132,95 +3128,43 @@ fn try_promote_logical_type(schema: AvroSchema) -> AvroSchema {
         return AvroSchema::AnnotatedPrimitive { kind, properties };
     };
 
-    match (logical_name.as_str(), &kind) {
-        ("date", PrimitiveType::Int) => {
-            properties.remove("logicalType");
-            AvroSchema::Logical {
-                logical_type: LogicalType::Date,
-                properties,
-            }
-        }
-        ("time-millis", PrimitiveType::Int) => {
-            properties.remove("logicalType");
-            AvroSchema::Logical {
-                logical_type: LogicalType::TimeMillis,
-                properties,
-            }
-        }
-        ("timestamp-millis", PrimitiveType::Long) => {
-            properties.remove("logicalType");
-            AvroSchema::Logical {
-                logical_type: LogicalType::TimestampMillis,
-                properties,
-            }
-        }
-        ("time-micros", PrimitiveType::Long) => {
-            properties.remove("logicalType");
-            AvroSchema::Logical {
-                logical_type: LogicalType::TimeMicros,
-                properties,
-            }
-        }
-        ("local-timestamp-millis", PrimitiveType::Long) => {
-            properties.remove("logicalType");
-            AvroSchema::Logical {
-                logical_type: LogicalType::LocalTimestampMillis,
-                properties,
-            }
-        }
-        ("timestamp-micros", PrimitiveType::Long) => {
-            properties.remove("logicalType");
-            AvroSchema::Logical {
-                logical_type: LogicalType::TimestampMicros,
-                properties,
-            }
-        }
-        ("local-timestamp-micros", PrimitiveType::Long) => {
-            properties.remove("logicalType");
-            AvroSchema::Logical {
-                logical_type: LogicalType::LocalTimestampMicros,
-                properties,
-            }
-        }
-        ("uuid", PrimitiveType::String) => {
-            properties.remove("logicalType");
-            AvroSchema::Logical {
-                logical_type: LogicalType::Uuid,
-                properties,
-            }
-        }
-        ("decimal", PrimitiveType::Bytes) => {
-            // `decimal` requires a `precision` property. If missing or not a
-            // valid integer, the logical type is invalid and we leave the
-            // schema as-is (matching Java's "ignore invalid" behavior).
-            //
-            // Java uses signed 32-bit `int` for precision/scale, so values
-            // exceeding `i32::MAX` (2,147,483,647) are treated as invalid
-            // even though they fit in `u32`. We filter accordingly.
-            let Some(precision) = properties
-                .get("precision")
-                .and_then(json_value_as_u32)
-                .filter(|&v| v <= i32::MAX as u32)
-            else {
-                return AvroSchema::AnnotatedPrimitive { kind, properties };
-            };
-            let scale = properties
-                .get("scale")
-                .and_then(json_value_as_u32)
-                .filter(|&v| v <= i32::MAX as u32)
-                .unwrap_or(0);
+    // For `decimal`, extract precision and scale from properties before
+    // calling the shared helper. Java uses signed 32-bit `int` for
+    // precision/scale, so values exceeding `i32::MAX` are treated as
+    // invalid even though they fit in `u32`. We filter accordingly.
+    let precision = properties
+        .get("precision")
+        .and_then(json_value_as_u32)
+        .filter(|&v| v <= i32::MAX as u32);
+    let scale = properties
+        .get("scale")
+        .and_then(json_value_as_u32)
+        .filter(|&v| v <= i32::MAX as u32);
 
-            properties.remove("logicalType");
-            properties.remove("precision");
-            properties.remove("scale");
+    let Some(logical_type) = parse_logical_type(&logical_name, precision, scale) else {
+        // Unrecognized logical type name (or decimal missing precision):
+        // leave as AnnotatedPrimitive.
+        return AvroSchema::AnnotatedPrimitive { kind, properties };
+    };
 
-            AvroSchema::Logical {
-                logical_type: LogicalType::Decimal { precision, scale },
-                properties,
-            }
-        }
-        // Unrecognized logical type or mismatched base type: leave as-is.
-        _ => AvroSchema::AnnotatedPrimitive { kind, properties },
+    // Validate that the base primitive type is compatible with this logical
+    // type. For example, `date` requires `int`; applying it to `long` is
+    // invalid and should be left as-is.
+    if logical_type.expected_base_type() != kind {
+        return AvroSchema::AnnotatedPrimitive { kind, properties };
+    }
+
+    // Remove the consumed keys from properties so they are not duplicated
+    // in the serialized output.
+    properties.remove("logicalType");
+    if matches!(logical_type, LogicalType::Decimal { .. }) {
+        properties.remove("precision");
+        properties.remove("scale");
+    }
+
+    AvroSchema::Logical {
+        logical_type,
+        properties,
     }
 }
 
