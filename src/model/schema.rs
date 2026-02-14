@@ -26,6 +26,21 @@ pub(crate) fn make_full_name<'a>(name: &'a str, namespace: Option<&str>) -> Cow<
     }
 }
 
+/// Split a potentially fully-qualified Avro name into `(simple_name, namespace)`.
+///
+/// This is the inverse of [`make_full_name`]: given a name like
+/// `"com.example.MyRecord"`, it returns `("MyRecord", Some("com.example"))`.
+/// A bare name like `"MyRecord"` returns `("MyRecord", None)`.
+///
+/// The split occurs at the last `.` in the string, matching the Java
+/// `Schema.Name` constructor's behavior for dotted names.
+pub(crate) fn split_full_name(full_name: &str) -> (&str, Option<&str>) {
+    match full_name.rfind('.') {
+        Some(pos) => (&full_name[pos + 1..], Some(&full_name[..pos])),
+        None => (full_name, None),
+    }
+}
+
 /// Field sort order in Avro schemas.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldOrder {

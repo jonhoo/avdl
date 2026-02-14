@@ -42,7 +42,7 @@ use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{
     AvroSchema, Field, FieldOrder, LogicalType, PRIMITIVE_TYPE_NAMES, PrimitiveType,
-    validate_default,
+    split_full_name, validate_default,
 };
 use crate::resolve::is_valid_avro_name;
 use miette::{Context, Result};
@@ -2982,29 +2982,26 @@ fn parse_integer_as_u32(text: &str) -> Result<u32> {
 /// Given an identifier (which may contain dots like `com.example.MyType`),
 /// extract just the name part (after the last dot).
 fn extract_name(identifier: &str) -> String {
-    match identifier.rfind('.') {
-        Some(pos) => identifier[pos + 1..].to_string(),
-        None => identifier.to_string(),
-    }
+    let (name, _namespace) = split_full_name(identifier);
+    name.to_string()
 }
 
 /// Compute the effective namespace for a named type.
 ///
 /// Priority:
-/// 1. Explicit `@namespace("...")` annotation (passed as `explicit_namespace`).
-/// 2. Dots in the identifier (the part before the last dot).
+/// 1. Dots in the identifier (the part before the last dot).
+/// 2. Explicit `@namespace("...")` annotation (passed as `explicit_namespace`).
 /// 3. The enclosing namespace (inherited from context -- not passed here,
 ///    the caller should fall back to the enclosing namespace if this returns None).
 fn compute_namespace(identifier: &str, explicit_namespace: &Option<String>) -> Option<String> {
     // Java priority: dots in the identifier always take precedence over
     // an explicit `@namespace` annotation. Only when the identifier has
     // no dots do we fall back to `@namespace`.
-    if let Some(pos) = identifier.rfind('.') {
-        let ns = &identifier[..pos];
-        return Some(ns.to_string());
+    let (_name, namespace) = split_full_name(identifier);
+    match namespace {
+        Some(ns) => Some(ns.to_string()),
+        None => explicit_namespace.clone(),
     }
-
-    explicit_namespace.clone()
 }
 
 /// Check whether a schema is a type reference (a bare name referring to a

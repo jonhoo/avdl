@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::model::protocol::Message;
-use crate::model::schema::{AvroSchema, FieldOrder, LogicalType, PrimitiveType};
+use crate::model::schema::{AvroSchema, FieldOrder, LogicalType, PrimitiveType, split_full_name};
 use crate::resolve::SchemaRegistry;
 use miette::Result;
 
@@ -467,15 +467,11 @@ fn object_to_schema(
 /// fully-qualified name like `"ns.other.schema.Baz"`. Per the Avro spec, the
 /// portion before the last dot is the namespace and the portion after is the
 /// simple name. This mirrors the Java `Schema.Name` constructor behavior.
+///
+/// Returns owned strings because the callers need to store them in schema structs.
 fn split_qualified_name(raw_name: &str) -> (String, Option<String>) {
-    if let Some(pos) = raw_name.rfind('.') {
-        (
-            raw_name[pos + 1..].to_string(),
-            Some(raw_name[..pos].to_string()),
-        )
-    } else {
-        (raw_name.to_string(), None)
-    }
+    let (name, namespace) = split_full_name(raw_name);
+    (name.to_string(), namespace.map(str::to_string))
 }
 
 fn parse_record(

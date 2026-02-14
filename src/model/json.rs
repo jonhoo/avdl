@@ -24,6 +24,7 @@ use serde_json::{Map, Value};
 use super::protocol::{Message, Protocol};
 use super::schema::{
     AvroSchema, Field, FieldOrder, LogicalType, PRIMITIVE_TYPE_NAMES, make_full_name,
+    split_full_name,
 };
 
 /// Complex type keywords from Java's `Schema.Type` enum. Combined with
@@ -650,15 +651,11 @@ fn schema_ref_name(
 /// name does not collide with a `Schema.Type` name, the alias is shortened to
 /// just the simple name. Otherwise the full name is preserved.
 fn alias_ref_name(alias: &str, schema_namespace: Option<&str>) -> String {
-    // Split at the last '.' to separate namespace from simple name.
-    match alias.rfind('.') {
-        Some(pos) => {
-            let alias_ns = &alias[..pos];
-            let alias_simple = &alias[pos + 1..];
-            schema_ref_name(alias_simple, Some(alias_ns), schema_namespace)
-        }
+    let (simple_name, namespace) = split_full_name(alias);
+    match namespace {
+        Some(alias_ns) => schema_ref_name(simple_name, Some(alias_ns), schema_namespace),
         // No dot -- the alias has no namespace; emit it as-is.
-        None => alias.to_string(),
+        None => simple_name.to_string(),
     }
 }
 
