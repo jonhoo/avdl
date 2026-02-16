@@ -2161,6 +2161,52 @@ mod tests {
         insta::assert_snapshot!(stable);
     }
 
+    // =========================================================================
+    // `Idl2Schemata::drain_warnings` after failed `extract_str` call
+    // =========================================================================
+    //
+    // When `extract_str` returns `Err`, warnings collected before the error
+    // (e.g., orphaned doc comments from parsing) are stashed in the builder
+    // and can only be retrieved via `drain_warnings()`. This test verifies
+    // that path.
+
+    #[test]
+    fn idl2schemata_drain_warnings_after_error() {
+        let mut builder = Idl2Schemata::new();
+
+        // This IDL has an orphaned doc comment inside a record body (produces
+        // a warning) and an undefined type reference in a second record
+        // (produces an error). The orphaned doc comment sits after the last
+        // field and before the closing brace, so it is not consumed by any
+        // declaration.
+        let result = builder.extract_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record A {
+                    string name;
+                    /** orphaned doc comment */
+                }
+                record B { MissingType field; }
+            }
+            "#,
+        );
+        assert!(result.is_err(), "should fail due to undefined type");
+
+        let warnings = builder.drain_warnings();
+        assert!(
+            !warnings.is_empty(),
+            "drain_warnings() should return warnings accumulated before the error"
+        );
+
+        // A second drain should return empty (the buffer was consumed).
+        let second = builder.drain_warnings();
+        assert!(
+            second.is_empty(),
+            "second drain_warnings() call should return empty Vec"
+        );
+    }
+
     #[test]
     #[cfg_attr(windows, ignore)]
     fn imported_avpr_undefined_type_includes_file_path() {
