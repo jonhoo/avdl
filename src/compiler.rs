@@ -2400,4 +2400,127 @@ mod tests {
         );
         insta::assert_snapshot!(stable);
     }
+
+    // =========================================================================
+    // `Idl2Schemata::extract()` with directory input
+    // =========================================================================
+    //
+    // The `extract_directory` code path (called when `extract()` receives a
+    // directory) was previously untested. These tests verify that:
+    // - schemas from multiple `.avdl` files are concatenated in sorted filename order
+    // - non-`.avdl` files in the directory are ignored
+    // - an empty directory (no `.avdl` files) returns an empty `SchemataOutput`
+    // - subdirectories are walked recursively
+
+    #[test]
+    fn extract_directory_multiple_files() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        // Create three `.avdl` files with distinct schemas. The filenames are
+        // chosen so their sorted order (a_, b_, c_) differs from any insertion
+        // order we might accidentally rely on.
+        std::fs::write(
+            dir.path().join("b_second.avdl"),
+            "protocol B { record Bravo { int id; } }",
+        )
+        .expect("write b_second.avdl");
+        std::fs::write(
+            dir.path().join("a_first.avdl"),
+            "protocol A { record Alpha { string name; } }",
+        )
+        .expect("write a_first.avdl");
+        std::fs::write(
+            dir.path().join("c_third.avdl"),
+            "protocol C { enum Gamma { X, Y, Z } }",
+        )
+        .expect("write c_third.avdl");
+
+        // Also write a non-`.avdl` file that should be ignored.
+        std::fs::write(dir.path().join("readme.txt"), "not avdl").expect("write readme.txt");
+
+        let output = Idl2Schemata::new()
+            .extract(dir.path())
+            .expect("extract from directory should succeed");
+
+        // We expect three schemas, one from each `.avdl` file, in sorted
+        // filename order: a_first.avdl -> Alpha, b_second.avdl -> Bravo,
+        // c_third.avdl -> Gamma.
+        assert_eq!(
+            output.schemas.len(),
+            3,
+            "should extract one schema per .avdl file"
+        );
+        assert_eq!(output.schemas[0].name, "Alpha");
+        assert_eq!(output.schemas[1].name, "Bravo");
+        assert_eq!(output.schemas[2].name, "Gamma");
+    }
+
+    #[test]
+    fn extract_directory_empty() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        // Write a non-`.avdl` file so the directory is not completely empty on
+        // disk, but still has no `.avdl` files to process.
+        std::fs::write(dir.path().join("notes.txt"), "no avdl here").expect("write notes.txt");
+
+        let output = Idl2Schemata::new()
+            .extract(dir.path())
+            .expect("extract from empty directory should succeed");
+
+        assert!(
+            output.schemas.is_empty(),
+            "directory with no .avdl files should produce empty schemas"
+        );
+        assert!(
+            output.warnings.is_empty(),
+            "directory with no .avdl files should produce no warnings"
+        );
+    }
+
+    #[test]
+    fn extract_directory_recursive() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        // Create a nested directory structure:
+        //   dir/
+        //     top.avdl        -> record Top
+        //     sub/
+        //       nested.avdl   -> record Nested
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).expect("create sub directory");
+
+        std::fs::write(
+            dir.path().join("top.avdl"),
+            "protocol T { record Top { string a; } }",
+        )
+        .expect("write top.avdl");
+        std::fs::write(
+            sub.join("nested.avdl"),
+            "protocol N { record Nested { int b; } }",
+        )
+        .expect("write nested.avdl");
+
+        let output = Idl2Schemata::new()
+            .extract(dir.path())
+            .expect("extract from directory with subdirs should succeed");
+
+        // walkdir sorts by filename within each directory level, and walks
+        // depth-first. The exact order depends on walkdir's traversal, but
+        // both schemas should be present.
+        assert_eq!(
+            output.schemas.len(),
+            2,
+            "should find .avdl files in subdirectories"
+        );
+
+        let names: Vec<&str> = output.schemas.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            names.contains(&"Nested"),
+            "should include schema from subdirectory, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"Top"),
+            "should include schema from top-level, got: {names:?}"
+        );
+    }
 }
