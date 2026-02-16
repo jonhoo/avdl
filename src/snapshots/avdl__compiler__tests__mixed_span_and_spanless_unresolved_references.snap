@@ -1,0 +1,24 @@
+---
+source: src/compiler.rs
+assertion_line: 2355
+expression: stable
+---
+  x Undefined name: FromIdlOnly
+   ,-[<tmpdir>/test.avdl:3:18]
+ 2 |   import schema "mixed.avsc";
+ 3 |   record Local { FromIdlOnly x; }
+   :                  ^^^^^|^^^^^
+   :                       `-- Undefined name: FromIdlOnly
+ 4 | }
+   `----
+
+Error: 
+  x Undefined name: FromJsonOnly
+   ,-[<tmpdir>/test.avdl:2:3]
+ 1 | protocol Test {
+ 2 |   import schema "mixed.avsc";
+   :   ^^^|^^
+   :      `-- type `FromJsonOnly` referenced in imported file `<tmpdir>/mixed.avsc`
+ 3 |   record Local { FromIdlOnly x; }
+   `----
+  help: the undefined type may be referenced in imported file(s): <tmpdir>/mixed.avsc

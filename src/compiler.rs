@@ -2192,4 +2192,166 @@ mod tests {
             "error should mention the imported file path, got: {msg}"
         );
     }
+
+    // =========================================================================
+    // Multiple unresolved references (validate_all_references edge cases)
+    // =========================================================================
+    //
+    // These tests exercise branches in `validate_all_references` that were
+    // previously untested:
+    //   1. The `span_iter` loop that builds `related` diagnostics from the
+    //      2nd, 3rd, ... spanned unresolved references.
+    //   2. The spanless-only path when all unresolved references lack source
+    //      spans (from JSON imports).
+    //   3. The mixed span/spanless path that appends spanless references as
+    //      related diagnostics alongside spanned ones.
+
+    #[test]
+    fn multiple_undefined_types_reported_together() {
+        // Two distinct undefined types in the same protocol exercise the
+        // `related` diagnostics loop (lines that build ParseDiagnostic
+        // entries for the 2nd, 3rd, ... unresolved spanned references).
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record R {
+                    AlphaType a;
+                    BetaType b;
+                }
+            }
+            "#,
+        );
+        let err = result.expect_err("should fail with two undefined types");
+        let rendered = crate::error::render_diagnostic(&err);
+        assert!(
+            rendered.contains("AlphaType"),
+            "error should mention first undefined type, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("BetaType"),
+            "error should mention second undefined type as related, got:\n{rendered}"
+        );
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    #[cfg_attr(windows, ignore)]
+    fn spanless_only_unresolved_references() {
+        // When all unresolved references come from JSON imports (no IDL
+        // source spans), the code falls back to a `ParseDiagnostic` using
+        // the import statement's span, or to a plain `miette::bail!` if
+        // no import span is available.
+        //
+        // This test imports a .avsc that references an undefined type, but
+        // the IDL itself has no local undefined references. This exercises
+        // the `with_span.is_empty()` branch.
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let avsc_path = dir.path().join("spanless.avsc");
+        std::fs::write(
+            &avsc_path,
+            r#"{"type":"record","name":"Rec","fields":[{"name":"f","type":"NoSuchType"}]}"#,
+        )
+        .expect("write .avsc");
+
+        let avdl_path = dir.path().join("test.avdl");
+        std::fs::write(
+            &avdl_path,
+            "protocol Test {\n  import schema \"spanless.avsc\";\n}\n",
+        )
+        .expect("write .avdl");
+
+        let err = Idl::new()
+            .convert(&avdl_path)
+            .expect_err("should fail with undefined type from import");
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let handler = miette::GraphicalReportHandler::new_themed(
+            miette::GraphicalTheme::none(),
+        )
+        .with_width(200);
+        let mut rendered = String::new();
+        handler
+            .render_report(&mut rendered, err.as_ref())
+            .expect("render to String is infallible");
+
+        let canonical_str = canonical_dir.display().to_string();
+        let raw_str = dir.path().display().to_string();
+        let stable: String = rendered
+            .replace(&canonical_str, "<tmpdir>")
+            .replace(&raw_str, "<tmpdir>");
+
+        assert!(
+            stable.contains("Undefined name"),
+            "should report undefined name, got:\n{stable}"
+        );
+        assert!(
+            stable.contains("spanless.avsc"),
+            "should mention the imported file, got:\n{stable}"
+        );
+        insta::assert_snapshot!(stable);
+    }
+
+    #[test]
+    #[cfg_attr(windows, ignore)]
+    fn mixed_span_and_spanless_unresolved_references() {
+        // When there are both spanned (from IDL source) and spanless (from
+        // JSON imports) unresolved references, the spanless references
+        // should appear as related diagnostics appended after the spanned
+        // ones. This exercises the `for (name, _) in &without_span` loop.
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let avsc_path = dir.path().join("mixed.avsc");
+        std::fs::write(
+            &avsc_path,
+            r#"{"type":"record","name":"Imported","fields":[{"name":"r","type":"FromJsonOnly"}]}"#,
+        )
+        .expect("write .avsc");
+
+        let avdl_path = dir.path().join("test.avdl");
+        std::fs::write(
+            &avdl_path,
+            r#"protocol Test {
+  import schema "mixed.avsc";
+  record Local { FromIdlOnly x; }
+}
+"#,
+        )
+        .expect("write .avdl");
+
+        let err = Idl::new()
+            .convert(&avdl_path)
+            .expect_err("should fail with both spanned and spanless undefined types");
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let handler = miette::GraphicalReportHandler::new_themed(
+            miette::GraphicalTheme::none(),
+        )
+        .with_width(200);
+        let mut rendered = String::new();
+        handler
+            .render_report(&mut rendered, err.as_ref())
+            .expect("render to String is infallible");
+
+        let canonical_str = canonical_dir.display().to_string();
+        let raw_str = dir.path().display().to_string();
+        let stable: String = rendered
+            .replace(&canonical_str, "<tmpdir>")
+            .replace(&raw_str, "<tmpdir>");
+
+        assert!(
+            stable.contains("FromIdlOnly"),
+            "should report spanned undefined type, got:\n{stable}"
+        );
+        assert!(
+            stable.contains("FromJsonOnly"),
+            "should report spanless undefined type as related, got:\n{stable}"
+        );
+        insta::assert_snapshot!(stable);
+    }
 }

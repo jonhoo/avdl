@@ -1,0 +1,14 @@
+---
+source: src/compiler.rs
+assertion_line: 2295
+expression: stable
+---
+  x Undefined name: NoSuchType
+   ,-[<tmpdir>/test.avdl:2:3]
+ 1 | protocol Test {
+ 2 |   import schema "spanless.avsc";
+   :   ^^^|^^
+   :      `-- this import contains undefined type references
+ 3 | }
+   `----
+  help: the undefined type(s) may be referenced in imported file(s): <tmpdir>/spanless.avsc

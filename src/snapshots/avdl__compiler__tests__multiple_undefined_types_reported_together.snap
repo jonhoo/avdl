@@ -1,0 +1,23 @@
+---
+source: src/compiler.rs
+assertion_line: 2235
+expression: rendered
+---
+  x Undefined name: test.AlphaType
+   ,-[<input>:5:21]
+ 4 |                 record R {
+ 5 |                     AlphaType a;
+   :                     ^^^^|^^^^
+   :                         `-- Undefined name: test.AlphaType
+ 6 |                     BetaType b;
+   `----
+
+Error: 
+  x Undefined name: test.BetaType
+   ,-[<input>:6:21]
+ 5 |                     AlphaType a;
+ 6 |                     BetaType b;
+   :                     ^^^^|^^^
+   :                         `-- Undefined name: test.BetaType
+ 7 |                 }
+   `----
