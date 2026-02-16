@@ -1,0 +1,12 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 5:0 unexpected end of file -- missing closing `}` for protocol
+   ,-[<input>:1:15]
+ 1 | protocol Test {
+   :               |
+   :               `-- this protocol is never closed
+ 2 |   record User {
+   `----
+  help: add a closing `}` to match this opening brace

@@ -1,0 +1,6 @@
+---
+source: src/import.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x read protocol file `/nonexistent/path/to/missing.avpr`: No such file or
+  | directory (os error 2)

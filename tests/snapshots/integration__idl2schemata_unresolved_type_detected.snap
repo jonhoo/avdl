@@ -1,0 +1,12 @@
+---
+source: tests/integration.rs
+expression: render_diagnostic(&err)
+---
+  x Undefined name: test.MissingType
+   ,-[<input>:5:17]
+ 4 |             record R {
+ 5 |                 MissingType field;
+   :                 ^^^^^|^^^^^
+   :                      `-- Undefined name: test.MissingType
+ 6 |             }
+   `----

@@ -1,0 +1,6 @@
+---
+source: src/import.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x read schema file `/nonexistent/path/to/missing.avsc`: No such file or
+  | directory (os error 2)

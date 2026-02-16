@@ -1,0 +1,6 @@
+---
+source: src/import.rs
+expression: stable
+---
+  x invalid JSON in <tmpdir>/bad-json.avpr: key must be a string at
+  | line 1 column 3

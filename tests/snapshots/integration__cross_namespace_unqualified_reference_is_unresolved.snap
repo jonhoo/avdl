@@ -1,0 +1,13 @@
+---
+source: tests/integration.rs
+expression: render_diagnostic(&err)
+---
+  x Undefined name: org.example.OtherRecord
+   ,-[<input>:6:33]
+ 5 |             record OtherRecord { string name; }
+ 6 |             record MainRecord { OtherRecord other; }
+   :                                 ^^^^^|^^^^^
+   :                                      `-- Undefined name: org.example.OtherRecord
+ 7 |         }
+   `----
+  help: did you mean `org.other.OtherRecord`?

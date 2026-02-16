@@ -207,15 +207,12 @@ fn test_schema_syntax() {
 /// `IdlTool.run()` behavior. The `idl2schemata` path still accepts it (tested
 /// in `test_idl2schemata_golden_comparison`).
 #[test]
+#[cfg_attr(windows, ignore)]
 fn test_status_schema_rejected_by_idl() {
     let avdl_path = input_path("status_schema.avdl");
     let result = Idl::new().convert(&avdl_path);
     let err = result.expect_err("idl should reject bare named types file");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("neither a protocol nor a schema declaration"),
-        "expected 'neither a protocol nor a schema declaration', got: {msg}"
-    );
+    insta::assert_snapshot!(render_diagnostic(&err));
 }
 
 // ==============================================================================
@@ -481,11 +478,7 @@ fn test_cross_namespace_unqualified_reference_is_unresolved() {
     "#,
     );
     let err = result.unwrap_err();
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("org.example.OtherRecord"),
-        "unqualified cross-namespace reference should be flagged as unresolved, got: {msg}"
-    );
+    insta::assert_snapshot!(render_diagnostic(&err));
 }
 
 // ==============================================================================
@@ -984,11 +977,7 @@ fn test_idl2schemata_unresolved_type_detected() {
     "#,
     );
     let err = result.unwrap_err();
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("Undefined name"),
-        "idl2schemata should detect unresolved type references, got: {msg}"
-    );
+    insta::assert_snapshot!(render_diagnostic(&err));
 }
 
 // ==============================================================================

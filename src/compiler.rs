@@ -1311,11 +1311,7 @@ mod tests {
             "#,
         );
         let err = result.unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("Undefined name"),
-            "should report undefined name, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1358,11 +1354,7 @@ mod tests {
             "#,
         );
         let err = result.unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("Undefined name"),
-            "should report undefined name, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1406,11 +1398,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("undefined return type should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("Undefined name"),
-            "should report undefined name for return type, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1424,11 +1412,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("undefined param type should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("Undefined name"),
-            "should report undefined name for param type, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1442,11 +1426,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("undefined error type should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("Undefined name"),
-            "should report undefined name for error type, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1481,11 +1461,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("idl2schemata should reject undefined return type");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("Undefined name"),
-            "should report undefined name for return type, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     // =========================================================================
@@ -1510,15 +1486,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("partial record default should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("missing required field"),
-            "should report missing field, got: {msg}"
-        );
-        assert!(
-            msg.contains("value"),
-            "should mention the missing field name, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1590,11 +1558,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("incomplete nested record default should fail");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("missing required field"),
-            "should report missing field, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1609,12 +1573,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("record default with wrong field type should fail");
-        let msg = format!("{err}");
-        // The error should mention something about the invalid value.
-        assert!(
-            msg.contains("count") || msg.contains("int"),
-            "should mention the field or expected type, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     // =========================================================================
@@ -1632,11 +1591,7 @@ mod tests {
     fn idl_rejects_import_only_schema_mode() {
         let result = Idl::new().convert_str("namespace org.example;");
         let err = result.expect_err("idl should reject import-only schema-mode file");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("neither a protocol nor a schema declaration"),
-            "expected 'neither a protocol nor a schema declaration', got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -1680,6 +1635,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn idl_rejects_import_only_file_even_with_imports() {
         // Even when there are import statements, `idl` should reject a
         // schema-mode file that has no local schema declarations, matching
@@ -1701,11 +1657,10 @@ mod tests {
 
         let result = Idl::new().convert(&avdl_path);
         let err = result.expect_err("idl should reject import-only file");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("neither a protocol nor a schema declaration"),
-            "expected 'neither a protocol nor a schema declaration', got: {msg}"
-        );
+        let rendered = crate::error::render_diagnostic(&err);
+        let stable = rendered
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     // =========================================================================
@@ -1727,11 +1682,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("idl should reject bare named types without schema keyword");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("neither a protocol nor a schema declaration"),
-            "expected 'neither a protocol nor a schema declaration', got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     // =========================================================================
@@ -2002,15 +1953,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("should fail with undefined type");
-        let rendered = crate::error::render_diagnostic(&err);
-        assert!(
-            rendered.contains("did you mean"),
-            "error should include 'did you mean', got:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("string"),
-            "error should suggest 'string', got:\n{rendered}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -2024,15 +1967,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("should fail with undefined type");
-        let rendered = crate::error::render_diagnostic(&err);
-        assert!(
-            rendered.contains("did you mean"),
-            "error should include 'did you mean', got:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("lowercase"),
-            "error should mention primitives are lowercase, got:\n{rendered}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -2047,15 +1982,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("should fail with undefined type");
-        let rendered = crate::error::render_diagnostic(&err);
-        assert!(
-            rendered.contains("did you mean"),
-            "error should include 'did you mean', got:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("UserProfile"),
-            "error should suggest 'UserProfile', got:\n{rendered}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]

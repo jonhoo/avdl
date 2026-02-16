@@ -1,0 +1,14 @@
+---
+source: src/compiler.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x IDL file contains neither a protocol nor a schema declaration
+   ,-[<input>:1:1]
+ 1 | 
+   : |
+   : `-- this file
+ 2 |             namespace org.test;
+ 3 |             record Foo { string name; }
+   `----
+  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema
+        <type>;`

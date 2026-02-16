@@ -383,6 +383,30 @@ Tests whose snapshots contain file paths are annotated with
 `#[cfg_attr(windows, ignore)]` so they are skipped on Windows CI.
 These tests still run on Linux CI and locally on Linux/macOS.
 
+### Error test conventions
+
+Tests that assert on error output use `insta::assert_snapshot!` with
+`render_diagnostic(&err)` (from `crate::error` for unit tests, or
+`common::render_diagnostic` for integration tests). This captures the
+full rendered diagnostic — source context, labels, help text — and
+catches regressions that a `.contains()` substring check would miss.
+
+Do **not** use `format!("{err}")` + `.contains(...)` for new error
+tests. If a test's error contains a tempdir path, normalize it before
+snapshotting:
+
+```rust
+let rendered = crate::error::render_diagnostic(&err);
+let stable = rendered
+    .replace(&dir.path().display().to_string(), "<tmpdir>");
+insta::assert_snapshot!(stable);
+```
+
+For errors without source context (plain `miette::miette!()`) whose
+messages are long enough that `render_diagnostic` wraps paths across
+continuation lines, use `format!("{err}")` instead to avoid the
+line-break issue.
+
 ### Properties on primitives
 
 Primitives with annotations (e.g., `@foo("bar") int`) are wrapped in

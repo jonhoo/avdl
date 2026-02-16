@@ -1,0 +1,12 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 2:0 annotation `@beta` is missing its value -- use `@beta("value")`
+  | syntax
+   ,-[<input>:2:1]
+ 1 | @beta
+ 2 | protocol Test { record Foo { string name; } }
+   : ^^^^|^^^
+   :     `-- line 2:0 annotation `@beta` is missing its value -- use `@beta("value")` syntax
+   `----

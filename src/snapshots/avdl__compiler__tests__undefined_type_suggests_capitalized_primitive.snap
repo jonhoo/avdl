@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Undefined name: test.String
+   ,-[<input>:4:28]
+ 3 |             protocol P {
+ 4 |                 record R { String name; }
+   :                            ^^^|^^
+   :                               `-- Undefined name: test.String
+ 5 |             }
+   `----
+  help: did you mean `string`? (note: Avro primitives are lowercase)

@@ -1,0 +1,13 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x parse `<input>`
+  `-> Type references may not be annotated
+   ,-[<input>:5:17]
+ 4 |                 record Foo { string name; }
+ 5 |                 @prop("x") Foo getFoo(string id);
+   :                 ^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^
+   :                                 `-- Type references may not be annotated
+ 6 |             }
+   `----

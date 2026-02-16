@@ -1,0 +1,12 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 2:0 unrecognized token `protocl` -- did you mean `protocol`?
+   ,-[<input>:2:1]
+ 1 | @namespace("test")
+ 2 | protocl Test {
+   : ^^^|^^^
+   :    `-- did you mean `protocol`?
+ 3 |   record Foo { string name; }
+   `----

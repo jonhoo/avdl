@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: stable
+---
+  x IDL file contains neither a protocol nor a schema declaration
+   ,-[<tmpdir>/import-only.avdl:1:1]
+ 1 | namespace org.example;
+   : |
+   : `-- this file
+ 2 | import schema "Bar.avsc";
+   `----
+  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema
+        <type>;`

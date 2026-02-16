@@ -1,0 +1,12 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 3:13 unrecognized `recrod` -- did you mean `record`?
+   ,-[<input>:3:3]
+ 2 | protocol Test {
+ 3 |   recrod Foo {
+   :   ^^^|^^
+   :      `-- did you mean `record`?
+ 4 |     string name;
+   `----

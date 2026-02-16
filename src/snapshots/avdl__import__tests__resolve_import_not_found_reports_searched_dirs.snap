@@ -1,0 +1,5 @@
+---
+source: src/import.rs
+expression: stable
+---
+import not found: nonexistent.avsc (searched: <tmpdir>, <tmpdir>/extra)

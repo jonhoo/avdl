@@ -1,0 +1,11 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 6:2 extraneous input 'extra' expecting end of file
+   ,-[<input>:6:3]
+ 5 |   }
+ 6 | } extra
+   :   ^^|^^
+   :     `-- line 6:2 extraneous input 'extra' expecting end of file
+   `----

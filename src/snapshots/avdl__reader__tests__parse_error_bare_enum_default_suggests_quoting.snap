@@ -1,0 +1,16 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 3:45 unexpected token `YELLOW` -- did you mean `"YELLOW"`?
+   ,-[<input>:3:46]
+ 2 |             enum Color { RED, GREEN, BLUE }
+ 3 |             record Palette { Color primary = YELLOW; }
+   :                                              ^^^|^^
+   :                                                 `-- unexpected `YELLOW` -- did you mean `"YELLOW"`?
+ 4 |         }
+   `----
+  help: expected one of: null, true, false, {, [, string literal, integer
+        literal, floating-point literal
+        hint: did you mean "YELLOW"? Enum default values must be quoted
+        strings

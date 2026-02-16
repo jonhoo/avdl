@@ -1,0 +1,13 @@
+---
+source: tests/integration.rs
+expression: render_diagnostic(&err)
+---
+  x IDL file contains neither a protocol nor a schema declaration
+   ,-[avro/lang/java/idl/src/test/idl/input/status_schema.avdl:1:1]
+ 1 | namespace system;
+   : |
+   : `-- this file
+ 2 | 
+   `----
+  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema
+        <type>;`

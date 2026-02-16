@@ -1,0 +1,12 @@
+---
+source: src/compiler.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Undefined name: test.DoesNotExist
+   ,-[<input>:4:39]
+ 3 |             protocol P {
+ 4 |                 void doThing() throws DoesNotExist;
+   :                                       ^^^^^^|^^^^^
+   :                                             `-- Undefined name: test.DoesNotExist
+ 5 |             }
+   `----

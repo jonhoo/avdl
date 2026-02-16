@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Invalid default for field `inner` in `test.Outer`: missing required field
+  | in record `Inner`: value
+   ,-[<input>:8:46]
+ 7 |                 }
+ 8 |                 record Outer { Inner inner = {"name": "partial"}; }
+   :                                              |
+   :                                              `-- Invalid default for field `inner` in `test.Outer`: missing required field in record `Inner`: value
+ 9 |             }
+   `----

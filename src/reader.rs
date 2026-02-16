@@ -4277,11 +4277,7 @@ mod tests {
             }
         "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{:?}", err);
-        assert!(
-            msg.contains("Type references may not be annotated"),
-            "expected 'Type references may not be annotated' error, got: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -5385,11 +5381,7 @@ mod tests {
         let idl = r#"protocol P { record R { int count = 9999999999; } }"#;
         let err =
             parse_idl_for_test(idl).expect_err("int with out-of-range default should be rejected");
-        let rendered = render_diagnostic(&err);
-        assert!(
-            rendered.contains("out of range"),
-            "error should mention 'out of range', got: {rendered}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -6090,15 +6082,7 @@ mod tests {
             record Palette { Color primary = YELLOW; }
         }"#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("YELLOW"),
-            "error should mention the bare identifier: {msg}"
-        );
-        assert!(
-            msg.contains("\"YELLOW\""),
-            "error should suggest quoting: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -6113,49 +6097,21 @@ protocol Test {
 } extra
 "#;
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            !msg.contains("\\u001A"),
-            "error should not contain \\u001A control character: {msg}"
-        );
-        assert!(
-            !msg.contains('\u{001A}'),
-            "error should not contain literal SUB character: {msg}"
-        );
-        assert!(
-            msg.contains("extra"),
-            "error should mention the extraneous token: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
     fn parse_error_bare_annotation_before_protocol() {
         let idl = "@beta\nprotocol Test { record Foo { string name; } }";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("@beta"),
-            "error should mention the annotation: {msg}"
-        );
-        assert!(
-            msg.contains("@beta(\"value\")"),
-            "error should suggest correct syntax: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
     fn parse_error_import_without_kind() {
         let idl = "protocol Test {\n  import \"foo.avdl\";\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("missing kind specifier"),
-            "error should mention missing kind specifier: {msg}"
-        );
-        assert!(
-            msg.contains("import idl"),
-            "error should suggest `import idl`: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -6326,11 +6282,7 @@ protocol Test {
     fn parse_error_annotation_missing_parens_on_field() {
         let idl = "protocol Test { record Foo { @deprecated string name; } }";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("@name(value)"),
-            "error should explain annotation syntax: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     // ------------------------------------------------------------------
@@ -6426,15 +6378,7 @@ protocol Test {
         // and suggest `protocol`.
         let idl = "@namespace(\"test\")\nprotocl Test {\n  record Foo { string name; }\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("protocl"),
-            "error should mention the misspelled keyword: {msg}"
-        );
-        assert!(
-            msg.contains("protocol"),
-            "error should suggest `protocol`: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     // ------------------------------------------------------------------
@@ -6446,17 +6390,7 @@ protocol Test {
         // `union {}` should produce one clear error, not 4+ cascading errors.
         let idl = "protocol Test {\n  record User {\n    union {} name;\n  }\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("union must contain at least one type member"),
-            "error should explain empty union: {msg}"
-        );
-        // The error should NOT cascade into multiple unrelated errors.
-        let rendered = render_diagnostic(&err);
-        assert!(
-            !rendered.contains("extraneous input"),
-            "should not cascade to extraneous input errors: {rendered}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -6492,15 +6426,7 @@ protocol Test {
         // "unexpected token `)` ".
         let idl = "protocol Test {\n  fixed MD5(abc);\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("fixed type requires an integer size"),
-            "error should explain fixed needs integer: {msg}"
-        );
-        assert!(
-            msg.contains("MD5"),
-            "error should mention the fixed name: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -6540,21 +6466,7 @@ protocol Test {
         // produce a single clear error instead of cascading errors.
         let idl = "@namespace(\"test\")\nprotocol Test {\n  recrod Foo {\n    string name;\n  }\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("recrod"),
-            "error should mention the misspelled keyword: {msg}"
-        );
-        assert!(
-            msg.contains("record"),
-            "error should suggest `record`: {msg}"
-        );
-        // Should produce a single error, not cascade.
-        let rendered = render_diagnostic(&err);
-        assert!(
-            !rendered.contains("unexpected token `;`"),
-            "should not cascade to later errors: {rendered}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -6594,11 +6506,7 @@ protocol Test {
         // a generic "unexpected end of file" with a huge expected-token list.
         let idl = "protocol Test {\n  record User {\n    string name;\n\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("missing closing `}`"),
-            "error should mention missing closing brace: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -6606,15 +6514,7 @@ protocol Test {
         // Missing `}` for a protocol should identify the protocol as unclosed.
         let idl = "protocol Test {\n  record User {\n    string name;\n  }\n";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("missing closing `}`"),
-            "error should mention missing closing brace: {msg}"
-        );
-        assert!(
-            msg.contains("protocol"),
-            "error should identify the protocol as unclosed: {msg}"
-        );
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]

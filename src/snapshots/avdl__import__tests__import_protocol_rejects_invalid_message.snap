@@ -1,0 +1,6 @@
+---
+source: src/import.rs
+expression: stable
+---
+  x parse message `doStuff` in protocol `<tmpdir>/bad-msg.avpr`: parse
+  | response type for message: unknown schema type: nonexistent_primitive

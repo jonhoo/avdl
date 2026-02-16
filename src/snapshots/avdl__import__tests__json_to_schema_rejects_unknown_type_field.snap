@@ -1,0 +1,5 @@
+---
+source: src/import.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x unknown schema type: widget

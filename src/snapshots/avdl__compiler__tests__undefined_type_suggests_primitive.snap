@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Undefined name: test.stiring
+   ,-[<input>:4:28]
+ 3 |             protocol P {
+ 4 |                 record R { stiring name; }
+   :                            ^^^|^^^
+   :                               `-- Undefined name: test.stiring
+ 5 |             }
+   `----
+  help: did you mean `string`?

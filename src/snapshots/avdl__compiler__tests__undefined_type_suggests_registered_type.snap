@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Undefined name: test.UserProfle
+   ,-[<input>:5:28]
+ 4 |                 record UserProfile { string name; }
+ 5 |                 record R { UserProfle author; }
+   :                            ^^^^^|^^^^
+   :                                 `-- Undefined name: test.UserProfle
+ 6 |             }
+   `----
+  help: did you mean `test.UserProfile`?

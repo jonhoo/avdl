@@ -1216,13 +1216,8 @@ mod tests {
     #[test]
     fn primitive_from_str_returns_error_on_unknown_type() {
         let result = primitive_from_str("timestamp");
-        assert!(result.is_err(), "unknown type should produce an error");
-        let err = result.unwrap_err();
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("unknown primitive type: timestamp"),
-            "error message should mention the unknown type, got: {msg}"
-        );
+        let err = result.expect_err("unknown type should produce an error");
+        insta::assert_snapshot!(format!("{err}"));
     }
 
     // =========================================================================
@@ -2052,33 +2047,21 @@ mod tests {
     fn json_to_schema_rejects_boolean() {
         let result = json_to_schema(&json!(true), None);
         let err = result.expect_err("boolean JSON should be rejected as a schema");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("invalid schema JSON"),
-            "error should mention invalid schema JSON, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
     fn json_to_schema_rejects_number() {
         let result = json_to_schema(&json!(42), None);
         let err = result.expect_err("number JSON should be rejected as a schema");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("invalid schema JSON"),
-            "error should mention invalid schema JSON, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
     fn json_to_schema_rejects_null() {
         let result = json_to_schema(&Value::Null, None);
         let err = result.expect_err("null JSON should be rejected as a schema");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("invalid schema JSON"),
-            "error should mention invalid schema JSON, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     // =========================================================================
@@ -2095,15 +2078,7 @@ mod tests {
             None,
         );
         let err = result.expect_err("unknown type 'widget' should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("unknown schema type"),
-            "error should mention unknown schema type, got: {msg}"
-        );
-        assert!(
-            msg.contains("widget"),
-            "error should mention the unrecognized type name, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -2113,11 +2088,7 @@ mod tests {
             None,
         );
         let err = result.expect_err("object without 'type' field should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("missing 'type' field"),
-            "error should mention missing type field, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     // =========================================================================
@@ -2128,6 +2099,7 @@ mod tests {
     // .avpr file contain invalid schema structure.
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn import_protocol_rejects_invalid_type_in_types_array() {
         let dir = tempfile::tempdir().expect("create temp dir");
         let avpr_path = dir.path().join("bad-type.avpr");
@@ -2147,18 +2119,14 @@ mod tests {
         let mut registry = SchemaRegistry::new();
         let result = import_protocol(&avpr_path, &mut registry);
         let err = result.expect_err("invalid type in protocol should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("parse type at index 0"),
-            "error should mention the index, got: {msg}"
-        );
-        assert!(
-            msg.contains("unknown schema type"),
-            "error should mention the underlying cause, got: {msg}"
-        );
+        let rendered = crate::error::render_diagnostic(&err);
+        let stable = rendered
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn import_protocol_rejects_invalid_message() {
         let dir = tempfile::tempdir().expect("create temp dir");
         let avpr_path = dir.path().join("bad-msg.avpr");
@@ -2181,11 +2149,10 @@ mod tests {
         let mut registry = SchemaRegistry::new();
         let result = import_protocol(&avpr_path, &mut registry);
         let err = result.expect_err("invalid message in protocol should be rejected");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("parse message `doStuff`"),
-            "error should mention the message name, got: {msg}"
-        );
+        let rendered = crate::error::render_diagnostic(&err);
+        let stable = rendered
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
@@ -2195,14 +2162,11 @@ mod tests {
             &mut SchemaRegistry::new(),
         );
         let err = result.expect_err("missing file should produce an error");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("read protocol file"),
-            "error should mention reading the file, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn import_protocol_rejects_invalid_json() {
         let dir = tempfile::tempdir().expect("create temp dir");
         let avpr_path = dir.path().join("bad-json.avpr");
@@ -2210,11 +2174,10 @@ mod tests {
 
         let result = import_protocol(&avpr_path, &mut SchemaRegistry::new());
         let err = result.expect_err("invalid JSON should produce an error");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("invalid JSON"),
-            "error should mention invalid JSON, got: {msg}"
-        );
+        let rendered = crate::error::render_diagnostic(&err);
+        let stable = rendered
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
@@ -2224,14 +2187,11 @@ mod tests {
             &mut SchemaRegistry::new(),
         );
         let err = result.expect_err("missing file should produce an error");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("read schema file"),
-            "error should mention reading the file, got: {msg}"
-        );
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn import_schema_rejects_invalid_json() {
         let dir = tempfile::tempdir().expect("create temp dir");
         let avsc_path = dir.path().join("bad-json.avsc");
@@ -2239,14 +2199,14 @@ mod tests {
 
         let result = import_schema(&avsc_path, &mut SchemaRegistry::new());
         let err = result.expect_err("invalid JSON should produce an error");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("invalid JSON"),
-            "error should mention invalid JSON, got: {msg}"
-        );
+        let rendered = crate::error::render_diagnostic(&err);
+        let stable = rendered
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn import_schema_rejects_invalid_schema_structure() {
         let dir = tempfile::tempdir().expect("create temp dir");
         let avsc_path = dir.path().join("bad-schema.avsc");
@@ -2255,11 +2215,10 @@ mod tests {
 
         let result = import_schema(&avsc_path, &mut SchemaRegistry::new());
         let err = result.expect_err("invalid schema structure should produce an error");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("parse schema"),
-            "error should mention parsing the schema, got: {msg}"
-        );
+        let rendered = crate::error::render_diagnostic(&err);
+        let stable = rendered
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     // =========================================================================
@@ -2267,6 +2226,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn resolve_import_not_found_reports_searched_dirs() {
         let dir = tempfile::tempdir().expect("create temp dir");
         let import_dir = dir.path().join("extra");
@@ -2275,14 +2235,11 @@ mod tests {
 
         let result = ctx.resolve_import("nonexistent.avsc", dir.path());
         let err = result.expect_err("missing import should produce an error");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("import not found"),
-            "error should mention import not found, got: {msg}"
-        );
-        assert!(
-            msg.contains("nonexistent.avsc"),
-            "error should mention the file name, got: {msg}"
-        );
+        // Use format! instead of render_diagnostic because this is a plain
+        // miette error without source context, and the rendered form wraps
+        // long lines, splitting tempdir paths across continuation lines.
+        let stable = format!("{err}")
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 }

@@ -1,0 +1,6 @@
+---
+source: src/import.rs
+expression: stable
+---
+  x parse type at index 0 in protocol `<tmpdir>/bad-type.avpr`: unknown
+  | schema type: widget

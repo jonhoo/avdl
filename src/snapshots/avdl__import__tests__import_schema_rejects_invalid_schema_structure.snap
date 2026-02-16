@@ -1,0 +1,6 @@
+---
+source: src/import.rs
+expression: stable
+---
+  x parse schema from `<tmpdir>/bad-schema.avsc`: invalid schema JSON:
+  | true
