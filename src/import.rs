@@ -2040,4 +2040,249 @@ mod tests {
             other => panic!("expected Record, got {other:?}"),
         }
     }
+
+    // =========================================================================
+    // Error path: invalid schema JSON values (issue f512e05f, item 7)
+    // =========================================================================
+    //
+    // json_to_schema should reject JSON values that are not strings, arrays,
+    // or objects (e.g., booleans, numbers, null).
+
+    #[test]
+    fn json_to_schema_rejects_boolean() {
+        let result = json_to_schema(&json!(true), None);
+        let err = result.expect_err("boolean JSON should be rejected as a schema");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid schema JSON"),
+            "error should mention invalid schema JSON, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn json_to_schema_rejects_number() {
+        let result = json_to_schema(&json!(42), None);
+        let err = result.expect_err("number JSON should be rejected as a schema");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid schema JSON"),
+            "error should mention invalid schema JSON, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn json_to_schema_rejects_null() {
+        let result = json_to_schema(&Value::Null, None);
+        let err = result.expect_err("null JSON should be rejected as a schema");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid schema JSON"),
+            "error should mention invalid schema JSON, got: {msg}"
+        );
+    }
+
+    // =========================================================================
+    // Error path: unknown schema type in JSON object (issue f512e05f, item 8)
+    // =========================================================================
+    //
+    // A JSON object with a `type` field that is not a recognized Avro type
+    // (record, enum, fixed, array, map, or primitive) should be rejected.
+
+    #[test]
+    fn json_to_schema_rejects_unknown_type_field() {
+        let result = json_to_schema(
+            &json!({"type": "widget", "name": "Gadget"}),
+            None,
+        );
+        let err = result.expect_err("unknown type 'widget' should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unknown schema type"),
+            "error should mention unknown schema type, got: {msg}"
+        );
+        assert!(
+            msg.contains("widget"),
+            "error should mention the unrecognized type name, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn json_to_schema_rejects_missing_type_field() {
+        let result = json_to_schema(
+            &json!({"name": "NoType", "fields": []}),
+            None,
+        );
+        let err = result.expect_err("object without 'type' field should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("missing 'type' field"),
+            "error should mention missing type field, got: {msg}"
+        );
+    }
+
+    // =========================================================================
+    // Error path: protocol JSON parse errors (issue f512e05f, item 6)
+    // =========================================================================
+    //
+    // import_protocol should propagate errors when types or messages in a
+    // .avpr file contain invalid schema structure.
+
+    #[test]
+    fn import_protocol_rejects_invalid_type_in_types_array() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let avpr_path = dir.path().join("bad-type.avpr");
+        // A protocol with a type entry that has an unknown "type" value.
+        std::fs::write(
+            &avpr_path,
+            r#"{
+                "protocol": "BadProto",
+                "types": [
+                    {"type": "widget", "name": "Gadget"}
+                ],
+                "messages": {}
+            }"#,
+        )
+        .expect("write .avpr");
+
+        let mut registry = SchemaRegistry::new();
+        let result = import_protocol(&avpr_path, &mut registry);
+        let err = result.expect_err("invalid type in protocol should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("parse type at index 0"),
+            "error should mention the index, got: {msg}"
+        );
+        assert!(
+            msg.contains("unknown schema type"),
+            "error should mention the underlying cause, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn import_protocol_rejects_invalid_message() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let avpr_path = dir.path().join("bad-msg.avpr");
+        // A protocol with a message whose response is an invalid schema.
+        std::fs::write(
+            &avpr_path,
+            r#"{
+                "protocol": "BadProto",
+                "types": [],
+                "messages": {
+                    "doStuff": {
+                        "request": [],
+                        "response": {"type": "nonexistent_primitive"}
+                    }
+                }
+            }"#,
+        )
+        .expect("write .avpr");
+
+        let mut registry = SchemaRegistry::new();
+        let result = import_protocol(&avpr_path, &mut registry);
+        let err = result.expect_err("invalid message in protocol should be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("parse message `doStuff`"),
+            "error should mention the message name, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn import_protocol_rejects_unreadable_file() {
+        let result = import_protocol(
+            Path::new("/nonexistent/path/to/missing.avpr"),
+            &mut SchemaRegistry::new(),
+        );
+        let err = result.expect_err("missing file should produce an error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("read protocol file"),
+            "error should mention reading the file, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn import_protocol_rejects_invalid_json() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let avpr_path = dir.path().join("bad-json.avpr");
+        std::fs::write(&avpr_path, "{ this is not valid json }").expect("write .avpr");
+
+        let result = import_protocol(&avpr_path, &mut SchemaRegistry::new());
+        let err = result.expect_err("invalid JSON should produce an error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid JSON"),
+            "error should mention invalid JSON, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn import_schema_rejects_unreadable_file() {
+        let result = import_schema(
+            Path::new("/nonexistent/path/to/missing.avsc"),
+            &mut SchemaRegistry::new(),
+        );
+        let err = result.expect_err("missing file should produce an error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("read schema file"),
+            "error should mention reading the file, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn import_schema_rejects_invalid_json() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let avsc_path = dir.path().join("bad-json.avsc");
+        std::fs::write(&avsc_path, "not valid json").expect("write .avsc");
+
+        let result = import_schema(&avsc_path, &mut SchemaRegistry::new());
+        let err = result.expect_err("invalid JSON should produce an error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid JSON"),
+            "error should mention invalid JSON, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn import_schema_rejects_invalid_schema_structure() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let avsc_path = dir.path().join("bad-schema.avsc");
+        // Valid JSON, but not a valid schema (a boolean).
+        std::fs::write(&avsc_path, "true").expect("write .avsc");
+
+        let result = import_schema(&avsc_path, &mut SchemaRegistry::new());
+        let err = result.expect_err("invalid schema structure should produce an error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("parse schema"),
+            "error should mention parsing the schema, got: {msg}"
+        );
+    }
+
+    // =========================================================================
+    // Error path: resolve_import not found (issue f512e05f, item 5 partial)
+    // =========================================================================
+
+    #[test]
+    fn resolve_import_not_found_reports_searched_dirs() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let import_dir = dir.path().join("extra");
+        std::fs::create_dir(&import_dir).expect("create extra dir");
+        let ctx = ImportContext::new(vec![import_dir.clone()]);
+
+        let result = ctx.resolve_import("nonexistent.avsc", dir.path());
+        let err = result.expect_err("missing import should produce an error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("import not found"),
+            "error should mention import not found, got: {msg}"
+        );
+        assert!(
+            msg.contains("nonexistent.avsc"),
+            "error should mention the file name, got: {msg}"
+        );
+    }
 }

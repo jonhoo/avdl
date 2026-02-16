@@ -2523,4 +2523,152 @@ mod tests {
             "should include schema from top-level, got: {names:?}"
         );
     }
+
+    // =========================================================================
+    // Import error paths in compiler (issue f512e05f, items 1-4)
+    // =========================================================================
+
+    #[test]
+    fn import_resolution_error_has_source_span() {
+        let result = Idl::new().convert_str(
+            r#"
+            protocol P {
+                import schema "nonexistent-file.avsc";
+            }
+            "#,
+        );
+        let err = result.expect_err("missing import file should be rejected");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("import not found"),
+            "should report import not found, got: {msg}"
+        );
+        assert!(
+            msg.contains("nonexistent-file.avsc"),
+            "should mention the missing file, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn idl_import_parse_failure() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let bad_avdl = dir.path().join("bad-syntax.avdl");
+        std::fs::write(&bad_avdl, "this is not valid avdl {{{").expect("write bad .avdl");
+
+        let main_avdl = dir.path().join("main.avdl");
+        std::fs::write(
+            &main_avdl,
+            "protocol Main {\n  import idl \"bad-syntax.avdl\";\n}\n",
+        )
+        .expect("write main .avdl");
+
+        let result = Idl::new().convert(&main_avdl);
+        let err = result.expect_err("invalid imported IDL should be rejected");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("bad-syntax.avdl"),
+            "error should mention the imported file, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn idl_import_read_failure() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let subdir = dir.path().join("not-a-file.avdl");
+        std::fs::create_dir(&subdir).expect("create subdirectory");
+
+        let main_avdl = dir.path().join("main.avdl");
+        std::fs::write(
+            &main_avdl,
+            "protocol Main {\n  import idl \"not-a-file.avdl\";\n}\n",
+        )
+        .expect("write main .avdl");
+
+        let result = Idl::new().convert(&main_avdl);
+        let err = result.expect_err("reading a directory as IDL should fail");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("not-a-file.avdl"),
+            "error should mention the import path, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn nested_import_resolution_failure() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let inner_avdl = dir.path().join("inner.avdl");
+        std::fs::write(
+            &inner_avdl,
+            "protocol Inner {\n  import schema \"deeply-missing.avsc\";\n}\n",
+        )
+        .expect("write inner .avdl");
+
+        let main_avdl = dir.path().join("main.avdl");
+        std::fs::write(
+            &main_avdl,
+            "protocol Main {\n  import idl \"inner.avdl\";\n}\n",
+        )
+        .expect("write main .avdl");
+
+        let result = Idl::new().convert(&main_avdl);
+        let err = result.expect_err("nested missing import should fail");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("deeply-missing.avsc"),
+            "error should mention the missing nested file, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn protocol_import_with_invalid_json_shows_import_context() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let avpr_path = dir.path().join("malformed.avpr");
+        std::fs::write(&avpr_path, "{ not valid json }").expect("write malformed .avpr");
+
+        let avdl_path = dir.path().join("test.avdl");
+        std::fs::write(
+            &avdl_path,
+            "protocol Test {\n  import protocol \"malformed.avpr\";\n}\n",
+        )
+        .expect("write .avdl");
+
+        let result = Idl::new().convert(&avdl_path);
+        let err = result.expect_err("invalid JSON in .avpr should be rejected");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("malformed.avpr"),
+            "error should mention the .avpr file, got: {msg}"
+        );
+        assert!(
+            msg.contains("invalid JSON") || msg.contains("import protocol"),
+            "error should indicate the nature of the failure, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn schema_import_with_invalid_structure_shows_import_context() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let avsc_path = dir.path().join("bad-structure.avsc");
+        std::fs::write(&avsc_path, "42").expect("write invalid .avsc");
+
+        let avdl_path = dir.path().join("test.avdl");
+        std::fs::write(
+            &avdl_path,
+            "protocol Test {\n  import schema \"bad-structure.avsc\";\n}\n",
+        )
+        .expect("write .avdl");
+
+        let result = Idl::new().convert(&avdl_path);
+        let err = result.expect_err("invalid schema structure should be rejected");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("bad-structure.avsc"),
+            "error should mention the .avsc file, got: {msg}"
+        );
+    }
 }
