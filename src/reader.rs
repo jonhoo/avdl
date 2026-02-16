@@ -306,7 +306,30 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
         });
     }
 
-    // Pattern 3: "mismatched input '<token>' expecting '('"
+    // Pattern 3: "no viable alternative at input '...misspelled_keyword'"
+    //
+    // When ANTLR can't match a token sequence (e.g., `@namespace("test")protocl`),
+    // it concatenates all consumed tokens into one string. If the annotation
+    // check above didn't match, the last word may be a misspelled keyword.
+    // We extract the last word and check edit distance against known keywords.
+    if let Some(input) = extract_no_viable_input(msg) {
+        // Extract the last whitespace-delimited word, or the last token
+        // after any `)` or `"` delimiter that closes an annotation value.
+        let last_word = extract_trailing_identifier(input);
+        if let Some(last_word) = last_word {
+            if let Some(suggestion) = suggest_keyword(last_word) {
+                return Some(EnrichedError {
+                    message: format!(
+                        "unrecognized token `{last_word}` -- did you mean `{suggestion}`?"
+                    ),
+                    label: Some(format!("did you mean `{suggestion}`?")),
+                    help: None,
+                });
+            }
+        }
+    }
+
+    // Pattern 4: "mismatched input '<token>' expecting '('"
     //
     // This occurs when `@name` is followed by something other than `(`,
     // meaning the annotation value is missing. The error is clear about
@@ -322,7 +345,7 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
         });
     }
 
-    // Pattern 4: errors with a large expected-token set (more than 5 tokens).
+    // Pattern 5: errors with a large expected-token set (more than 5 tokens).
     //
     // ANTLR dumps the full set of expected tokens when it encounters an
     // unexpected token. For most grammar positions this set is huge (20-30
@@ -404,6 +427,7 @@ fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
 
     let help = format_expected_help(tokens);
     let expects_string = expecting_set_includes_string_literal(tokens);
+    let expects_close_brace = expecting_set_includes_close_brace(tokens);
 
     // Determine the offending token and error shape.
     if let Some(offending) = extract_quoted_token(msg, "extraneous input ") {
@@ -411,6 +435,7 @@ fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
             offending,
             help,
             expects_string,
+            expects_close_brace,
         ));
     }
 
@@ -419,6 +444,7 @@ fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
             offending,
             help,
             expects_string,
+            expects_close_brace,
         ));
     }
 
@@ -427,6 +453,11 @@ fn simplify_large_expecting_set(msg: &str) -> Option<EnrichedError> {
 
 /// Builds an `EnrichedError` for an unexpected token in a position with a
 /// large expected-token set.
+///
+/// When the offending token is `<EOF>` and the expected set includes `}`,
+/// the error is likely caused by an unclosed brace. We produce a specific
+/// "missing closing `}`" message rather than the generic "unexpected end of
+/// file" with a huge expected-token list.
 ///
 /// When the offending token looks like a bare identifier (e.g., `YELLOW`) and
 /// the expected set includes `StringLiteral`, we add a hint suggesting that
@@ -437,8 +468,20 @@ fn build_unexpected_token_error(
     offending: &str,
     help: Option<String>,
     expects_string: bool,
+    expects_close_brace: bool,
 ) -> EnrichedError {
     if offending == "<EOF>" {
+        // When `}` is among the expected tokens, the most likely cause is an
+        // unclosed brace (record, protocol, enum, or union body). Mentioning
+        // the missing `}` is far more actionable than dumping the full token
+        // list.
+        if expects_close_brace {
+            return EnrichedError {
+                message: "unexpected end of file -- missing closing `}`".to_string(),
+                label: Some("missing closing `}`".to_string()),
+                help: None,
+            };
+        }
         return EnrichedError {
             message: "unexpected end of file".to_string(),
             label: Some("unexpected end of file".to_string()),
@@ -680,6 +723,15 @@ fn expecting_set_includes_string_literal(tokens: &str) -> bool {
         .any(|t| t.trim().trim_matches('\'') == "StringLiteral")
 }
 
+/// Returns `true` if the ANTLR expected-token set includes `'}'`.
+///
+/// When `}` is expected and `<EOF>` is the offending token, the error is
+/// likely caused by an unclosed brace (missing `}` for a record, protocol,
+/// enum, or union body).
+fn expecting_set_includes_close_brace(tokens: &str) -> bool {
+    split_token_set(tokens).iter().any(|t| *t == "'}'")
+}
+
 /// Returns `true` if the token text looks like a bare identifier: starts with
 /// a letter or underscore, and contains only alphanumeric characters and
 /// underscores. This excludes JSON keywords (`null`, `true`, `false`) since
@@ -728,6 +780,9 @@ fn extract_no_viable_input(msg: &str) -> Option<&str> {
 /// ANTLR merges the annotation name with the next token, these keywords help
 /// us split the merged text to recover the actual annotation name. For
 /// example, `@betarecord` splits into `beta` + `record`.
+///
+/// Also used for typo detection: when an identifier is within edit distance 2
+/// of one of these keywords, we suggest the correct spelling.
 const AVRO_KEYWORDS: &[&str] = &[
     "protocol",
     "record",
@@ -757,6 +812,69 @@ const AVRO_KEYWORDS: &[&str] = &[
     "local_timestamp_ms",
     "uuid",
 ];
+
+// ==========================================================================
+// Edit Distance for Keyword Typo Detection
+// ==========================================================================
+
+/// Computes the Levenshtein edit distance between two strings.
+///
+/// Used to detect likely keyword misspellings: when an unrecognized identifier
+/// is within distance 1-2 of a known keyword, we suggest the correct spelling.
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_len = a.len();
+    let b_len = b.len();
+    if a_len == 0 {
+        return b_len;
+    }
+    if b_len == 0 {
+        return a_len;
+    }
+
+    // Use a single-row DP approach for space efficiency.
+    let mut prev_row: Vec<usize> = (0..=b_len).collect();
+    let mut curr_row = vec![0; b_len + 1];
+
+    for (i, ca) in a.chars().enumerate() {
+        curr_row[0] = i + 1;
+        for (j, cb) in b.chars().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr_row[j + 1] = (prev_row[j] + cost)
+                .min(prev_row[j + 1] + 1)
+                .min(curr_row[j] + 1);
+        }
+        std::mem::swap(&mut prev_row, &mut curr_row);
+    }
+    prev_row[b_len]
+}
+
+/// Finds the closest Avro keyword to the given identifier, if within edit
+/// distance 2. Returns `None` if no keyword is close enough to be a likely
+/// typo. Only considers keywords that are at least 3 characters long (short
+/// keywords like `int` would match too many identifiers).
+fn suggest_keyword(ident: &str) -> Option<&'static str> {
+    let lower = ident.to_ascii_lowercase();
+    let mut best: Option<(&str, usize)> = None;
+    for &kw in AVRO_KEYWORDS {
+        // Don't suggest very short keywords (high false positive rate).
+        if kw.len() < 3 {
+            continue;
+        }
+        let dist = levenshtein_distance(&lower, kw);
+        if dist == 0 {
+            // Exact match means it's already a keyword, not a typo.
+            return None;
+        }
+        // Allow distance 1 for short keywords, distance 2 for longer ones.
+        let max_dist = if kw.len() <= 4 { 1 } else { 2 };
+        if dist <= max_dist {
+            if best.is_none() || dist < best.expect("checked is_some").1 {
+                best = Some((kw, dist));
+            }
+        }
+    }
+    best.map(|(kw, _)| kw)
+}
 
 /// Extracts the annotation name from a merged ANTLR input string like
 /// `@betarecord` or `@namespace("com.example")@versionprotocol`.
@@ -812,6 +930,437 @@ fn split_trailing_keyword(merged: &str) -> &str {
         }
     }
     merged
+}
+
+/// Extracts the trailing identifier-like token from a "no viable alternative"
+/// merged input string. ANTLR concatenates all consumed tokens into a single
+/// string like `@namespace("test")protocl`. This function returns the last
+/// word-like segment after any quote/paren/whitespace delimiter.
+///
+/// Returns `None` if no trailing identifier is found.
+fn extract_trailing_identifier(input: &str) -> Option<&str> {
+    // Walk backwards from the end to find the last run of identifier characters.
+    let end = input.len();
+    let ident_end = end;
+    let ident_start = input
+        .bytes()
+        .rposition(|b| {
+            !(b.is_ascii_alphanumeric() || b == b'_')
+        })
+        .map(|pos| pos + 1)
+        .unwrap_or(0);
+
+    if ident_start >= ident_end {
+        return None;
+    }
+    let word = &input[ident_start..ident_end];
+    if word.is_empty() {
+        return None;
+    }
+    Some(word)
+}
+
+// ==========================================================================
+// Source-Aware Error Post-Processing
+// ==========================================================================
+//
+// Some error patterns cannot be detected from the ANTLR error message alone
+// because the message doesn't include enough context about the surrounding
+// source text. These patterns require looking at the source to understand
+// what construct caused the error.
+//
+// This function runs after all errors have been collected and before they
+// are converted into diagnostics. It may replace, rewrite, or suppress
+// errors to produce more actionable messages.
+
+/// Examines collected errors together with the original source text to detect
+/// error patterns that require source context. Returns `Some(refined_errors)`
+/// when errors were modified, or `None` to use the original errors as-is.
+///
+/// Currently detects:
+/// - **Empty union** (`union {}`): Replaces the cascade of 4+ errors with a
+///   single clear message that unions require at least one type member.
+/// - **Fixed with non-integer size** (`fixed MD5(abc)`): When `)` is
+///   unexpected after `fixed Name(`, the error is rewritten to explain that
+///   the size must be an integer.
+/// - **Misspelled keywords** (`recrod` instead of `record`): When a keyword
+///   typo causes cascading errors, scans the source near the first error for
+///   identifiers close to keywords and suggests the correction.
+/// - **Unclosed brace** (missing `}`): When the last error is "unexpected
+///   end of file" and the source has unmatched `{`, suggests the missing `}`.
+fn refine_errors_with_source(errors: &[SyntaxError], source: &str) -> Option<Vec<SyntaxError>> {
+    if errors.is_empty() {
+        return None;
+    }
+
+    let first = &errors[0];
+
+    // ---- Pattern: empty union (`union {}`) ----
+    //
+    // When ANTLR sees `union {` followed immediately by `}`, it produces a
+    // cascade of 4+ errors. We detect this by checking if the source text
+    // before the first error's offset contains `union` followed by `{`
+    // with only whitespace in between, and the offending token is `}`.
+    if let Some(refined) = detect_empty_union(first, source) {
+        return Some(vec![refined]);
+    }
+
+    // ---- Pattern: `fixed Name(non_integer)` ----
+    //
+    // When `fixed Name(abc)` is written, ANTLR treats `abc` as a type
+    // reference and then chokes on `)`. The error says "unexpected token `)`"
+    // with a large expected-token set, but doesn't explain that the size
+    // must be an integer.
+    if let Some(refined) = detect_fixed_non_integer(first, source) {
+        return Some(vec![refined]);
+    }
+
+    // ---- Pattern: misspelled keyword causing cascading errors ----
+    //
+    // When a keyword like `record` is misspelled as `recrod`, ANTLR treats
+    // it as an identifier and enters a different grammar rule. The subsequent
+    // tokens don't match, causing 2-3 cascading errors. We look backwards in
+    // the source from the first error to find an identifier that's a likely
+    // keyword typo.
+    if errors.len() >= 2 {
+        if let Some(refined) = detect_misspelled_keyword(first, source) {
+            return Some(vec![refined]);
+        }
+    }
+
+    // ---- Pattern: unclosed brace (missing `}`) ----
+    //
+    // When the last error is "unexpected end of file" and the source has
+    // more `{` than `}`, the user is missing one or more closing braces.
+    // We replace the generic EOF error with a more specific message pointing
+    // at the last unmatched `{`.
+    let last = errors.last().expect("errors is non-empty");
+    if let Some(refined) = detect_unclosed_brace(last, source) {
+        // Keep all errors except the last one (which was the EOF error),
+        // and replace it with the refined version.
+        let mut result: Vec<SyntaxError> = errors[..errors.len() - 1]
+            .iter()
+            .map(|e| SyntaxError {
+                offset: e.offset,
+                length: e.length,
+                message: e.message.clone(),
+                label: e.label.clone(),
+                help: e.help.clone(),
+            })
+            .collect();
+        result.push(refined);
+        // When the unclosed brace is the only error, just return it.
+        // Otherwise, put it first since it's the root cause.
+        if result.len() > 1 {
+            let unclosed = result.pop().expect("just checked len > 1");
+            result.insert(0, unclosed);
+        }
+        return Some(result);
+    }
+
+    None
+}
+
+/// Detects `union {}` by checking whether `union` followed by `{` appears
+/// just before the error offset, and the error message mentions `}`.
+fn detect_empty_union(error: &SyntaxError, source: &str) -> Option<SyntaxError> {
+    // The first error in the cascade points at `}` in `union {}`.
+    let before = &source[..error.offset];
+
+    // Check if the error message mentions `}` as the unexpected token.
+    let mentions_close_brace = error.message.contains("`}`");
+    if !mentions_close_brace {
+        return None;
+    }
+
+    // Look backwards for `union` followed by `{` with only whitespace between.
+    let trimmed = before.trim_end();
+    if !trimmed.ends_with('{') {
+        return None;
+    }
+    let before_brace = trimmed[..trimmed.len() - 1].trim_end();
+    if !before_brace.ends_with("union") {
+        return None;
+    }
+
+    // Find the offset of the `union` keyword to point the error there.
+    let union_offset = before_brace.len() - "union".len();
+    // Span covers `union {}`.
+    let span_len = (error.offset + error.length) - union_offset;
+
+    // Extract the `line N:M` prefix from the original error message.
+    let line_prefix = extract_line_prefix(&error.message);
+
+    Some(SyntaxError {
+        offset: union_offset,
+        length: span_len,
+        message: format!(
+            "{line_prefix}union must contain at least one type member"
+        ),
+        label: Some("empty union".to_string()),
+        help: Some("add at least one type inside the braces, e.g., `union { null, string }`".to_string()),
+    })
+}
+
+/// Detects `fixed Name(non_integer)` by checking if the error is about
+/// unexpected `)` and `fixed <Name>(` appears in the source before it.
+fn detect_fixed_non_integer(error: &SyntaxError, source: &str) -> Option<SyntaxError> {
+    // The error should mention `)` as the unexpected token.
+    if !error.message.contains("`)`") {
+        return None;
+    }
+
+    let before = &source[..error.offset];
+
+    // Look for the pattern `fixed <Name>(` before the `)`. We search backwards
+    // for `(`, then check if `fixed <Name>` precedes it.
+    let paren_pos = before.rfind('(')?;
+    let before_paren = before[..paren_pos].trim_end();
+
+    // Extract the name (identifier before the parenthesis).
+    let name_end = before_paren.len();
+    let name_start = before_paren
+        .bytes()
+        .rposition(|b| !b.is_ascii_alphanumeric() && b != b'_')
+        .map(|p| p + 1)
+        .unwrap_or(0);
+    if name_start >= name_end {
+        return None;
+    }
+    let name = &before_paren[name_start..name_end];
+
+    // Check that `fixed` precedes the name.
+    let before_name = before_paren[..name_start].trim_end();
+    if !before_name.ends_with("fixed") {
+        return None;
+    }
+
+    // Extract the non-integer content between the parens.
+    let after_paren = &source[paren_pos + 1..error.offset];
+    let bad_size = after_paren.trim();
+
+    let line_prefix = extract_line_prefix(&error.message);
+
+    // Point the error at the content between parens.
+    let bad_offset = paren_pos + 1;
+    let bad_len = error.offset - paren_pos - 1;
+
+    Some(SyntaxError {
+        offset: bad_offset,
+        length: if bad_len > 0 { bad_len } else { 1 },
+        message: format!(
+            "{line_prefix}fixed type requires an integer size -- \
+             use `fixed {name}(<integer>)`, e.g., `fixed {name}(16)`"
+        ),
+        label: Some(format!("`{bad_size}` is not an integer")),
+        help: None,
+    })
+}
+
+/// Detects misspelled keywords by scanning the source text near the first
+/// error's offset for identifiers that are close to known keywords.
+///
+/// When a keyword like `record` is misspelled as `recrod`, ANTLR treats it
+/// as an identifier (a type reference). The parser then enters the wrong
+/// grammar rule and the next few tokens (`{`, field declarations, `}`) all
+/// produce cascading errors. The first error typically points at the `{`
+/// or the token after the misspelled keyword.
+fn detect_misspelled_keyword(error: &SyntaxError, source: &str) -> Option<SyntaxError> {
+    let before = &source[..error.offset];
+
+    // Walk backwards from the error, skipping whitespace and then the
+    // identifier before the error (which ANTLR consumed as a name like `Foo`
+    // in `recrod Foo {`).
+    let trimmed = before.trim_end();
+
+    // Skip the identifier that ANTLR consumed as the name.
+    let name_end = trimmed.len();
+    let name_start = trimmed
+        .bytes()
+        .rposition(|b| !b.is_ascii_alphanumeric() && b != b'_' && b != b'`')
+        .map(|p| p + 1)
+        .unwrap_or(0);
+
+    if name_start >= name_end {
+        return None;
+    }
+
+    let before_name = trimmed[..name_start].trim_end();
+
+    // Now extract the potential misspelled keyword.
+    let kw_end = before_name.len();
+    let kw_start = before_name
+        .bytes()
+        .rposition(|b| !b.is_ascii_alphanumeric() && b != b'_')
+        .map(|p| p + 1)
+        .unwrap_or(0);
+
+    if kw_start >= kw_end {
+        return None;
+    }
+
+    let candidate = &before_name[kw_start..kw_end];
+
+    // Check if the candidate looks like a misspelled keyword.
+    if let Some(suggestion) = suggest_keyword(candidate) {
+        let line_prefix = extract_line_prefix(&error.message);
+        return Some(SyntaxError {
+            offset: kw_start,
+            length: candidate.len(),
+            message: format!(
+                "{line_prefix}unrecognized `{candidate}` -- did you mean `{suggestion}`?"
+            ),
+            label: Some(format!("did you mean `{suggestion}`?")),
+            help: None,
+        });
+    }
+
+    None
+}
+
+/// Detects unclosed braces by checking whether the last error is "unexpected
+/// end of file" and the source has more `{` than `}`. When detected, points
+/// the error at the last unmatched `{` so the user knows which construct
+/// needs closing.
+fn detect_unclosed_brace(error: &SyntaxError, source: &str) -> Option<SyntaxError> {
+    // Only applies to "unexpected end of file" errors.
+    if !error.message.contains("unexpected end of file") {
+        return None;
+    }
+
+    // Count braces in the source, tracking positions of unmatched `{`.
+    // We ignore braces inside string literals (between unescaped `"`).
+    let mut brace_stack: Vec<usize> = Vec::new();
+    let mut in_string = false;
+    let mut prev_backslash = false;
+    for (i, b) in source.bytes().enumerate() {
+        if in_string {
+            if b == b'"' && !prev_backslash {
+                in_string = false;
+            }
+            prev_backslash = b == b'\\' && !prev_backslash;
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => brace_stack.push(i),
+            b'}' => {
+                brace_stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    if brace_stack.is_empty() {
+        return None;
+    }
+
+    // The last unmatched `{` is the most likely culprit.
+    let unmatched_pos = *brace_stack.last().expect("non-empty stack");
+
+    // Try to identify what construct the unmatched brace belongs to by
+    // looking at the source text before it.
+    let before = source[..unmatched_pos].trim_end();
+    let construct = identify_construct(before);
+
+    let line_prefix = extract_line_prefix(&error.message);
+    let msg = match construct {
+        Some(name) => format!(
+            "{line_prefix}unexpected end of file -- missing closing `}}` for {name}"
+        ),
+        None => format!(
+            "{line_prefix}unexpected end of file -- missing closing `}}`"
+        ),
+    };
+    let label_text = match construct {
+        Some(name) => format!("this {name} is never closed"),
+        None => "this `{` is never closed".to_string(),
+    };
+
+    Some(SyntaxError {
+        offset: unmatched_pos,
+        length: 1,
+        message: msg,
+        label: Some(label_text),
+        help: Some("add a closing `}` to match this opening brace".to_string()),
+    })
+}
+
+/// Identifies the construct type (record, protocol, enum, etc.) by examining
+/// the source text immediately before an opening `{`.
+fn identify_construct(before_brace: &str) -> Option<&'static str> {
+    // Walk backwards, skipping the name identifier and any annotations,
+    // to find the keyword.
+    let trimmed = before_brace.trim_end();
+
+    // Skip the name (e.g., `User` in `record User {`).
+    let name_end = trimmed.len();
+    let name_start = trimmed
+        .bytes()
+        .rposition(|b| !b.is_ascii_alphanumeric() && b != b'_' && b != b'`')
+        .map(|p| p + 1)
+        .unwrap_or(0);
+
+    if name_start >= name_end {
+        return None;
+    }
+
+    let name_text = &trimmed[name_start..name_end];
+
+    // Check if the "name" is actually a keyword (e.g., `union {` has no name).
+    match name_text {
+        "protocol" => return Some("protocol"),
+        "record" => return Some("record"),
+        "error" => return Some("error record"),
+        "enum" => return Some("enum"),
+        "union" => return Some("union"),
+        _ => {}
+    }
+
+    // Otherwise, look at the keyword before the name.
+    let before_name = trimmed[..name_start].trim_end();
+    let kw_end = before_name.len();
+    let kw_start = before_name
+        .bytes()
+        .rposition(|b| !b.is_ascii_alphanumeric() && b != b'_')
+        .map(|p| p + 1)
+        .unwrap_or(0);
+
+    if kw_start >= kw_end {
+        return None;
+    }
+
+    match &before_name[kw_start..kw_end] {
+        "protocol" => Some("protocol"),
+        "record" => Some("record"),
+        "error" => Some("error record"),
+        "enum" => Some("enum"),
+        _ => None,
+    }
+}
+
+/// Extracts the `line N:M ` prefix from a formatted error message.
+/// Returns the prefix including the trailing space, or an empty string
+/// if no prefix is found.
+fn extract_line_prefix(msg: &str) -> &str {
+    // Error messages are formatted as "line N:M <description>".
+    if let Some(pos) = msg.find("line ") {
+        // Find the end of the "line N:M " prefix (after the space that
+        // follows the column number).
+        let after_line = &msg[pos + 5..];
+        if let Some(colon) = after_line.find(':') {
+            let after_colon = &after_line[colon + 1..];
+            // Skip the column digits.
+            let digits_end = after_colon
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(after_colon.len());
+            let prefix_end = pos + 5 + colon + 1 + digits_end;
+            if prefix_end < msg.len() {
+                return &msg[..prefix_end + 1]; // include the space after column
+            }
+        }
+    }
+    ""
 }
 
 /// Convert 1-based `line` and 0-based `column` (as reported by ANTLR) to a
@@ -1125,8 +1674,15 @@ pub fn parse_idl_named(
         }
         drop(borrowed_lexer_errors);
 
-        let first = &collected_errors[0];
-        let related: Vec<ParseDiagnostic> = collected_errors[1..]
+        // Source-aware post-processing: refine error messages using context
+        // from the original source text. This handles patterns that cannot
+        // be detected from ANTLR error messages alone (e.g., empty unions,
+        // misspelled keywords, fixed with non-integer size).
+        let refined = refine_errors_with_source(&collected_errors, input);
+        let errors_to_report = refined.as_deref().unwrap_or(&collected_errors);
+
+        let first = &errors_to_report[0];
+        let related: Vec<ParseDiagnostic> = errors_to_report[1..]
             .iter()
             .map(|e| ParseDiagnostic {
                 src: miette::NamedSource::new(source_name, input.to_string()),
@@ -5839,5 +6395,351 @@ protocol Test {
             result.is_err(),
             "oneway with throws should be rejected as a parse error"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue 5eaa456d: "no viable alternative" concatenates tokens
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn enrich_no_viable_alternative_misspelled_keyword() {
+        // When `@namespace("test")protocl` is the merged input, the last
+        // word `protocl` should be detected as a misspelling of `protocol`.
+        let msg = "no viable alternative at input '@namespace(\"test\")protocl'";
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        assert!(
+            enriched.message.contains("protocl"),
+            "should mention the misspelled token: {}",
+            enriched.message,
+        );
+        assert!(
+            enriched.message.contains("protocol"),
+            "should suggest the correct keyword: {}",
+            enriched.message,
+        );
+    }
+
+    #[test]
+    fn parse_error_misspelled_protocol_after_namespace() {
+        // The no-viable-alternative message concatenates `@namespace("test")`
+        // with `protocl`. The error should identify `protocl` as the problem
+        // and suggest `protocol`.
+        let idl = "@namespace(\"test\")\nprotocl Test {\n  record Foo { string name; }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("protocl"),
+            "error should mention the misspelled keyword: {msg}"
+        );
+        assert!(
+            msg.contains("protocol"),
+            "error should suggest `protocol`: {msg}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue 98c8e039: empty union error cascade
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_empty_union_single_message() {
+        // `union {}` should produce one clear error, not 4+ cascading errors.
+        let idl = "protocol Test {\n  record User {\n    union {} name;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("union must contain at least one type member"),
+            "error should explain empty union: {msg}"
+        );
+        // The error should NOT cascade into multiple unrelated errors.
+        let rendered = render_diagnostic(&err);
+        assert!(
+            !rendered.contains("extraneous input"),
+            "should not cascade to extraneous input errors: {rendered}"
+        );
+    }
+
+    #[test]
+    fn detect_empty_union_pattern() {
+        // Unit test for the empty union detection directly.
+        let source = "protocol T {\n  record R {\n    union {} name;\n  }\n}";
+        // Simulate the first error pointing at `}` in `union {}`.
+        let union_close_pos = source.find("{}").expect("source has {}") + 1;
+        let error = SyntaxError {
+            offset: union_close_pos,
+            length: 1,
+            message: "line 3:11 unexpected token `}`".to_string(),
+            label: Some("unexpected `}`".to_string()),
+            help: None,
+        };
+        let result = detect_empty_union(&error, source);
+        assert!(result.is_some(), "should detect empty union pattern");
+        let refined = result.expect("just checked");
+        assert!(
+            refined.message.contains("union must contain"),
+            "message should mention empty union: {}",
+            refined.message,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue 9f8508fb: fixed with invalid size
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_fixed_non_integer_size() {
+        // `fixed MD5(abc)` should say the size must be an integer, not
+        // "unexpected token `)` ".
+        let idl = "protocol Test {\n  fixed MD5(abc);\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("fixed type requires an integer size"),
+            "error should explain fixed needs integer: {msg}"
+        );
+        assert!(
+            msg.contains("MD5"),
+            "error should mention the fixed name: {msg}"
+        );
+    }
+
+    #[test]
+    fn detect_fixed_non_integer_pattern() {
+        // Unit test for fixed non-integer detection directly.
+        let source = "protocol T {\n  fixed MD5(abc);\n}";
+        let close_paren_pos = source.find(')').expect("source has )");
+        let error = SyntaxError {
+            offset: close_paren_pos,
+            length: 1,
+            message: "line 2:15 unexpected token `)`".to_string(),
+            label: Some("unexpected `)`".to_string()),
+            help: None,
+        };
+        let result = detect_fixed_non_integer(&error, source);
+        assert!(result.is_some(), "should detect fixed non-integer pattern");
+        let refined = result.expect("just checked");
+        assert!(
+            refined.message.contains("integer size"),
+            "message should mention integer size: {}",
+            refined.message,
+        );
+        assert!(
+            refined.label.as_deref().unwrap_or("").contains("abc"),
+            "label should mention the non-integer content: {:?}",
+            refined.label,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue a2f19257: misspelled keywords cause cascading errors
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_misspelled_record_keyword() {
+        // `recrod` should be detected as a misspelling of `record` and
+        // produce a single clear error instead of cascading errors.
+        let idl = "@namespace(\"test\")\nprotocol Test {\n  recrod Foo {\n    string name;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("recrod"),
+            "error should mention the misspelled keyword: {msg}"
+        );
+        assert!(
+            msg.contains("record"),
+            "error should suggest `record`: {msg}"
+        );
+        // Should produce a single error, not cascade.
+        let rendered = render_diagnostic(&err);
+        assert!(
+            !rendered.contains("unexpected token `;`"),
+            "should not cascade to later errors: {rendered}"
+        );
+    }
+
+    #[test]
+    fn detect_misspelled_keyword_pattern() {
+        // Unit test for the misspelled keyword detection.
+        let source = "protocol T {\n  recrod Foo {\n    string name;\n  }\n}";
+        let brace_pos = source.find("Foo {").expect("has Foo {") + 4;
+        let error = SyntaxError {
+            offset: brace_pos,
+            length: 1,
+            message: "line 2:13 unexpected token `{`".to_string(),
+            label: Some("unexpected `{`".to_string()),
+            help: None,
+        };
+        let result = detect_misspelled_keyword(&error, source);
+        assert!(result.is_some(), "should detect misspelled keyword");
+        let refined = result.expect("just checked");
+        assert!(
+            refined.message.contains("recrod"),
+            "message should mention the misspelled keyword: {}",
+            refined.message,
+        );
+        assert!(
+            refined.message.contains("record"),
+            "message should suggest `record`: {}",
+            refined.message,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue b9a7af2f: unclosed brace unhelpful error
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_unclosed_record_brace() {
+        // Missing `}` for a record should report the unclosed brace, not
+        // a generic "unexpected end of file" with a huge expected-token list.
+        let idl = "protocol Test {\n  record User {\n    string name;\n\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("missing closing `}`"),
+            "error should mention missing closing brace: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_error_unclosed_protocol_brace() {
+        // Missing `}` for a protocol should identify the protocol as unclosed.
+        let idl = "protocol Test {\n  record User {\n    string name;\n  }\n";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("missing closing `}`"),
+            "error should mention missing closing brace: {msg}"
+        );
+        assert!(
+            msg.contains("protocol"),
+            "error should identify the protocol as unclosed: {msg}"
+        );
+    }
+
+    #[test]
+    fn detect_unclosed_brace_pattern() {
+        // Unit test for the unclosed brace detection.
+        let source = "protocol Test {\n  record User {\n    string name;\n  }\n";
+        let error = SyntaxError {
+            offset: source.len(),
+            length: 0,
+            message: "line 5:0 unexpected end of file".to_string(),
+            label: Some("unexpected end of file".to_string()),
+            help: Some("expected one of: protocol, ...".to_string()),
+        };
+        let result = detect_unclosed_brace(&error, source);
+        assert!(result.is_some(), "should detect unclosed brace");
+        let refined = result.expect("just checked");
+        assert!(
+            refined.message.contains("missing closing `}`"),
+            "message should mention missing closing brace: {}",
+            refined.message,
+        );
+        assert!(
+            refined.message.contains("protocol"),
+            "message should identify the construct: {}",
+            refined.message,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Levenshtein distance and keyword suggestion
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn levenshtein_distance_identical() {
+        assert_eq!(levenshtein_distance("record", "record"), 0);
+    }
+
+    #[test]
+    fn levenshtein_distance_one_swap() {
+        assert_eq!(levenshtein_distance("recrod", "record"), 2);
+    }
+
+    #[test]
+    fn levenshtein_distance_one_deletion() {
+        assert_eq!(levenshtein_distance("protcol", "protocol"), 1);
+    }
+
+    #[test]
+    fn levenshtein_distance_one_insertion() {
+        assert_eq!(levenshtein_distance("protocoll", "protocol"), 1);
+    }
+
+    #[test]
+    fn suggest_keyword_close_match() {
+        assert_eq!(suggest_keyword("protocl"), Some("protocol"));
+        assert_eq!(suggest_keyword("recrod"), Some("record"));
+        assert_eq!(suggest_keyword("emum"), Some("enum"));
+    }
+
+    #[test]
+    fn suggest_keyword_exact_match_returns_none() {
+        // Exact keyword matches are not typos.
+        assert_eq!(suggest_keyword("record"), None);
+        assert_eq!(suggest_keyword("protocol"), None);
+    }
+
+    #[test]
+    fn suggest_keyword_too_distant_returns_none() {
+        // Random identifiers should not match any keyword.
+        assert_eq!(suggest_keyword("foobar"), None);
+        assert_eq!(suggest_keyword("Widget"), None);
+        assert_eq!(suggest_keyword("UserName"), None);
+    }
+
+    // ------------------------------------------------------------------
+    // extract_trailing_identifier
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn extract_trailing_identifier_from_merged_input() {
+        assert_eq!(
+            extract_trailing_identifier("@namespace(\"test\")protocl"),
+            Some("protocl"),
+        );
+    }
+
+    #[test]
+    fn extract_trailing_identifier_simple() {
+        assert_eq!(extract_trailing_identifier("protocl"), Some("protocl"));
+    }
+
+    #[test]
+    fn extract_trailing_identifier_after_quote() {
+        assert_eq!(
+            extract_trailing_identifier("\"value\")myword"),
+            Some("myword"),
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // identify_construct
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn identify_construct_record() {
+        assert_eq!(identify_construct("  record User"), Some("record"));
+    }
+
+    #[test]
+    fn identify_construct_protocol() {
+        assert_eq!(identify_construct("protocol Test"), Some("protocol"));
+    }
+
+    #[test]
+    fn identify_construct_enum() {
+        assert_eq!(identify_construct("  enum Color"), Some("enum"));
+    }
+
+    #[test]
+    fn identify_construct_union_no_name() {
+        assert_eq!(identify_construct("  union"), Some("union"));
+    }
+
+    #[test]
+    fn identify_construct_unknown() {
+        assert_eq!(identify_construct("  foobar Baz"), None);
     }
 }

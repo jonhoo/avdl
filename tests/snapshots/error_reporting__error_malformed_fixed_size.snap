@@ -3,14 +3,10 @@ source: tests/error_reporting.rs
 expression: error
 ---
   x parse IDL source
-  `-> line 1:33 unexpected token `)`
-   ,-[<input>:1:34]
+  `-> line 1:33 fixed type requires an integer size -- use `fixed
+      F(<integer>)`, e.g., `fixed F(16)`
+   ,-[<input>:1:22]
  1 | protocol P { fixed F(not_a_number); }
-   :                                  |
-   :                                  `-- unexpected `)`
+   :                      ^^^^^^|^^^^^
+   :                            `-- `not_a_number` is not an integer
    `----
-  help: expected one of: protocol, namespace, import, idl, schema, enum,
-        fixed, error, record, array, map, union, boolean, int, long, float,
-        double, string, bytes, null, true, false, decimal, date, time_ms,
-        timestamp_ms, local_timestamp_ms, uuid, void, oneway, throws, @,
-        identifier
