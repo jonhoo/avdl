@@ -895,6 +895,145 @@ fn wrap_import_error(
     }
 }
 
+// ==============================================================================
+// "Did you mean?" Suggestions for Undefined Type Names
+// ==============================================================================
+//
+// When a type name is misspelled, the error message can suggest similar names
+// that exist in the registry or among Avro primitives. We use Levenshtein edit
+// distance to find close matches.
+
+use crate::model::schema::PRIMITIVE_TYPE_NAMES;
+
+/// Compute the Levenshtein edit distance between two strings.
+///
+/// Uses the standard dynamic programming algorithm with a single-row buffer
+/// (O(min(m, n)) space). This is sufficient for type names, which are short.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
+
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
+
+    // `row[j]` holds the edit distance between `a[..i]` and `b[..j]`.
+    let mut row: Vec<usize> = (0..=n).collect();
+
+    for i in 1..=m {
+        let mut prev = row[0];
+        row[0] = i;
+        for j in 1..=n {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            let val = (row[j] + 1) // deletion
+                .min(row[j - 1] + 1) // insertion
+                .min(prev + cost); // substitution
+            prev = row[j];
+            row[j] = val;
+        }
+    }
+
+    row[n]
+}
+
+/// Maximum edit distance for a suggestion to be considered "close enough."
+///
+/// For short names (length <= 4), we require distance <= 1 to avoid noisy
+/// suggestions. For longer names, we allow distance <= 2.
+fn max_distance(name_len: usize) -> usize {
+    if name_len <= 4 {
+        1
+    } else {
+        2
+    }
+}
+
+/// Build a "did you mean?" help string for an unresolved type name.
+///
+/// Checks the unresolved name against:
+/// 1. Avro primitive type names (`string`, `int`, `boolean`, etc.)
+/// 2. Registered type names in the schema registry (both full names and
+///    simple/unqualified names)
+///
+/// When the unresolved name differs from a primitive only in casing (e.g.,
+/// `String` vs `string`), the hint includes a note that Avro primitives are
+/// lowercase.
+///
+/// Returns `None` when no sufficiently close match is found.
+fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<String> {
+    // The unresolved name may be fully qualified (e.g., "test.stiring"). We
+    // compare the unqualified (simple) part against primitives and the simple
+    // parts of registered names, because typos almost always affect the simple
+    // name, not the namespace.
+    let simple = unresolved
+        .rsplit('.')
+        .next()
+        .expect("rsplit always yields at least one element");
+
+    let mut best: Option<(String, usize, bool)> = None; // (suggestion, distance, is_primitive)
+
+    // Check against Avro primitive type names.
+    for &prim in PRIMITIVE_TYPE_NAMES {
+        let dist = levenshtein(simple, prim);
+        let threshold = max_distance(simple.len().min(prim.len()));
+        if dist <= threshold {
+            if best.as_ref().map_or(true, |(_, d, _)| dist < *d) {
+                best = Some((prim.to_string(), dist, true));
+            }
+        }
+    }
+
+    // Check against registered type names. We compare both the full name
+    // and the simple (unqualified) name to handle cases where the user
+    // omitted the namespace or misspelled just the type part.
+    for registered_full in registry.names() {
+        // Compare unresolved full name against registered full name.
+        let dist_full = levenshtein(unresolved, registered_full);
+        let threshold_full = max_distance(unresolved.len().min(registered_full.len()));
+        if dist_full <= threshold_full {
+            if best.as_ref().map_or(true, |(_, d, _)| dist_full < *d) {
+                best = Some((registered_full.to_string(), dist_full, false));
+            }
+        }
+
+        // Also compare the simple parts, in case the namespace is correct
+        // but the type name has a typo.
+        let registered_simple = registered_full
+            .rsplit('.')
+            .next()
+            .expect("rsplit always yields at least one element");
+        let dist_simple = levenshtein(simple, registered_simple);
+        let threshold_simple = max_distance(simple.len().min(registered_simple.len()));
+        if dist_simple <= threshold_simple {
+            // Suggest the full registered name so the user gets the right
+            // fully-qualified form.
+            if best.as_ref().map_or(true, |(_, d, _)| dist_simple < *d) {
+                best = Some((registered_full.to_string(), dist_simple, false));
+            }
+        }
+    }
+
+    best.map(|(suggestion, _, is_primitive)| {
+        let case_mismatch = is_primitive && simple.eq_ignore_ascii_case(&suggestion);
+        if case_mismatch {
+            format!(
+                "did you mean `{suggestion}`? (note: Avro primitives are lowercase)"
+            )
+        } else {
+            format!("did you mean `{suggestion}`?")
+        }
+    })
+}
+
 /// Validate that all type references in the IDL file and registry resolved.
 ///
 /// Unresolved references indicate missing imports, undefined types, or
@@ -904,6 +1043,9 @@ fn wrap_import_error(
 /// When a reference carries a source span (from the parser), the error is
 /// reported as a `ParseDiagnostic` with source highlighting. References
 /// without spans (from JSON imports) fall back to a plain text message.
+///
+/// When an unresolved name is similar to a primitive or registered type,
+/// the error includes a "did you mean?" suggestion.
 fn validate_all_references(
     idl_file: &IdlFile,
     registry: &SchemaRegistry,
@@ -982,12 +1124,13 @@ fn validate_all_references(
     let mut related: Vec<ParseDiagnostic> = span_iter
         .map(|(name, span)| {
             let span = span.expect("partitioned into Some");
+            let help = suggest_similar_name(&name, registry);
             ParseDiagnostic {
                 src: miette::NamedSource::new(source_name, source.to_string()),
                 span,
                 message: format!("Undefined name: {name}"),
                 label: None,
-                help: None,
+                help,
                 related: Vec::new(),
             }
         })
@@ -997,22 +1140,24 @@ fn validate_all_references(
     // length span at offset 0 so miette can still render them (it just
     // won't highlight a specific location).
     for (name, _) in without_span {
+        let help = suggest_similar_name(&name, registry);
         related.push(ParseDiagnostic {
             src: miette::NamedSource::new(source_name, source.to_string()),
             span: (0, 0).into(),
             message: format!("Undefined name: {name}"),
             label: None,
-            help: None,
+            help,
             related: Vec::new(),
         });
     }
 
+    let first_help = suggest_similar_name(&first_name, registry);
     Err(ParseDiagnostic {
         src: miette::NamedSource::new(source_name, source.to_string()),
         span: first_span,
         message: format!("Undefined name: {first_name}"),
         label: None,
-        help: None,
+        help: first_help,
         related,
     }
     .into())
@@ -1025,6 +1170,7 @@ fn validate_all_references(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::schema::AvroSchema;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -1589,5 +1735,260 @@ mod tests {
         assert_eq!(output.schemas.len(), 2, "should extract two schemas");
         assert_eq!(output.schemas[0].name, "Foo");
         assert_eq!(output.schemas[1].name, "Color");
+    }
+
+    // =========================================================================
+    // Levenshtein edit distance
+    // =========================================================================
+
+    #[test]
+    fn levenshtein_identical_strings() {
+        assert_eq!(levenshtein("string", "string"), 0);
+    }
+
+    #[test]
+    fn levenshtein_empty_strings() {
+        assert_eq!(levenshtein("", ""), 0);
+        assert_eq!(levenshtein("abc", ""), 3);
+        assert_eq!(levenshtein("", "xyz"), 3);
+    }
+
+    #[test]
+    fn levenshtein_single_edit() {
+        // Substitution.
+        assert_eq!(levenshtein("string", "strang"), 1);
+        // Insertion.
+        assert_eq!(levenshtein("sting", "string"), 1);
+        // Deletion.
+        assert_eq!(levenshtein("string", "sting"), 1);
+    }
+
+    #[test]
+    fn levenshtein_two_edits() {
+        // "stiring" -> "string" requires only 1 edit (delete the extra 'i'):
+        // s-t-i-r-i-n-g -> s-t-r-i-n-g
+        assert_eq!(levenshtein("stiring", "string"), 1);
+        // "bolean" -> "boolean" requires 1 edit (insert 'o'):
+        assert_eq!(levenshtein("bolean", "boolean"), 1);
+        // "dubble" -> "double" requires 2 edits:
+        assert_eq!(levenshtein("dubble", "double"), 2);
+    }
+
+    #[test]
+    fn levenshtein_case_difference() {
+        assert_eq!(levenshtein("String", "string"), 1);
+        assert_eq!(levenshtein("INT", "int"), 3);
+    }
+
+    // =========================================================================
+    // "Did you mean?" suggestions for undefined type names
+    // =========================================================================
+
+    #[test]
+    fn suggest_primitive_typo_stiring() {
+        let reg = SchemaRegistry::new();
+        let suggestion = suggest_similar_name("test.stiring", &reg);
+        assert!(
+            suggestion.is_some(),
+            "should suggest something for 'stiring'"
+        );
+        let s = suggestion.expect("just checked is_some");
+        assert!(
+            s.contains("string"),
+            "should suggest 'string', got: {s}"
+        );
+    }
+
+    #[test]
+    fn suggest_primitive_case_mismatch() {
+        let reg = SchemaRegistry::new();
+        let suggestion = suggest_similar_name("String", &reg);
+        assert!(
+            suggestion.is_some(),
+            "should suggest something for 'String'"
+        );
+        let s = suggestion.expect("just checked is_some");
+        assert!(
+            s.contains("string"),
+            "should suggest 'string', got: {s}"
+        );
+        assert!(
+            s.contains("lowercase"),
+            "should mention primitives are lowercase, got: {s}"
+        );
+    }
+
+    #[test]
+    fn suggest_primitive_int_capitalized() {
+        let reg = SchemaRegistry::new();
+        let suggestion = suggest_similar_name("Int", &reg);
+        assert!(
+            suggestion.is_some(),
+            "should suggest something for 'Int'"
+        );
+        let s = suggestion.expect("just checked is_some");
+        assert!(s.contains("int"), "should suggest 'int', got: {s}");
+        assert!(
+            s.contains("lowercase"),
+            "should mention primitives are lowercase, got: {s}"
+        );
+    }
+
+    #[test]
+    fn suggest_no_match_for_unrelated_name() {
+        let reg = SchemaRegistry::new();
+        let suggestion = suggest_similar_name("CompletelyUnrelated", &reg);
+        assert!(
+            suggestion.is_none(),
+            "should not suggest anything for a completely unrelated name"
+        );
+    }
+
+    #[test]
+    fn suggest_registered_type_typo() {
+        let mut reg = SchemaRegistry::new();
+        reg.register(AvroSchema::Record {
+            name: "UserProfile".to_string(),
+            namespace: Some("com.example".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        })
+        .expect("registration succeeds");
+
+        let suggestion = suggest_similar_name("com.example.UserProfle", &reg);
+        assert!(
+            suggestion.is_some(),
+            "should suggest something for 'UserProfle'"
+        );
+        let s = suggestion.expect("just checked is_some");
+        assert!(
+            s.contains("com.example.UserProfile"),
+            "should suggest the full name, got: {s}"
+        );
+    }
+
+    #[test]
+    fn suggest_registered_type_simple_name_typo() {
+        let mut reg = SchemaRegistry::new();
+        reg.register(AvroSchema::Record {
+            name: "Account".to_string(),
+            namespace: Some("org.bank".to_string()),
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        })
+        .expect("registration succeeds");
+
+        // Typo in the simple name part, correct namespace.
+        let suggestion = suggest_similar_name("org.bank.Acount", &reg);
+        assert!(
+            suggestion.is_some(),
+            "should suggest something for 'Acount'"
+        );
+        let s = suggestion.expect("just checked is_some");
+        assert!(
+            s.contains("org.bank.Account"),
+            "should suggest the full registered name, got: {s}"
+        );
+    }
+
+    // =========================================================================
+    // Integration: error messages include suggestions
+    // =========================================================================
+
+    #[test]
+    fn undefined_type_suggests_primitive() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record R { stiring name; }
+            }
+            "#,
+        );
+        let err = result.expect_err("should fail with undefined type");
+        let rendered = crate::error::render_diagnostic(&err);
+        assert!(
+            rendered.contains("did you mean"),
+            "error should include 'did you mean', got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("string"),
+            "error should suggest 'string', got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn undefined_type_suggests_capitalized_primitive() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record R { String name; }
+            }
+            "#,
+        );
+        let err = result.expect_err("should fail with undefined type");
+        let rendered = crate::error::render_diagnostic(&err);
+        assert!(
+            rendered.contains("did you mean"),
+            "error should include 'did you mean', got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("lowercase"),
+            "error should mention primitives are lowercase, got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn undefined_type_suggests_registered_type() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record UserProfile { string name; }
+                record R { UserProfle author; }
+            }
+            "#,
+        );
+        let err = result.expect_err("should fail with undefined type");
+        let rendered = crate::error::render_diagnostic(&err);
+        assert!(
+            rendered.contains("did you mean"),
+            "error should include 'did you mean', got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("UserProfile"),
+            "error should suggest 'UserProfile', got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn undefined_type_no_suggestion_for_unrelated() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record R { CompletelyUnrelated field; }
+            }
+            "#,
+        );
+        let err = result.expect_err("should fail with undefined type");
+        let rendered = crate::error::render_diagnostic(&err);
+        assert!(
+            rendered.contains("Undefined name"),
+            "error should report undefined name, got:\n{rendered}"
+        );
+        // Should NOT contain "did you mean" since nothing is close.
+        let has_suggestion = rendered.contains("did you mean");
+        assert!(
+            has_suggestion == false,
+            "error should NOT include 'did you mean' for unrelated name, got:\n{rendered}"
+        );
     }
 }

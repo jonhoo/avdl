@@ -146,6 +146,12 @@ impl SchemaRegistry {
         self.schemas.values()
     }
 
+    /// Return all registered full names (e.g., `"org.example.Foo"`), in
+    /// registration order. Used to suggest similar names for typos.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.schemas.keys().map(|k| k.as_str())
+    }
+
     // -- Test-only helpers below this line --
 
     /// Check whether a name is registered.
