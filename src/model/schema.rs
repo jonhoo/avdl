@@ -35,8 +35,8 @@ pub(crate) fn make_full_name<'a>(name: &'a str, namespace: Option<&str>) -> Cow<
 /// The split occurs at the last `.` in the string, matching the Java
 /// `Schema.Name` constructor's behavior for dotted names.
 pub(crate) fn split_full_name(full_name: &str) -> (&str, Option<&str>) {
-    match full_name.rfind('.') {
-        Some(pos) => (&full_name[pos + 1..], Some(&full_name[..pos])),
+    match full_name.rsplit_once('.') {
+        Some((namespace, name)) => (name, Some(namespace)),
         None => (full_name, None),
     }
 }
