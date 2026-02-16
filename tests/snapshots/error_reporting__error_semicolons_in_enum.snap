@@ -37,9 +37,9 @@ Error:
         IdentifierToken
 
 Error: 
-  x line 1:32 extraneous input '}' expecting {<EOF>, '\u001A'}
+  x line 1:32 extraneous input '}' expecting end of file
    ,-[<input>:1:33]
  1 | protocol P { enum E { A; B; C } }
    :                                 |
-   :                                 `-- line 1:32 extraneous input '}' expecting {<EOF>, '\u001A'}
+   :                                 `-- line 1:32 extraneous input '}' expecting end of file
    `----

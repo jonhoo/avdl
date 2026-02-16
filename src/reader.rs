@@ -470,6 +470,116 @@ fn format_expected_help(tokens: &str) -> Option<String> {
     Some(format!("expected one of: {}", cleaned.join(", ")))
 }
 
+/// Sanitizes a raw ANTLR error message for display to users.
+///
+/// Removes ANTLR-internal tokens that are meaningless to users:
+/// - `'\u001A'` (ASCII SUB character, ANTLR's alternate EOF marker)
+/// - `DocComment` (internal token name for `/** ... */` comments)
+///
+/// Also replaces `<EOF>` with the more readable `end of file`.
+///
+/// This is applied as a fallback when `enrich_antlr_error` does not match
+/// any known pattern, ensuring that even passthrough messages are clean.
+fn sanitize_antlr_message(msg: &str) -> String {
+    // Only process messages that contain an `expecting {…}` set.
+    let Some(set_start_rel) = msg.find("expecting {") else {
+        // No token set to sanitize; just replace bare `<EOF>` mentions
+        // in other positions (e.g., "extraneous input '<EOF>'").
+        return msg.replace("<EOF>", "end of file");
+    };
+    let prefix_end = set_start_rel + "expecting {".len();
+    // Find the closing `}` of the token set, skipping `}` characters inside
+    // single-quoted token names like `'}'`.
+    let Some(brace_close_rel) = find_closing_brace(&msg[prefix_end..]) else {
+        return msg.replace("<EOF>", "end of file");
+    };
+    let set_str = &msg[prefix_end..prefix_end + brace_close_rel];
+
+    // Split the token set respecting single-quoted tokens (e.g., `','`
+    // should not be split on the comma inside the quotes).
+    let raw_tokens = split_token_set(set_str);
+
+    // Filter out internal tokens and clean up the remaining set.
+    let mut seen = HashSet::new();
+    let cleaned: Vec<String> = raw_tokens
+        .into_iter()
+        .filter(|t| *t != "DocComment" && *t != "'\\u001A'")
+        .map(|t| {
+            if t == "<EOF>" {
+                "end of file".to_string()
+            } else {
+                t.to_string()
+            }
+        })
+        .filter(|t| seen.insert(t.clone()))
+        .collect();
+
+    let before_expecting = &msg[..set_start_rel];
+    let after_brace = &msg[prefix_end + brace_close_rel + 1..];
+
+    if cleaned.is_empty() {
+        // All tokens were filtered out; drop the `expecting {…}` entirely.
+        format!("{}{}", before_expecting.trim_end(), after_brace)
+    } else if cleaned.len() == 1 {
+        // Single token: use `expecting <token>` without braces.
+        format!(
+            "{}expecting {}{}",
+            before_expecting, cleaned[0], after_brace
+        )
+    } else {
+        format!(
+            "{}expecting {{{}}}{}",
+            before_expecting,
+            cleaned.join(", "),
+            after_brace
+        )
+    }
+}
+
+/// Splits an ANTLR expected-token set string on commas, respecting
+/// single-quoted token names. For example, the set `';', ','` contains
+/// two tokens: `';'` and `','`. A naive `split(',')` would incorrectly
+/// break the comma token.
+fn split_token_set(set: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+    let bytes = set.as_bytes();
+
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\'' {
+            in_quotes = !in_quotes;
+        } else if b == b',' && !in_quotes {
+            let token = set[start..i].trim();
+            if !token.is_empty() {
+                tokens.push(token);
+            }
+            start = i + 1;
+        }
+    }
+    // Capture the last token after the final comma (or the only token).
+    let last = set[start..].trim();
+    if !last.is_empty() {
+        tokens.push(last);
+    }
+    tokens
+}
+
+/// Finds the byte offset of the closing `}` in an ANTLR token set,
+/// skipping `}` characters that appear inside single-quoted token names
+/// (e.g., `'}'`). Returns `None` if no unquoted `}` is found.
+fn find_closing_brace(s: &str) -> Option<usize> {
+    let mut in_quotes = false;
+    for (i, b) in s.bytes().enumerate() {
+        if b == b'\'' {
+            in_quotes = !in_quotes;
+        } else if b == b'}' && !in_quotes {
+            return Some(i);
+        }
+    }
+    None
+}
+
 /// Extracts the token set string from `expecting {<set>}` in an ANTLR
 /// error message. Returns the content between the braces, or `None` if the
 /// pattern is not found.
@@ -722,7 +832,10 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
 
         let (display_msg, label, help) = match enriched {
             Some(e) => (e.message, e.label, e.help),
-            None => (msg.to_string(), None, None),
+            // No enrichment pattern matched; sanitize the raw ANTLR message
+            // to remove internal tokens like `'\u001A'` and replace `<EOF>`
+            // with "end of file" so the message is meaningful to users.
+            None => (sanitize_antlr_message(msg), None, None),
         };
 
         self.errors.borrow_mut().push(SyntaxError {
@@ -5074,6 +5187,80 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // ANTLR message sanitization
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn sanitize_removes_u001a_from_expecting_set() {
+        let msg = "extraneous input 'extra' expecting {<EOF>, '\\u001A'}";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(sanitized, "extraneous input 'extra' expecting end of file");
+        assert!(
+            !sanitized.contains("\\u001A"),
+            "should not contain \\u001A: {sanitized}"
+        );
+    }
+
+    #[test]
+    fn sanitize_removes_u001a_keeps_other_tokens() {
+        let msg = "mismatched input 'foo' expecting {<EOF>, '\\u001A', ';'}";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(
+            sanitized,
+            "mismatched input 'foo' expecting {end of file, ';'}"
+        );
+    }
+
+    #[test]
+    fn sanitize_replaces_eof_in_expecting_set() {
+        let msg = "extraneous input 'x' expecting {<EOF>, ';'}";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(
+            sanitized,
+            "extraneous input 'x' expecting {end of file, ';'}"
+        );
+    }
+
+    #[test]
+    fn sanitize_removes_doc_comment_from_expecting_set() {
+        let msg = "mismatched input 'x' expecting {DocComment, ';', ','}";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(sanitized, "mismatched input 'x' expecting {';', ','}");
+    }
+
+    #[test]
+    fn sanitize_no_expecting_set_replaces_eof() {
+        let msg = "extraneous input '<EOF>' at position 42";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(sanitized, "extraneous input 'end of file' at position 42");
+    }
+
+    #[test]
+    fn sanitize_passthrough_normal_message() {
+        let msg = "mismatched input '}' expecting {';', ','}";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(sanitized, msg);
+    }
+
+    #[test]
+    fn sanitize_all_internal_tokens_keeps_eof_as_end_of_file() {
+        // DocComment and \u001A are filtered out, but <EOF> is replaced with
+        // "end of file" (not removed), since it's useful information.
+        let msg = "extraneous input 'x' expecting {DocComment, '\\u001A', <EOF>}";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(sanitized, "extraneous input 'x' expecting end of file");
+    }
+
+    #[test]
+    fn sanitize_only_internal_tokens_drops_expecting() {
+        // When the only expected tokens are truly internal (DocComment + \u001A),
+        // the expecting clause should be dropped entirely.
+        let msg = "extraneous input 'x' expecting {DocComment, '\\u001A'}";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(sanitized, "extraneous input 'x'");
+    }
+
+    // ------------------------------------------------------------------
     // Bare identifier quoting hint
     // ------------------------------------------------------------------
 
@@ -5201,6 +5388,33 @@ mod tests {
         assert!(
             msg.contains("\"YELLOW\""),
             "error should suggest quoting: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_error_extra_content_after_protocol_no_u001a() {
+        // Regression test for issue ae346632: error messages should not
+        // show the ANTLR-internal `'\u001A'` (ASCII SUB) token.
+        let idl = r#"@namespace("test")
+protocol Test {
+  record Foo {
+    string name;
+  }
+} extra
+"#;
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            !msg.contains("\\u001A"),
+            "error should not contain \\u001A control character: {msg}"
+        );
+        assert!(
+            !msg.contains('\u{001A}'),
+            "error should not contain literal SUB character: {msg}"
+        );
+        assert!(
+            msg.contains("extra"),
+            "error should mention the extraneous token: {msg}"
         );
     }
 
