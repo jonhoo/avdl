@@ -22,8 +22,8 @@ website — they are always available and match the submodule version.
 
 ```sh
 cargo build
-cargo test           # unit tests + integration tests
-cargo insta test     # if snapshot tests are added later
+cargo test                              # unit tests + integration tests
+cargo insta test --unreferenced delete  # also cleans up orphaned .snap files
 ```
 
 The integration tests parse `.avdl` files from the Avro test suite and
