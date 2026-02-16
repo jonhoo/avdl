@@ -1024,6 +1024,18 @@ mod tests {
     }
 
     #[test]
+    fn logical_type_time_micros() {
+        let schema = AvroSchema::Logical {
+            logical_type: LogicalType::TimeMicros,
+            properties: HashMap::new(),
+        };
+        assert_eq!(
+            serialize_schema(&schema),
+            json!({"type": "long", "logicalType": "time-micros"})
+        );
+    }
+
+    #[test]
     fn logical_type_timestamp_millis() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::TimestampMillis,
@@ -1036,6 +1048,18 @@ mod tests {
     }
 
     #[test]
+    fn logical_type_timestamp_micros() {
+        let schema = AvroSchema::Logical {
+            logical_type: LogicalType::TimestampMicros,
+            properties: HashMap::new(),
+        };
+        assert_eq!(
+            serialize_schema(&schema),
+            json!({"type": "long", "logicalType": "timestamp-micros"})
+        );
+    }
+
+    #[test]
     fn logical_type_local_timestamp_millis() {
         let schema = AvroSchema::Logical {
             logical_type: LogicalType::LocalTimestampMillis,
@@ -1044,6 +1068,18 @@ mod tests {
         assert_eq!(
             serialize_schema(&schema),
             json!({"type": "long", "logicalType": "local-timestamp-millis"})
+        );
+    }
+
+    #[test]
+    fn logical_type_local_timestamp_micros() {
+        let schema = AvroSchema::Logical {
+            logical_type: LogicalType::LocalTimestampMicros,
+            properties: HashMap::new(),
+        };
+        assert_eq!(
+            serialize_schema(&schema),
+            json!({"type": "long", "logicalType": "local-timestamp-micros"})
         );
     }
 

@@ -2133,4 +2133,151 @@ mod tests {
         let errors = validate_record_field_defaults(&schema, record_resolver);
         assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
     }
+
+    // =========================================================================
+    // with_merged_properties
+    // =========================================================================
+
+    /// Helper: build a single-entry properties map for testing.
+    fn test_props(key: &str, value: &str) -> HashMap<String, Value> {
+        let mut props = HashMap::new();
+        props.insert(key.to_string(), json!(value));
+        props
+    }
+
+    #[test]
+    fn with_merged_properties_bare_primitive_promotes_to_annotated() {
+        let schema = AvroSchema::Int;
+        let result = schema.with_merged_properties(test_props("custom", "value"));
+        assert_eq!(
+            result,
+            AvroSchema::AnnotatedPrimitive {
+                kind: PrimitiveType::Int,
+                properties: test_props("custom", "value"),
+            }
+        );
+    }
+
+    #[test]
+    fn with_merged_properties_record_merges() {
+        let schema = AvroSchema::Record {
+            name: "Rec".to_string(),
+            namespace: None,
+            doc: None,
+            fields: vec![],
+            is_error: false,
+            aliases: vec![],
+            properties: test_props("existing", "old"),
+        };
+        let result = schema.with_merged_properties(test_props("added", "new"));
+        match result {
+            AvroSchema::Record { properties, .. } => {
+                assert_eq!(properties.get("existing"), Some(&json!("old")));
+                assert_eq!(properties.get("added"), Some(&json!("new")));
+            }
+            other => panic!("expected Record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_merged_properties_enum_merges() {
+        let schema = AvroSchema::Enum {
+            name: "Color".to_string(),
+            namespace: None,
+            doc: None,
+            symbols: vec!["RED".to_string()],
+            default: None,
+            aliases: vec![],
+            properties: test_props("existing", "old"),
+        };
+        let result = schema.with_merged_properties(test_props("added", "new"));
+        match result {
+            AvroSchema::Enum { properties, .. } => {
+                assert_eq!(properties.get("existing"), Some(&json!("old")));
+                assert_eq!(properties.get("added"), Some(&json!("new")));
+            }
+            other => panic!("expected Enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_merged_properties_fixed_merges() {
+        let schema = AvroSchema::Fixed {
+            name: "Hash".to_string(),
+            namespace: None,
+            doc: None,
+            size: 16,
+            aliases: vec![],
+            properties: test_props("existing", "old"),
+        };
+        let result = schema.with_merged_properties(test_props("added", "new"));
+        match result {
+            AvroSchema::Fixed { properties, .. } => {
+                assert_eq!(properties.get("existing"), Some(&json!("old")));
+                assert_eq!(properties.get("added"), Some(&json!("new")));
+            }
+            other => panic!("expected Fixed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_merged_properties_map_merges() {
+        let schema = AvroSchema::Map {
+            values: Box::new(AvroSchema::String),
+            properties: test_props("existing", "old"),
+        };
+        let result = schema.with_merged_properties(test_props("added", "new"));
+        match result {
+            AvroSchema::Map { properties, .. } => {
+                assert_eq!(properties.get("existing"), Some(&json!("old")));
+                assert_eq!(properties.get("added"), Some(&json!("new")));
+            }
+            other => panic!("expected Map, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_merged_properties_annotated_primitive_merges() {
+        let schema = AvroSchema::AnnotatedPrimitive {
+            kind: PrimitiveType::Long,
+            properties: test_props("existing", "old"),
+        };
+        let result = schema.with_merged_properties(test_props("added", "new"));
+        match result {
+            AvroSchema::AnnotatedPrimitive { properties, .. } => {
+                assert_eq!(properties.get("existing"), Some(&json!("old")));
+                assert_eq!(properties.get("added"), Some(&json!("new")));
+            }
+            other => panic!("expected AnnotatedPrimitive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_merged_properties_reference_merges() {
+        let schema = AvroSchema::Reference {
+            name: "SomeType".to_string(),
+            namespace: Some("org.test".to_string()),
+            properties: test_props("existing", "old"),
+            span: None,
+        };
+        let result = schema.with_merged_properties(test_props("added", "new"));
+        match result {
+            AvroSchema::Reference { properties, .. } => {
+                assert_eq!(properties.get("existing"), Some(&json!("old")));
+                assert_eq!(properties.get("added"), Some(&json!("new")));
+            }
+            other => panic!("expected Reference, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_merged_properties_union_unchanged() {
+        let schema = AvroSchema::Union {
+            types: vec![AvroSchema::Null, AvroSchema::String],
+            is_nullable_type: true,
+        };
+        let original = schema.clone();
+        let result = schema.with_merged_properties(test_props("ignored", "value"));
+        assert_eq!(result, original, "union should be returned unchanged");
+    }
 }
