@@ -288,7 +288,25 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
         });
     }
 
-    // Pattern 2: "mismatched input '<token>' expecting '('"
+    // Pattern 2: "no viable alternative at input 'import\"...\"'"
+    //
+    // This occurs when an import statement omits the kind specifier
+    // (`idl`, `protocol`, or `schema`). ANTLR merges the `import`
+    // keyword with the following string literal into a single token
+    // like `import"foo.avdl"`, which is confusing.
+    if let Some(input) = extract_no_viable_input(msg)
+        && input.starts_with("import\"")
+    {
+        return Some(EnrichedError {
+            message: "import statement missing kind specifier -- \
+                      use `import idl`, `import protocol`, or `import schema`"
+                .to_string(),
+            label: Some("missing import kind".to_string()),
+            help: None,
+        });
+    }
+
+    // Pattern 3: "mismatched input '<token>' expecting '('"
     //
     // This occurs when `@name` is followed by something other than `(`,
     // meaning the annotation value is missing. The error is clear about
@@ -304,7 +322,7 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
         });
     }
 
-    // Pattern 3: errors with a large expected-token set (more than 5 tokens).
+    // Pattern 4: errors with a large expected-token set (more than 5 tokens).
     //
     // ANTLR dumps the full set of expected tokens when it encounters an
     // unexpected token. For most grammar positions this set is huge (20-30
@@ -5104,6 +5122,37 @@ mod tests {
     }
 
     #[test]
+    fn enrich_import_without_kind() {
+        // ANTLR merges `import` and `"foo.avdl"` into `import"foo.avdl"`.
+        let msg = r#"no viable alternative at input 'import"foo.avdl"'"#;
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        assert!(
+            enriched.message.contains("missing kind specifier"),
+            "should mention missing kind: {}",
+            enriched.message,
+        );
+        assert!(
+            enriched.message.contains("import idl"),
+            "should suggest `import idl`: {}",
+            enriched.message,
+        );
+        assert!(
+            enriched.message.contains("import protocol"),
+            "should suggest `import protocol`: {}",
+            enriched.message,
+        );
+        assert!(
+            enriched.message.contains("import schema"),
+            "should suggest `import schema`: {}",
+            enriched.message,
+        );
+        assert_eq!(
+            enriched.label.as_deref(),
+            Some("missing import kind"),
+        );
+    }
+
+    #[test]
     fn enrich_mismatched_input_expecting_lparen() {
         let msg = "mismatched input 'string' expecting '('";
         let enriched = enrich_antlr_error(msg).expect("should match").message;
@@ -5535,6 +5584,21 @@ protocol Test {
         assert!(
             msg.contains("@beta(\"value\")"),
             "error should suggest correct syntax: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_error_import_without_kind() {
+        let idl = "protocol Test {\n  import \"foo.avdl\";\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("missing kind specifier"),
+            "error should mention missing kind specifier: {msg}"
+        );
+        assert!(
+            msg.contains("import idl"),
+            "error should suggest `import idl`: {msg}"
         );
     }
 
