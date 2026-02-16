@@ -147,7 +147,13 @@ impl IdlCompiler {
         // Validate that all type references resolved. Unresolved references
         // indicate missing imports, undefined types, or cross-namespace
         // references that need fully-qualified names.
-        if let Err(e) = validate_all_references(&idl_file, &registry, source, source_name) {
+        if let Err(e) = validate_all_references(
+            &idl_file,
+            &registry,
+            source,
+            source_name,
+            &ctx.json_import_spans,
+        ) {
             self.accumulated_warnings = std::mem::take(&mut ctx.warnings);
             return Err(e);
         }
@@ -553,6 +559,11 @@ struct CompileContext {
     import_ctx: ImportContext,
     messages: HashMap<String, Message>,
     warnings: Vec<miette::Report>,
+    /// Maps JSON-imported file display names to their import statement spans
+    /// in the IDL source. Used to enrich error messages for unresolved
+    /// references from `.avsc`/`.avpr` imports, which lack source spans of
+    /// their own.
+    json_import_spans: Vec<(String, Option<miette::SourceSpan>)>,
 }
 
 impl CompileContext {
@@ -562,6 +573,7 @@ impl CompileContext {
             import_ctx: ImportContext::new(import_dirs.to_vec()),
             messages: HashMap::new(),
             warnings: Vec::new(),
+            json_import_spans: Vec::new(),
         }
     }
 }
@@ -624,6 +636,7 @@ fn parse_and_resolve(
         input_dir,
         &mut ctx.messages,
         &mut ctx.warnings,
+        &mut ctx.json_import_spans,
         source,
         source_name,
     )?;
@@ -658,6 +671,7 @@ fn process_decl_items(
     current_dir: &Path,
     messages: &mut HashMap<String, Message>,
     warnings: &mut Vec<miette::Report>,
+    json_import_spans: &mut Vec<(String, Option<miette::SourceSpan>)>,
     source: &str,
     source_name: &str,
 ) -> miette::Result<()> {
@@ -671,6 +685,7 @@ fn process_decl_items(
                     current_dir,
                     messages,
                     warnings,
+                    json_import_spans,
                     source,
                     source_name,
                 )?;
@@ -759,6 +774,7 @@ fn resolve_single_import(
     current_dir: &Path,
     messages: &mut HashMap<String, Message>,
     warnings: &mut Vec<miette::Report>,
+    json_import_spans: &mut Vec<(String, Option<miette::SourceSpan>)>,
     source: &str,
     source_name: &str,
 ) -> miette::Result<()> {
@@ -803,6 +819,10 @@ fn resolve_single_import(
                 )
             })?;
             messages.extend(imported_messages);
+
+            // Track the import so unresolved references from this .avpr can
+            // be attributed to the import statement in error diagnostics.
+            json_import_spans.push((resolved_path.display().to_string(), import.span));
         }
         ImportKind::Schema => {
             import_schema(&resolved_path, registry).map_err(|e| {
@@ -815,6 +835,10 @@ fn resolve_single_import(
                     "schema",
                 )
             })?;
+
+            // Track the import so unresolved references from this .avsc can
+            // be attributed to the import statement in error diagnostics.
+            json_import_spans.push((resolved_path.display().to_string(), import.span));
         }
         ImportKind::Idl => {
             let imported_source = fs::read_to_string(&resolved_path)
@@ -842,6 +866,9 @@ fn resolve_single_import(
             }
 
             // Recursively process declaration items from the imported file.
+            // IDL imports use their own source text for span tracking, so
+            // json_import_spans is passed through to capture any nested
+            // JSON imports within the imported IDL file.
             process_decl_items(
                 &nested_decl_items,
                 registry,
@@ -849,6 +876,7 @@ fn resolve_single_import(
                 &import_dir,
                 messages,
                 warnings,
+                json_import_spans,
                 &imported_source,
                 &imported_name,
             )
@@ -1042,7 +1070,9 @@ fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<S
 ///
 /// When a reference carries a source span (from the parser), the error is
 /// reported as a `ParseDiagnostic` with source highlighting. References
-/// without spans (from JSON imports) fall back to a plain text message.
+/// without spans (from JSON imports) are reported using the import
+/// statement's span and a help message naming the imported file, so the
+/// user can identify which import brought in the undefined type.
 ///
 /// When an unresolved name is similar to a primitive or registered type,
 /// the error includes a "did you mean?" suggestion.
@@ -1051,6 +1081,7 @@ fn validate_all_references(
     registry: &SchemaRegistry,
     source: &str,
     source_name: &str,
+    json_import_spans: &[(String, Option<miette::SourceSpan>)],
 ) -> miette::Result<()> {
     let mut unresolved = registry.validate_references();
 
@@ -1107,11 +1138,50 @@ fn validate_all_references(
     let (with_span, without_span): (Vec<_>, Vec<_>) =
         unresolved.into_iter().partition(|(_, s)| s.is_some());
 
+    // Build a help message listing the JSON-imported files that may contain
+    // the undefined type, for use in spanless reference diagnostics.
+    let import_file_names: Vec<&str> = json_import_spans
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .collect();
+
     if with_span.is_empty() {
-        // No references have source spans — fall back to a plain message
-        // listing all unresolved names.
+        // All unresolved references come from JSON imports (no IDL source
+        // spans). Use the first available import statement span to point
+        // the user at the import line, with a help message naming the
+        // imported file(s).
+        let first_import_span = json_import_spans.iter().find_map(|(_, s)| *s);
+
         let names: Vec<&str> = without_span.iter().map(|(name, _)| name.as_str()).collect();
-        miette::bail!("Undefined name: {}", names.join(", "));
+        let message = format!("Undefined name: {}", names.join(", "));
+
+        let help = if import_file_names.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "the undefined type(s) may be referenced in imported file(s): {}",
+                import_file_names.join(", ")
+            ))
+        };
+
+        if let Some(span) = first_import_span {
+            return Err(ParseDiagnostic {
+                src: miette::NamedSource::new(source_name, source.to_string()),
+                span,
+                message,
+                label: Some("this import contains undefined type references".to_string()),
+                help,
+                related: Vec::new(),
+            }
+            .into());
+        }
+
+        // No import span available either (e.g., import from string input
+        // without span tracking). Fall back to plain message with help.
+        if let Some(help) = help {
+            miette::bail!("{message}\n  help: {help}");
+        }
+        miette::bail!("{message}");
     }
 
     // The first spanned reference becomes the primary diagnostic; the rest
@@ -1136,16 +1206,36 @@ fn validate_all_references(
         })
         .collect();
 
-    // Append spanless references as related diagnostics too. Use a zero-
-    // length span at offset 0 so miette can still render them (it just
-    // won't highlight a specific location).
-    for (name, _) in without_span {
-        let help = suggest_similar_name(&name, registry);
+    // Append spanless references as related diagnostics, using the import
+    // statement spans so the user can see which import brought them in.
+    // Fall back to a zero-length span at offset 0 if no import span is
+    // available. Include "did you mean?" suggestions where applicable.
+    let fallback_span: miette::SourceSpan = (0, 0).into();
+    for (name, _) in &without_span {
+        let (span, label) =
+            if let Some((path, Some(import_span))) = json_import_spans.first() {
+                (
+                    *import_span,
+                    Some(format!("type `{name}` referenced in imported file `{path}`")),
+                )
+            } else {
+                (fallback_span, None)
+            };
+
+        let help = if import_file_names.is_empty() {
+            suggest_similar_name(name, registry)
+        } else {
+            Some(format!(
+                "the undefined type may be referenced in imported file(s): {}",
+                import_file_names.join(", ")
+            ))
+        };
+
         related.push(ParseDiagnostic {
             src: miette::NamedSource::new(source_name, source.to_string()),
-            span: (0, 0).into(),
+            span,
             message: format!("Undefined name: {name}"),
-            label: None,
+            label,
             help,
             related: Vec::new(),
         });
@@ -1989,6 +2079,117 @@ mod tests {
         assert!(
             has_suggestion == false,
             "error should NOT include 'did you mean' for unrelated name, got:\n{rendered}"
+        );
+    }
+
+    // =========================================================================
+    // Imported .avsc with undefined type reference (issue 37840ce8)
+    // =========================================================================
+
+    #[test]
+    #[cfg_attr(windows, ignore)]
+    fn imported_avsc_undefined_type_includes_file_path() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let avsc_path = dir.path().join("bad.avsc");
+        std::fs::write(
+            &avsc_path,
+            r#"{"type":"record","name":"Foo","fields":[{"name":"x","type":"UnknownType"}]}"#,
+        )
+        .expect("write .avsc");
+
+        let avdl_path = dir.path().join("test.avdl");
+        std::fs::write(
+            &avdl_path,
+            "protocol Test {\n  import schema \"bad.avsc\";\n}\n",
+        )
+        .expect("write .avdl");
+
+        let result = Idl::new().convert(&avdl_path);
+        let err = result.expect_err("should fail with undefined type");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("Undefined name"),
+            "should report undefined name, got: {msg}"
+        );
+        assert!(
+            msg.contains("bad.avsc"),
+            "error should mention the imported file path, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(windows, ignore)]
+    fn imported_avsc_undefined_type_snapshot() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let avsc_path = dir.path().join("bad-ref.avsc");
+        std::fs::write(
+            &avsc_path,
+            r#"{"type":"record","name":"Foo","fields":[{"name":"x","type":"UnknownType"}]}"#,
+        )
+        .expect("write .avsc");
+
+        let avdl_path = dir.path().join("test.avdl");
+        std::fs::write(
+            &avdl_path,
+            "protocol Test {\n  import schema \"bad-ref.avsc\";\n}\n",
+        )
+        .expect("write .avdl");
+
+        let err = Idl::new()
+            .convert(&avdl_path)
+            .expect_err("should fail with undefined type");
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let handler = miette::GraphicalReportHandler::new_themed(
+            miette::GraphicalTheme::none(),
+        )
+        .with_width(200);
+        let mut rendered = String::new();
+        handler
+            .render_report(&mut rendered, err.as_ref())
+            .expect("render to String is infallible");
+
+        let canonical_str = canonical_dir.display().to_string();
+        let raw_str = dir.path().display().to_string();
+        let stable: String = rendered
+            .replace(&canonical_str, "<tmpdir>")
+            .replace(&raw_str, "<tmpdir>");
+        insta::assert_snapshot!(stable);
+    }
+
+    #[test]
+    #[cfg_attr(windows, ignore)]
+    fn imported_avpr_undefined_type_includes_file_path() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+
+        let avpr_path = dir.path().join("bad.avpr");
+        std::fs::write(
+            &avpr_path,
+            r#"{"protocol":"BadProto","types":[{"type":"record","name":"Rec","fields":[{"name":"f","type":"MissingRef"}]}],"messages":{}}"#,
+        )
+        .expect("write .avpr");
+
+        let avdl_path = dir.path().join("test.avdl");
+        std::fs::write(
+            &avdl_path,
+            "protocol Test {\n  import protocol \"bad.avpr\";\n}\n",
+        )
+        .expect("write .avdl");
+
+        let result = Idl::new().convert(&avdl_path);
+        let err = result.expect_err("should fail with undefined type");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("Undefined name"),
+            "should report undefined name, got: {msg}"
+        );
+        assert!(
+            msg.contains("bad.avpr"),
+            "error should mention the imported file path, got: {msg}"
         );
     }
 }
