@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Suggest similar type names in "undefined name" errors using edit
+  distance, including a note that Avro primitives are lowercase when
+  the user writes e.g. `String` instead of `string` (3b31889)
+- Detect missing import kind specifier (`import "file.avdl"`) and
+  suggest `import idl`, `import protocol`, or `import schema` (450d85f)
+- Include the imported file path in undefined type errors originating
+  from `.avsc`/`.avpr` imports (2fc4544)
+
 ### Changed
 
 ### Deprecated
@@ -17,9 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject record default values that omit required fields; previously
+  the compiler silently produced invalid Avro JSON (aec527c)
+- Filter ANTLR-internal `'\u001A'` (SUB) and `DocComment` tokens from
+  error messages, and display `<EOF>` as "end of file" (35cfa50)
 - Display `identifier` instead of `IdentifierToken` in expected-token
   lists, and similarly humanize `StringLiteral`, `IntegerLiteral`, and
-  `FloatingPointLiteral` to plain-language equivalents
+  `FloatingPointLiteral` to plain-language equivalents (d6605a9)
+- Collapse cascading ANTLR errors for empty unions, misspelled keywords,
+  non-integer fixed sizes, and unclosed braces into single actionable
+  messages (704ff7d)
 
 ### Security
 
