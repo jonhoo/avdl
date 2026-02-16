@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Display `identifier` instead of `IdentifierToken` in expected-token
+  lists, and similarly humanize `StringLiteral`, `IntegerLiteral`, and
+  `FloatingPointLiteral` to plain-language equivalents
+
 ### Security
 
 ## [0.1.5] - 2026-02-11

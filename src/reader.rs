@@ -308,7 +308,7 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
     //
     // ANTLR dumps the full set of expected tokens when it encounters an
     // unexpected token. For most grammar positions this set is huge (20-30
-    // tokens covering every Avro keyword, type name, and IdentifierToken).
+    // tokens covering every Avro keyword, type name, and identifier).
     // We detect these large sets and produce a shorter, more actionable
     // message while keeping a concise label for the source annotation.
     if let Some(enriched) = simplify_large_expecting_set(msg) {
@@ -452,8 +452,9 @@ fn build_unexpected_token_error(
 /// Formats the ANTLR expected-token set into a human-readable help string.
 ///
 /// Strips internal tokens that aren't meaningful to users (DocComment,
-/// the SUB character `\u001A`, and `<EOF>`) and removes surrounding quotes
-/// from token names.
+/// the SUB character `\u001A`, and `<EOF>`), removes surrounding quotes
+/// from token names, and replaces ANTLR-internal token names with
+/// user-friendly descriptions (e.g., `IdentifierToken` becomes `identifier`).
 fn format_expected_help(tokens: &str) -> Option<String> {
     let mut seen = HashSet::new();
     let cleaned: Vec<&str> = tokens
@@ -462,6 +463,7 @@ fn format_expected_help(tokens: &str) -> Option<String> {
         .filter(|t| !t.is_empty())
         .filter(|t| *t != "DocComment" && *t != "'\\u001A'" && *t != "<EOF>")
         .map(|t| t.trim_matches('\''))
+        .map(humanize_token_name)
         .filter(|t| seen.insert(*t))
         .collect();
     if cleaned.is_empty() {
@@ -508,7 +510,7 @@ fn sanitize_antlr_message(msg: &str) -> String {
             if t == "<EOF>" {
                 "end of file".to_string()
             } else {
-                t.to_string()
+                humanize_token_name(t).to_string()
             }
         })
         .filter(|t| seen.insert(t.clone()))
@@ -578,6 +580,43 @@ fn find_closing_brace(s: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Replaces ANTLR-internal token names with user-friendly descriptions.
+///
+/// The ANTLR grammar uses names like `IdentifierToken` and `StringLiteral`
+/// for its lexer rules, but these are confusing when shown in error messages.
+/// This function maps them to plain-language equivalents.
+fn humanize_token_name(name: &str) -> &str {
+    match name {
+        "IdentifierToken" => "identifier",
+        "StringLiteral" => "string literal",
+        "IntegerLiteral" => "integer literal",
+        "FloatingPointLiteral" => "floating-point literal",
+        other => other,
+    }
+}
+
+/// The set of ANTLR-internal token names that should be replaced in raw error
+/// messages. Each entry is `(internal_name, user_friendly_name)`.
+const HUMANIZED_TOKEN_NAMES: &[(&str, &str)] = &[
+    ("IdentifierToken", "identifier"),
+    ("StringLiteral", "string literal"),
+    ("IntegerLiteral", "integer literal"),
+    ("FloatingPointLiteral", "floating-point literal"),
+];
+
+/// Replaces all known ANTLR-internal token names in a raw error message with
+/// user-friendly equivalents. Used for messages that pass through without
+/// enrichment (e.g., errors with small expected-token sets).
+fn humanize_antlr_message(msg: &str) -> String {
+    let mut result = msg.to_string();
+    for &(internal, friendly) in HUMANIZED_TOKEN_NAMES {
+        if result.contains(internal) {
+            result = result.replace(internal, friendly);
+        }
+    }
+    result
 }
 
 /// Extracts the token set string from `expecting {<set>}` in an ANTLR
@@ -834,8 +873,9 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
             Some(e) => (e.message, e.label, e.help),
             // No enrichment pattern matched; sanitize the raw ANTLR message
             // to remove internal tokens like `'\u001A'` and replace `<EOF>`
-            // with "end of file" so the message is meaningful to users.
-            None => (sanitize_antlr_message(msg), None, None),
+            // with "end of file", then humanize internal token names like
+            // `IdentifierToken` to plain-language equivalents.
+            None => (humanize_antlr_message(&sanitize_antlr_message(msg)), None, None),
         };
 
         self.errors.borrow_mut().push(SyntaxError {
@@ -5321,6 +5361,71 @@ mod tests {
     fn expecting_set_includes_string_literal_absent() {
         let tokens = "'null', 'true', 'false', '{', '['";
         assert!(!expecting_set_includes_string_literal(tokens));
+    }
+
+    // ------------------------------------------------------------------
+    // ANTLR token name humanization
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn humanize_replaces_identifier_token() {
+        assert_eq!(humanize_token_name("IdentifierToken"), "identifier");
+    }
+
+    #[test]
+    fn humanize_replaces_string_literal() {
+        assert_eq!(humanize_token_name("StringLiteral"), "string literal");
+    }
+
+    #[test]
+    fn humanize_replaces_integer_literal() {
+        assert_eq!(humanize_token_name("IntegerLiteral"), "integer literal");
+    }
+
+    #[test]
+    fn humanize_replaces_floating_point_literal() {
+        assert_eq!(
+            humanize_token_name("FloatingPointLiteral"),
+            "floating-point literal"
+        );
+    }
+
+    #[test]
+    fn humanize_passes_through_keywords() {
+        // Keywords like `protocol` should be left unchanged.
+        assert_eq!(humanize_token_name("protocol"), "protocol");
+    }
+
+    #[test]
+    fn format_expected_help_humanizes_identifier_token() {
+        let tokens = "'protocol', '@', IdentifierToken";
+        let help = format_expected_help(tokens).expect("non-empty set");
+        assert_eq!(help, "expected one of: protocol, @, identifier");
+    }
+
+    #[test]
+    fn format_expected_help_humanizes_literal_tokens() {
+        let tokens = "StringLiteral, IntegerLiteral, FloatingPointLiteral";
+        let help = format_expected_help(tokens).expect("non-empty set");
+        assert_eq!(
+            help,
+            "expected one of: string literal, integer literal, floating-point literal"
+        );
+    }
+
+    #[test]
+    fn humanize_antlr_message_replaces_identifier_token() {
+        let msg = "mismatched input '}' expecting {';', IdentifierToken}";
+        assert_eq!(
+            humanize_antlr_message(msg),
+            "mismatched input '}' expecting {';', identifier}"
+        );
+    }
+
+    #[test]
+    fn humanize_antlr_message_leaves_keywords_unchanged() {
+        let msg = "mismatched input '}' expecting {';', ','}";
+        assert_eq!(humanize_antlr_message(msg), msg);
     }
 
     #[test]
