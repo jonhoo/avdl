@@ -9,5 +9,4 @@ expression: stable
    : `-- this file
  2 | import schema "Bar.avsc";
    `----
-  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema
-        <type>;`
+  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema <type>;`

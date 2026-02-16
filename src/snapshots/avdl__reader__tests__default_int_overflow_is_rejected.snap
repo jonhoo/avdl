@@ -3,8 +3,7 @@ source: src/reader.rs
 expression: render_diagnostic(&err)
 ---
   x parse `<input>`
-  `-> Invalid default for field `count` in `R`: value 9999999999 out of range
-      for int (must be between -2147483648 and 2147483647)
+  `-> Invalid default for field `count` in `R`: value 9999999999 out of range for int (must be between -2147483648 and 2147483647)
    ,-[<input>:1:37]
  1 | protocol P { record R { int count = 9999999999; } }
    :                                     ^^^^^|^^^^

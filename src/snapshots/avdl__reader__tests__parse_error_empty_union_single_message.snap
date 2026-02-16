@@ -10,5 +10,4 @@ expression: render_diagnostic(&err)
    :         `-- empty union
  4 |   }
    `----
-  help: add at least one type inside the braces, e.g., `union { null, string }
-        `
+  help: add at least one type inside the braces, e.g., `union { null, string }`

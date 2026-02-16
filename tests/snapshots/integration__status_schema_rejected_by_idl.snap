@@ -9,5 +9,4 @@ expression: render_diagnostic(&err)
    : `-- this file
  2 | 
    `----
-  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema
-        <type>;`
+  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema <type>;`

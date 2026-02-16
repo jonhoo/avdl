@@ -2,8 +2,7 @@
 source: src/compiler.rs
 expression: "crate::error::render_diagnostic(&err)"
 ---
-  x Invalid default for field `inner` in `test.Outer`: invalid value for field
-  | `count`: expected int, got string
+  x Invalid default for field `inner` in `test.Outer`: invalid value for field `count`: expected int, got string
    ,-[<input>:5:46]
  4 |                 record Inner { int count; }
  5 |                 record Outer { Inner inner = {"count": "not_an_int"}; }

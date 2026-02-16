@@ -8,5 +8,4 @@ expression: "crate::error::render_diagnostic(&err)"
    : |
    : `-- this file
    `----
-  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema
-        <type>;`
+  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema <type>;`

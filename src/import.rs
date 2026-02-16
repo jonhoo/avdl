@@ -2235,10 +2235,8 @@ mod tests {
 
         let result = ctx.resolve_import("nonexistent.avsc", dir.path());
         let err = result.expect_err("missing import should produce an error");
-        // Use format! instead of render_diagnostic because this is a plain
-        // miette error without source context, and the rendered form wraps
-        // long lines, splitting tempdir paths across continuation lines.
-        let stable = format!("{err}")
+        let rendered = crate::error::render_diagnostic(&err);
+        let stable = rendered
             .replace(&dir.path().display().to_string(), "<tmpdir>");
         insta::assert_snapshot!(stable);
     }

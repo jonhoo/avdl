@@ -2,8 +2,7 @@
 source: src/reader.rs
 expression: render_diagnostic(&err)
 ---
-  x line 1:41 mismatched input 'string' expecting '(' (annotations require
-  | `@name(value)` syntax)
+  x line 1:41 mismatched input 'string' expecting '(' (annotations require `@name(value)` syntax)
    ,-[<input>:1:42]
  1 | protocol Test { record Foo { @deprecated string name; } }
    :                                          ^^^|^^

@@ -402,11 +402,6 @@ let stable = rendered
 insta::assert_snapshot!(stable);
 ```
 
-For errors without source context (plain `miette::miette!()`) whose
-messages are long enough that `render_diagnostic` wraps paths across
-continuation lines, use `format!("{err}")` instead to avoid the
-line-break issue.
-
 ### Properties on primitives
 
 Primitives with annotations (e.g., `@foo("bar") int`) are wrapped in

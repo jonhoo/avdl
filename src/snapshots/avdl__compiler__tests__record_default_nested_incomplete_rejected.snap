@@ -2,8 +2,7 @@
 source: src/compiler.rs
 expression: "crate::error::render_diagnostic(&err)"
 ---
-  x Invalid default for field `m` in `test.Outer`: invalid value for field
-  | `inner`: missing required field in record `Inner`: x
+  x Invalid default for field `m` in `test.Outer`: invalid value for field `inner`: missing required field in record `Inner`: x
    ,-[<input>:6:43]
  5 |                 record Middle { Inner inner; }
  6 |                 record Outer { Middle m = {"inner": {}}; }

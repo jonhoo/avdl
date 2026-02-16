@@ -10,7 +10,5 @@ expression: render_diagnostic(&err)
    :                                                 `-- unexpected `YELLOW` -- did you mean `"YELLOW"`?
  4 |         }
    `----
-  help: expected one of: null, true, false, {, [, string literal, integer
-        literal, floating-point literal
-        hint: did you mean "YELLOW"? Enum default values must be quoted
-        strings
+  help: expected one of: null, true, false, {, [, string literal, integer literal, floating-point literal
+        hint: did you mean "YELLOW"? Enum default values must be quoted strings

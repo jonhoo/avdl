@@ -1,10 +1,9 @@
 ---
 source: src/reader.rs
-expression: render_error(&err)
+expression: render_diagnostic(&err)
 ---
   x parse `<input>`
-  `-> The Enum Default: NONEXISTENT is not in the enum symbol set: ["A", "B",
-      "C"]
+  `-> The Enum Default: NONEXISTENT is not in the enum symbol set: ["A", "B", "C"]
    ,-[<input>:3:38]
  2 |             protocol P {
  3 |                 enum E { A, B, C } = NONEXISTENT;

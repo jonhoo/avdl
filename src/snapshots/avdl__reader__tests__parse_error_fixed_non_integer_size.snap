@@ -2,8 +2,7 @@
 source: src/reader.rs
 expression: render_diagnostic(&err)
 ---
-  x line 2:15 fixed type requires an integer size -- use `fixed
-  | MD5(<integer>)`, e.g., `fixed MD5(16)`
+  x line 2:15 fixed type requires an integer size -- use `fixed MD5(<integer>)`, e.g., `fixed MD5(16)`
    ,-[<input>:2:13]
  1 | protocol Test {
  2 |   fixed MD5(abc);

@@ -2,5 +2,4 @@
 source: src/import.rs
 expression: stable
 ---
-  x invalid JSON in <tmpdir>/bad-json.avsc: expected ident at line 1
-  | column 2
+  x invalid JSON in <tmpdir>/bad-json.avsc: expected ident at line 1 column 2

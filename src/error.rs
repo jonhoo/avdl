@@ -38,12 +38,13 @@ impl std::error::Error for ParseDiagnostic {}
 
 /// Render a `miette::Report` to a deterministic string for snapshot testing.
 ///
-/// Uses `GraphicalTheme::none()` (no box-drawing characters) at 80-column
-/// width so that snapshot output is readable in diffs.
+/// Uses `GraphicalTheme::none()` (no box-drawing characters) with a wide
+/// width to avoid wrapping error messages (which would break tempdir path
+/// replacement in tests that normalize paths).
 #[cfg(test)]
 pub(crate) fn render_diagnostic(report: &miette::Report) -> String {
     use miette::{GraphicalReportHandler, GraphicalTheme};
-    let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(80);
+    let handler = GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(200);
     let mut buf = String::new();
     handler
         .render_report(&mut buf, report.as_ref())

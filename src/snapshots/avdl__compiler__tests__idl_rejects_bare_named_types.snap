@@ -10,5 +10,4 @@ expression: "crate::error::render_diagnostic(&err)"
  2 |             namespace org.test;
  3 |             record Foo { string name; }
    `----
-  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema
-        <type>;`
+  help: wrap declarations in `protocol MyProto { ... }` or prefix with `schema <type>;`
