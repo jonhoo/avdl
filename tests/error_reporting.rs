@@ -47,10 +47,10 @@ fn compile_error_with_width(input: &str, width: usize) -> Option<String> {
                 GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(width);
 
             let diag: &dyn Diagnostic = e.as_ref();
-            if diag.source_code().is_some() {
-                if handler.render_report(&mut buf, diag).is_ok() {
-                    return Some(buf);
-                }
+            if diag.source_code().is_some()
+                && handler.render_report(&mut buf, diag).is_ok()
+            {
+                return Some(buf);
             }
 
             Some(format!("{e}"))
@@ -73,10 +73,10 @@ fn compile_file_error(path: &std::path::Path) -> Option<String> {
                 GraphicalReportHandler::new_themed(GraphicalTheme::none()).with_width(300);
 
             let diag: &dyn Diagnostic = e.as_ref();
-            if diag.source_code().is_some() {
-                if handler.render_report(&mut buf, diag).is_ok() {
-                    return Some(buf);
-                }
+            if diag.source_code().is_some()
+                && handler.render_report(&mut buf, diag).is_ok()
+            {
+                return Some(buf);
             }
 
             Some(format!("{e}"))

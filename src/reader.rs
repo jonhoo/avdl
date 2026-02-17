@@ -9,7 +9,7 @@
 // The generated parser defines token constants in lower_Camel_case (e.g.
 // `Idl_Boolean`). We suppress the naming warning for the whole module since
 // these constants appear extensively in match arms.
-#![allow(non_upper_case_globals)]
+#![expect(non_upper_case_globals, reason = "ANTLR-generated token constants use PascalCase")]
 //
 // The Java reference implementation uses ANTLR's listener pattern with mutable
 // stacks. That approach is awkward in Rust due to lifetime constraints on trait

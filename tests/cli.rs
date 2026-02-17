@@ -22,7 +22,7 @@ const OUTPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/output";
 const CLASSPATH_DIR: &str = "avro/lang/java/idl/src/test/idl/putOnClassPath";
 
 /// Helper to construct a `Command` for the `avdl` binary built by this crate.
-#[allow(deprecated)] // cargo_bin() warns about custom build-dir; acceptable here
+#[expect(deprecated, reason = "cargo_bin() warns about custom build-dir")]
 fn avdl_cmd() -> Command {
     Command::cargo_bin("avdl").expect("avdl binary should be built by cargo")
 }

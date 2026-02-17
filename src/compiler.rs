@@ -245,6 +245,7 @@ impl Default for Idl {
 
 impl Idl {
     /// Create a new builder with no import directories.
+    #[must_use]
     pub fn new() -> Self {
         Idl {
             inner: IdlCompiler::new(),
@@ -422,6 +423,7 @@ impl Default for Idl2Schemata {
 
 impl Idl2Schemata {
     /// Create a new builder with no import directories.
+    #[must_use]
     pub fn new() -> Self {
         Idl2Schemata {
             inner: IdlCompiler::new(),
