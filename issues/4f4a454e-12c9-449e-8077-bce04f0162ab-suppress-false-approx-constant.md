@@ -1,4 +1,4 @@
-# Suppress false-positive `clippy::approx_constant` warnings in tests
+# Replace `3.14`/`2.718` test values to avoid `approx_constant` warnings
 
 ## Symptom
 
@@ -18,10 +18,9 @@ accepts numeric values for float/double schemas.
 
 ## Affected files
 
-- `src/reader.rs`: lines 4923, 4930, 4936, 4942, 4948 — `parse_float_text`
-  unit tests using `3.14` with various suffixes
-- `src/model/schema.rs`: lines 1210, 1220, 1279, 1307 — `is_valid_default`
-  unit tests using `3.14` and `2.718`
+- `src/reader.rs`: `parse_float_text` unit tests using `3.14` with various
+  suffixes
+- `src/model/schema.rs`: `is_valid_default` unit tests using `3.14` and `2.718`
 
 ## Reproduction
 
@@ -31,24 +30,10 @@ cargo clippy --all-targets -- -W clippy::approx_constant
 
 ## Suggested fix
 
-Add `#[allow(clippy::approx_constant)]` to each affected test function (or to
-the test module as a whole). Changing the values to something like `3.15` would
-also silence the lint but obscures the intent — `3.14` is the conventional
-"any float" test value.
+Replace the test values with floats that don't trigger the lint:
+- `3.14` → `3.25` (or similar)
+- `2.718` → `2.75` (or similar)
 
-Preferred approach: annotate each test function individually using
-`#[expect]` (Rust 1.81+) with a `reason`, so the compiler warns if the
-suppression ever becomes unnecessary (e.g., the test values change):
-
-```rust
-#[test]
-#[expect(clippy::approx_constant, reason = "3.14 is an arbitrary test value, not pi")]
-fn float_decimal_no_suffix() {
-    let val = parse_float_text("3.14").expect("plain decimal");
-    assert!((val - 3.14).abs() < f64::EPSILON);
-}
-```
-
-Use `#[expect]` rather than `#[allow]` for all new lint suppressions
-that are expected to trigger — this ensures suppressions don't silently
-become dead annotations.
+This avoids adding lint suppressions entirely. The tests are verifying
+float parsing mechanics, not any specific numeric value, so any
+non-integer decimal works equally well.
