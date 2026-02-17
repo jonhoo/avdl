@@ -1650,8 +1650,7 @@ mod tests {
 
     #[test]
     fn named_type_second_occurrence_uses_short_name_in_same_namespace() {
-        let schema =
-            AvroSchema::simple_enum("Color", Some("org.palette"), vec!["RED".to_string()]);
+        let schema = AvroSchema::simple_enum("Color", Some("org.palette"), vec!["RED".to_string()]);
 
         let mut known = HashSet::new();
         let lookup = HashMap::new();

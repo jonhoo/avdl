@@ -1419,8 +1419,7 @@ fn test_schema_mode_custom_logical_type_annotation() {
 // annotation keys, `@order()`, cross-namespace references, `oneway`, `throws`,
 // annotations inside unions, `decimal()`, and custom logical types.
 
-const IDL_UTILS_DIR: &str =
-    "avro/lang/java/idl/src/test/resources/org/apache/avro/util";
+const IDL_UTILS_DIR: &str = "avro/lang/java/idl/src/test/resources/org/apache/avro/util";
 
 #[test]
 fn test_idl_utils_test_protocol() {
@@ -1441,9 +1440,16 @@ fn test_idl_utils_test_protocol() {
     // separate top-level entries.
     let types = json["types"].as_array().expect("missing types array");
     let type_names: Vec<&str> = types.iter().filter_map(|t| t["name"].as_str()).collect();
-    assert!(type_names.contains(&"NewMessage"), "should define NewMessage");
+    assert!(
+        type_names.contains(&"NewMessage"),
+        "should define NewMessage"
+    );
     assert!(type_names.contains(&"Failure"), "should define Failure");
-    assert_eq!(types.len(), 2, "expected NewMessage and Failure as top-level types");
+    assert_eq!(
+        types.len(),
+        2,
+        "expected NewMessage and Failure as top-level types"
+    );
 
     // NewMessage should have the `@aliases` annotation.
     let new_message = types
@@ -1482,9 +1488,7 @@ fn test_idl_utils_test_protocol() {
     assert_eq!(nonce_field["type"]["size"], 8);
 
     // Messages: `send` (oneway) and `echo` (throws Failure).
-    let messages = json["messages"]
-        .as_object()
-        .expect("should have messages");
+    let messages = json["messages"].as_object().expect("should have messages");
     assert_eq!(messages.len(), 2);
 
     let send = messages.get("send").expect("send message");
@@ -1492,9 +1496,7 @@ fn test_idl_utils_test_protocol() {
 
     let echo = messages.get("echo").expect("echo message");
     assert_eq!(echo["doc"], "Simple echoing service");
-    let errors = echo["errors"]
-        .as_array()
-        .expect("echo should have errors");
+    let errors = echo["errors"].as_array().expect("echo should have errors");
     assert!(errors.iter().any(|e| e == "Failure"));
 }
 
@@ -1612,8 +1614,7 @@ fn test_comments_doc_content() {
         .find(|t| t["name"] == "UndocumentedEnum")
         .expect("UndocumentedEnum not found");
     assert!(
-        undocumented_enum.get("doc").is_none()
-            || undocumented_enum["doc"].is_null(),
+        undocumented_enum.get("doc").is_none() || undocumented_enum["doc"].is_null(),
         "UndocumentedEnum should not have a doc string"
     );
 
@@ -1633,8 +1634,7 @@ fn test_comments_doc_content() {
         .find(|t| t["name"] == "UndocumentedFixed")
         .expect("UndocumentedFixed not found");
     assert!(
-        undocumented_fixed.get("doc").is_none()
-            || undocumented_fixed["doc"].is_null(),
+        undocumented_fixed.get("doc").is_none() || undocumented_fixed["doc"].is_null(),
         "UndocumentedFixed should not have a doc string"
     );
 
@@ -1677,16 +1677,13 @@ fn test_comments_doc_content() {
         .find(|t| t["name"] == "UndocumentedRecord")
         .expect("UndocumentedRecord not found");
     assert!(
-        undocumented_record.get("doc").is_none()
-            || undocumented_record["doc"].is_null(),
+        undocumented_record.get("doc").is_none() || undocumented_record["doc"].is_null(),
         "UndocumentedRecord should not have a doc string"
     );
 
     // ---- Message doc strings ----
 
-    let messages = json["messages"]
-        .as_object()
-        .expect("should have messages");
+    let messages = json["messages"].as_object().expect("should have messages");
 
     // documentedMethod: doc == "Documented Method"
     let documented_method = messages
@@ -1725,8 +1722,7 @@ fn test_comments_doc_content() {
         .get("undocumentedMethod")
         .expect("undocumentedMethod not found");
     assert!(
-        undocumented_method.get("doc").is_none()
-            || undocumented_method["doc"].is_null(),
+        undocumented_method.get("doc").is_none() || undocumented_method["doc"].is_null(),
         "undocumentedMethod should not have a doc string"
     );
 }
@@ -1742,8 +1738,7 @@ fn test_comments_doc_content() {
 
 #[test]
 fn test_grpc_test_service() {
-    let avdl_path =
-        PathBuf::from("avro/lang/java/grpc/src/test/avro/TestService.avdl");
+    let avdl_path = PathBuf::from("avro/lang/java/grpc/src/test/avro/TestService.avdl");
     let output = Idl::new()
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
@@ -1769,9 +1764,7 @@ fn test_grpc_test_service() {
 
     // Messages: echo, add (3 args), error (throws TestError), ping (oneway),
     // concatenate (union return).
-    let messages = json["messages"]
-        .as_object()
-        .expect("should have messages");
+    let messages = json["messages"].as_object().expect("should have messages");
     assert_eq!(messages.len(), 5);
 
     // `add` has 3 int arguments.
@@ -1804,8 +1797,7 @@ fn test_grpc_test_service() {
 
 #[test]
 fn test_maven_user() {
-    let avdl_path =
-        PathBuf::from("avro/lang/java/maven-plugin/src/test/avro/User.avdl");
+    let avdl_path = PathBuf::from("avro/lang/java/maven-plugin/src/test/avro/User.avdl");
     let output = Idl::new()
         .convert(&avdl_path)
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
@@ -1829,7 +1821,10 @@ fn test_maven_user() {
     let symbols = privacy["symbols"]
         .as_array()
         .expect("IdlPrivacy should have symbols");
-    assert_eq!(symbols, &[serde_json::json!("Public"), serde_json::json!("Private")]);
+    assert_eq!(
+        symbols,
+        &[serde_json::json!("Public"), serde_json::json!("Private")]
+    );
 
     // IdlUser has a `timestamp_ms` logical type field.
     let user = types
@@ -1868,7 +1863,10 @@ fn test_custom_conversion_idl() {
 
     let json = &output.json;
 
-    assert_eq!(json["protocol"], "LogicalTypesWithCustomConversionIdlProtocol");
+    assert_eq!(
+        json["protocol"],
+        "LogicalTypesWithCustomConversionIdlProtocol"
+    );
     assert_eq!(json["namespace"], "org.apache.avro.codegentest.testdata");
 
     let types = json["types"].as_array().expect("missing types");

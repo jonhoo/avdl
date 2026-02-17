@@ -682,20 +682,18 @@ fn parse_annotated_primitive(
         // Extract precision and scale for `decimal`. For non-decimal types
         // these are ignored by `parse_logical_type`.
         let precision_u64 = obj.get("precision").and_then(|p| p.as_u64());
-        let precision = precision_u64
-            .and_then(|v| u32::try_from(v).ok());
+        let precision = precision_u64.and_then(|v| u32::try_from(v).ok());
         let scale_u64 = obj.get("scale").and_then(|s| s.as_u64());
-        let scale = scale_u64
-            .and_then(|v| u32::try_from(v).ok());
+        let scale = scale_u64.and_then(|v| u32::try_from(v).ok());
 
         if let Some(lt) = parse_logical_type(logical, precision, scale) {
             // For decimal, validate that precision >= 1 (the shared helper
             // returns None when precision is absent, but we also need to
             // reject explicit zero).
-            if let LogicalType::Decimal { precision, .. } = &lt {
-                if *precision < 1 {
-                    miette::bail!("decimal precision must be >= 1");
-                }
+            if let LogicalType::Decimal { precision, .. } = &lt
+                && *precision < 1
+            {
+                miette::bail!("decimal precision must be >= 1");
             }
 
             let properties =
@@ -2073,20 +2071,14 @@ mod tests {
 
     #[test]
     fn json_to_schema_rejects_unknown_type_field() {
-        let result = json_to_schema(
-            &json!({"type": "widget", "name": "Gadget"}),
-            None,
-        );
+        let result = json_to_schema(&json!({"type": "widget", "name": "Gadget"}), None);
         let err = result.expect_err("unknown type 'widget' should be rejected");
         insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
     fn json_to_schema_rejects_missing_type_field() {
-        let result = json_to_schema(
-            &json!({"name": "NoType", "fields": []}),
-            None,
-        );
+        let result = json_to_schema(&json!({"name": "NoType", "fields": []}), None);
         let err = result.expect_err("object without 'type' field should be rejected");
         insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
@@ -2120,8 +2112,7 @@ mod tests {
         let result = import_protocol(&avpr_path, &mut registry);
         let err = result.expect_err("invalid type in protocol should be rejected");
         let rendered = crate::error::render_diagnostic(&err);
-        let stable = rendered
-            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        let stable = rendered.replace(&dir.path().display().to_string(), "<tmpdir>");
         insta::assert_snapshot!(stable);
     }
 
@@ -2150,8 +2141,7 @@ mod tests {
         let result = import_protocol(&avpr_path, &mut registry);
         let err = result.expect_err("invalid message in protocol should be rejected");
         let rendered = crate::error::render_diagnostic(&err);
-        let stable = rendered
-            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        let stable = rendered.replace(&dir.path().display().to_string(), "<tmpdir>");
         insta::assert_snapshot!(stable);
     }
 
@@ -2175,8 +2165,7 @@ mod tests {
         let result = import_protocol(&avpr_path, &mut SchemaRegistry::new());
         let err = result.expect_err("invalid JSON should produce an error");
         let rendered = crate::error::render_diagnostic(&err);
-        let stable = rendered
-            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        let stable = rendered.replace(&dir.path().display().to_string(), "<tmpdir>");
         insta::assert_snapshot!(stable);
     }
 
@@ -2200,8 +2189,7 @@ mod tests {
         let result = import_schema(&avsc_path, &mut SchemaRegistry::new());
         let err = result.expect_err("invalid JSON should produce an error");
         let rendered = crate::error::render_diagnostic(&err);
-        let stable = rendered
-            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        let stable = rendered.replace(&dir.path().display().to_string(), "<tmpdir>");
         insta::assert_snapshot!(stable);
     }
 
@@ -2216,8 +2204,7 @@ mod tests {
         let result = import_schema(&avsc_path, &mut SchemaRegistry::new());
         let err = result.expect_err("invalid schema structure should produce an error");
         let rendered = crate::error::render_diagnostic(&err);
-        let stable = rendered
-            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        let stable = rendered.replace(&dir.path().display().to_string(), "<tmpdir>");
         insta::assert_snapshot!(stable);
     }
 
@@ -2236,8 +2223,7 @@ mod tests {
         let result = ctx.resolve_import("nonexistent.avsc", dir.path());
         let err = result.expect_err("missing import should produce an error");
         let rendered = crate::error::render_diagnostic(&err);
-        let stable = rendered
-            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        let stable = rendered.replace(&dir.path().display().to_string(), "<tmpdir>");
         insta::assert_snapshot!(stable);
     }
 }

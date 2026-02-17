@@ -134,8 +134,9 @@ static STAR_2_REPLACE: LazyLock<Regex> =
 /// Validation pattern for common whitespace indent: the comment has at least
 /// two lines and all non-empty subsequent lines share a common leading
 /// whitespace prefix. We determine the actual indent length manually.
-static WS_INDENT_VALIDATE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)[^\r\n]*\r?\n[\t ]+[^\r\n]*").expect("constant regex pattern"));
+static WS_INDENT_VALIDATE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)[^\r\n]*\r?\n[\t ]+[^\r\n]*").expect("constant regex pattern")
+});
 
 /// Strip common indentation from a doc comment body, matching Java's
 /// `IdlReader.stripIndents()` behavior.
@@ -431,9 +432,7 @@ mod tests {
         // (`\t`) from all subsequent lines, preserving any additional internal
         // whitespace beyond that common prefix.
         assert_eq!(
-            strip_indents(
-                "First line\n\t Second Line\n\t  * Third Line\n\t  \n\t  Fifth Line"
-            ),
+            strip_indents("First line\n\t Second Line\n\t  * Third Line\n\t  \n\t  Fifth Line"),
             "First line\nSecond Line\n * Third Line\n \n Fifth Line"
         );
     }

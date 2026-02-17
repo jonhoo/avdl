@@ -778,21 +778,23 @@ fn resolve_single_import(
 
     match import.kind {
         ImportKind::Protocol => {
-            let imported_messages = import_protocol(&resolved_path, &mut ctx.registry).map_err(|e| {
-                wrap_import_error(
-                    e,
-                    import.span,
-                    source,
-                    source_name,
-                    &resolved_path,
-                    "protocol",
-                )
-            })?;
+            let imported_messages =
+                import_protocol(&resolved_path, &mut ctx.registry).map_err(|e| {
+                    wrap_import_error(
+                        e,
+                        import.span,
+                        source,
+                        source_name,
+                        &resolved_path,
+                        "protocol",
+                    )
+                })?;
             ctx.messages.extend(imported_messages);
 
             // Track the import so unresolved references from this .avpr can
             // be attributed to the import statement in error diagnostics.
-            ctx.json_import_spans.push((resolved_path.display().to_string(), import.span));
+            ctx.json_import_spans
+                .push((resolved_path.display().to_string(), import.span));
         }
         ImportKind::Schema => {
             import_schema(&resolved_path, &mut ctx.registry).map_err(|e| {
@@ -808,7 +810,8 @@ fn resolve_single_import(
 
             // Track the import so unresolved references from this .avsc can
             // be attributed to the import statement in error diagnostics.
-            ctx.json_import_spans.push((resolved_path.display().to_string(), import.span));
+            ctx.json_import_spans
+                .push((resolved_path.display().to_string(), import.span));
         }
         ImportKind::Idl => {
             let imported_source = fs::read_to_string(&resolved_path)
@@ -827,7 +830,8 @@ fn resolve_single_import(
                 .and_then(|n| n.to_str())
                 .unwrap_or(import.path.as_str());
             for w in import_warnings {
-                ctx.warnings.push(miette::Report::new(w).wrap_err(import_file_name.to_string()));
+                ctx.warnings
+                    .push(miette::Report::new(w).wrap_err(import_file_name.to_string()));
             }
 
             // If the imported IDL is a protocol, merge its messages.
@@ -957,10 +961,8 @@ fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<S
     for &prim in PRIMITIVE_TYPE_NAMES {
         let dist = levenshtein(simple, prim);
         let threshold = max_edit_distance(simple.len().min(prim.len()));
-        if dist <= threshold {
-            if best.as_ref().map_or(true, |(_, d, _)| dist < *d) {
-                best = Some((prim.to_string(), dist, true));
-            }
+        if dist <= threshold && best.as_ref().is_none_or(|(_, d, _)| dist < *d) {
+            best = Some((prim.to_string(), dist, true));
         }
     }
 
@@ -971,10 +973,8 @@ fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<S
         // Compare unresolved full name against registered full name.
         let dist_full = levenshtein(unresolved, registered_full);
         let threshold_full = max_edit_distance(unresolved.len().min(registered_full.len()));
-        if dist_full <= threshold_full {
-            if best.as_ref().map_or(true, |(_, d, _)| dist_full < *d) {
-                best = Some((registered_full.to_string(), dist_full, false));
-            }
+        if dist_full <= threshold_full && best.as_ref().is_none_or(|(_, d, _)| dist_full < *d) {
+            best = Some((registered_full.to_string(), dist_full, false));
         }
 
         // Also compare the simple parts, in case the namespace is correct
@@ -988,7 +988,7 @@ fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<S
         if dist_simple <= threshold_simple {
             // Suggest the full registered name so the user gets the right
             // fully-qualified form.
-            if best.as_ref().map_or(true, |(_, d, _)| dist_simple < *d) {
+            if best.as_ref().is_none_or(|(_, d, _)| dist_simple < *d) {
                 best = Some((registered_full.to_string(), dist_simple, false));
             }
         }
@@ -997,9 +997,7 @@ fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<S
     best.map(|(suggestion, _, is_primitive)| {
         let case_mismatch = is_primitive && simple.eq_ignore_ascii_case(&suggestion);
         if case_mismatch {
-            format!(
-                "did you mean `{suggestion}`? (note: Avro primitives are lowercase)"
-            )
+            format!("did you mean `{suggestion}`? (note: Avro primitives are lowercase)")
         } else {
             format!("did you mean `{suggestion}`?")
         }
@@ -1156,15 +1154,16 @@ fn validate_all_references(
     // available. Include "did you mean?" suggestions where applicable.
     let fallback_span: miette::SourceSpan = (0, 0).into();
     for (name, _) in &without_span {
-        let (span, label) =
-            if let Some((path, Some(import_span))) = json_import_spans.first() {
-                (
-                    *import_span,
-                    Some(format!("type `{name}` referenced in imported file `{path}`")),
-                )
-            } else {
-                (fallback_span, None)
-            };
+        let (span, label) = if let Some((path, Some(import_span))) = json_import_spans.first() {
+            (
+                *import_span,
+                Some(format!(
+                    "type `{name}` referenced in imported file `{path}`"
+                )),
+            )
+        } else {
+            (fallback_span, None)
+        };
 
         let help = if import_file_names.is_empty() {
             suggest_similar_name(name, registry)
@@ -1602,8 +1601,7 @@ mod tests {
         let result = Idl::new().convert(&avdl_path);
         let err = result.expect_err("idl should reject import-only file");
         let rendered = crate::error::render_diagnostic(&err);
-        let stable = rendered
-            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        let stable = rendered.replace(&dir.path().display().to_string(), "<tmpdir>");
         insta::assert_snapshot!(stable);
     }
 
@@ -1729,8 +1727,8 @@ mod tests {
     #[test]
     fn suggest_primitive_typo_stiring() {
         let reg = SchemaRegistry::new();
-        let suggestion =
-            suggest_similar_name("test.stiring", &reg).expect("should suggest something for 'stiring'");
+        let suggestion = suggest_similar_name("test.stiring", &reg)
+            .expect("should suggest something for 'stiring'");
         insta::assert_snapshot!(suggestion);
     }
 
@@ -1921,10 +1919,7 @@ mod tests {
             .convert(&avdl_path)
             .expect_err("should fail with undefined type");
         let rendered = crate::error::render_diagnostic(&err);
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let stable = rendered
             .replace(&canonical_dir.display().to_string(), "<tmpdir>")
             .replace(&dir.path().display().to_string(), "<tmpdir>");
@@ -1953,14 +1948,9 @@ mod tests {
         let err = Idl::new()
             .convert(&avdl_path)
             .expect_err("should fail with undefined type");
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
-        let handler = miette::GraphicalReportHandler::new_themed(
-            miette::GraphicalTheme::none(),
-        )
-        .with_width(200);
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
+        let handler = miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::none())
+            .with_width(200);
         let mut rendered = String::new();
         handler
             .render_report(&mut rendered, err.as_ref())
@@ -2043,10 +2033,7 @@ mod tests {
             .convert(&avdl_path)
             .expect_err("should fail with undefined type");
         let rendered = crate::error::render_diagnostic(&err);
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let stable = rendered
             .replace(&canonical_dir.display().to_string(), "<tmpdir>")
             .replace(&dir.path().display().to_string(), "<tmpdir>");
@@ -2116,14 +2103,9 @@ mod tests {
         let err = Idl::new()
             .convert(&avdl_path)
             .expect_err("should fail with undefined type from import");
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
-        let handler = miette::GraphicalReportHandler::new_themed(
-            miette::GraphicalTheme::none(),
-        )
-        .with_width(200);
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
+        let handler = miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::none())
+            .with_width(200);
         let mut rendered = String::new();
         handler
             .render_report(&mut rendered, err.as_ref())
@@ -2168,14 +2150,9 @@ mod tests {
         let err = Idl::new()
             .convert(&avdl_path)
             .expect_err("should fail with both spanned and spanless undefined types");
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
-        let handler = miette::GraphicalReportHandler::new_themed(
-            miette::GraphicalTheme::none(),
-        )
-        .with_width(200);
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
+        let handler = miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::none())
+            .with_width(200);
         let mut rendered = String::new();
         handler
             .render_report(&mut rendered, err.as_ref())
@@ -2352,10 +2329,7 @@ mod tests {
             .convert(&main_avdl)
             .expect_err("invalid imported IDL should be rejected");
         let rendered = crate::error::render_diagnostic(&err);
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let stable = rendered
             .replace(&canonical_dir.display().to_string(), "<tmpdir>")
             .replace(&dir.path().display().to_string(), "<tmpdir>");
@@ -2381,10 +2355,7 @@ mod tests {
             .convert(&main_avdl)
             .expect_err("reading a directory as IDL should fail");
         let rendered = crate::error::render_diagnostic(&err);
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let stable = rendered
             .replace(&canonical_dir.display().to_string(), "<tmpdir>")
             .replace(&dir.path().display().to_string(), "<tmpdir>");
@@ -2414,10 +2385,7 @@ mod tests {
             .convert(&main_avdl)
             .expect_err("nested missing import should fail");
         let rendered = crate::error::render_diagnostic(&err);
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let stable = rendered
             .replace(&canonical_dir.display().to_string(), "<tmpdir>")
             .replace(&dir.path().display().to_string(), "<tmpdir>");
@@ -2443,10 +2411,7 @@ mod tests {
             .convert(&avdl_path)
             .expect_err("invalid JSON in .avpr should be rejected");
         let rendered = crate::error::render_diagnostic(&err);
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let stable = rendered
             .replace(&canonical_dir.display().to_string(), "<tmpdir>")
             .replace(&dir.path().display().to_string(), "<tmpdir>");
@@ -2472,10 +2437,7 @@ mod tests {
             .convert(&avdl_path)
             .expect_err("invalid schema structure should be rejected");
         let rendered = crate::error::render_diagnostic(&err);
-        let canonical_dir = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize temp dir");
         let stable = rendered
             .replace(&canonical_dir.display().to_string(), "<tmpdir>")
             .replace(&dir.path().display().to_string(), "<tmpdir>");

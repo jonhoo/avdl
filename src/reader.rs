@@ -332,16 +332,16 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
         // Extract the last whitespace-delimited word, or the last token
         // after any `)` or `"` delimiter that closes an annotation value.
         let last_word = extract_trailing_identifier(input);
-        if let Some(last_word) = last_word {
-            if let Some(suggestion) = suggest_keyword(last_word) {
-                return Some(EnrichedError {
-                    message: format!(
-                        "unrecognized token `{last_word}` -- did you mean `{suggestion}`?"
-                    ),
-                    label: Some(format!("did you mean `{suggestion}`?")),
-                    help: None,
-                });
-            }
+        if let Some(last_word) = last_word
+            && let Some(suggestion) = suggest_keyword(last_word)
+        {
+            return Some(EnrichedError {
+                message: format!(
+                    "unrecognized token `{last_word}` -- did you mean `{suggestion}`?"
+                ),
+                label: Some(format!("did you mean `{suggestion}`?")),
+                help: None,
+            });
         }
     }
 
@@ -523,16 +523,14 @@ fn build_unexpected_token_error(
     // correct spelling. This catches top-level typos like `protocl Test {`
     // where the "no viable alternative" pattern doesn't fire because there
     // is no preceding annotation to merge with.
-    if looks_like_bare_identifier(offending) {
-        if let Some(suggestion) = suggest_keyword(offending) {
-            return EnrichedError {
-                message: format!(
-                    "unexpected token `{offending}` -- did you mean `{suggestion}`?"
-                ),
-                label: Some(format!("did you mean `{suggestion}`?")),
-                help,
-            };
-        }
+    if looks_like_bare_identifier(offending)
+        && let Some(suggestion) = suggest_keyword(offending)
+    {
+        return EnrichedError {
+            message: format!("unexpected token `{offending}` -- did you mean `{suggestion}`?"),
+            label: Some(format!("did you mean `{suggestion}`?")),
+            help,
+        };
     }
 
     EnrichedError {
@@ -624,10 +622,7 @@ fn sanitize_antlr_message(msg: &str) -> String {
         format!("{}{}", before_expecting.trim_end(), after_brace)
     } else if cleaned.len() == 1 {
         // Single token: use `expected <token>` without braces.
-        format!(
-            "{}expected {}{}",
-            before_expecting, cleaned[0], after_brace
-        )
+        format!("{}expected {}{}", before_expecting, cleaned[0], after_brace)
     } else if cleaned.len() == 2 {
         // Two tokens: use natural "expected X or Y" instead of `{X, Y}`.
         format!(
@@ -801,7 +796,7 @@ fn expecting_set_includes_string_literal(tokens: &str) -> bool {
 /// likely caused by an unclosed brace (missing `}` for a record, protocol,
 /// enum, or union body).
 fn expecting_set_includes_close_brace(tokens: &str) -> bool {
-    split_token_set(tokens).iter().any(|t| *t == "'}'")
+    split_token_set(tokens).contains(&"'}'")
 }
 
 /// Returns `true` if the token text looks like a bare identifier: starts with
@@ -909,10 +904,8 @@ fn suggest_keyword(ident: &str) -> Option<&'static str> {
             return None;
         }
         let max_dist = max_edit_distance(kw.len());
-        if dist <= max_dist {
-            if best.is_none() || dist < best.expect("checked is_some").1 {
-                best = Some((kw, dist));
-            }
+        if dist <= max_dist && (best.is_none() || dist < best.expect("checked is_some").1) {
+            best = Some((kw, dist));
         }
     }
     best.map(|(kw, _)| kw)
@@ -991,12 +984,11 @@ const DECLARATION_KEYWORDS: &[&str] = &[
 /// Returns the keyword if found, `None` otherwise.
 fn annotation_name_starts_with_keyword(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
-    for &kw in DECLARATION_KEYWORDS {
-        if lower.starts_with(kw) {
-            return Some(kw);
-        }
-    }
-    None
+    DECLARATION_KEYWORDS
+        .iter()
+        .find(|&&kw| lower.starts_with(kw))
+        .copied()
+        .map(|v| v as _)
 }
 
 /// Extracts the trailing identifier-like token from a "no viable alternative"
@@ -1011,9 +1003,7 @@ fn extract_trailing_identifier(input: &str) -> Option<&str> {
     let ident_end = end;
     let ident_start = input
         .bytes()
-        .rposition(|b| {
-            !(b.is_ascii_alphanumeric() || b == b'_')
-        })
+        .rposition(|b| !(b.is_ascii_alphanumeric() || b == b'_'))
         .map(|pos| pos + 1)
         .unwrap_or(0);
 
@@ -1123,10 +1113,10 @@ fn refine_errors_with_source(errors: &[SyntaxError], source: &str) -> Option<Vec
     // tokens don't match, causing 2-3 cascading errors. We look backwards in
     // the source from the first error to find an identifier that's a likely
     // keyword typo.
-    if errors.len() >= 2 {
-        if let Some(refined) = detect_misspelled_keyword(first, source) {
-            return Some(vec![refined]);
-        }
+    if errors.len() >= 2
+        && let Some(refined) = detect_misspelled_keyword(first, source)
+    {
+        return Some(vec![refined]);
     }
 
     // ---- Pattern: missing `}` before another declaration ----
@@ -1206,11 +1196,11 @@ fn detect_empty_union(error: &SyntaxError, source: &str) -> Option<SyntaxError> 
     Some(SyntaxError {
         offset: union_offset,
         length: span_len,
-        message: format!(
-            "{line_prefix}union must contain at least one type member"
-        ),
+        message: format!("{line_prefix}union must contain at least one type member"),
         label: Some("empty union".to_string()),
-        help: Some("add at least one type inside the braces, e.g., `union { null, string }`".to_string()),
+        help: Some(
+            "add at least one type inside the braces, e.g., `union { null, string }`".to_string(),
+        ),
     })
 }
 
@@ -1258,10 +1248,8 @@ fn detect_empty_type_parameter(error: &SyntaxError, source: &str) -> Option<Synt
     Some(SyntaxError {
         offset: keyword_offset,
         length: span_len,
-        message: format!(
-            "{line_prefix}`{keyword}` type requires a type parameter"
-        ),
-        label: Some(format!("missing type inside `<>`")),
+        message: format!("{line_prefix}`{keyword}` type requires a type parameter"),
+        label: Some("missing type inside `<>`".to_string()),
         help: Some(format!("specify the value type, e.g., `{example}`")),
     })
 }
@@ -1377,12 +1365,8 @@ fn detect_missing_close_brace_before_declaration(
     let line_prefix = extract_line_prefix(&error.message);
 
     let msg = match construct {
-        Some(name) => format!(
-            "{line_prefix}missing closing `}}` for {name}"
-        ),
-        None => format!(
-            "{line_prefix}missing closing `}}`"
-        ),
+        Some(name) => format!("{line_prefix}missing closing `}}` for {name}"),
+        None => format!("{line_prefix}missing closing `}}`"),
     };
 
     let label_text = match construct {
@@ -1499,9 +1483,7 @@ fn detect_missing_name(error: &SyntaxError, source: &str) -> Option<SyntaxError>
     Some(SyntaxError {
         offset: error.offset,
         length: error.length,
-        message: format!(
-            "{line_prefix}expected name after `{keyword}`, found `{{`"
-        ),
+        message: format!("{line_prefix}expected name after `{keyword}`, found `{{`"),
         label: Some(format!("expected {construct} name before `{{`")),
         help: {
             // Build a capitalized example name for the hint.
@@ -1576,9 +1558,7 @@ fn detect_trailing_comma_in_enum(error: &SyntaxError, source: &str) -> Option<Sy
     Some(SyntaxError {
         offset: comma_offset,
         length: 1,
-        message: format!(
-            "{line_prefix}trailing comma is not allowed in enum declaration"
-        ),
+        message: format!("{line_prefix}trailing comma is not allowed in enum declaration"),
         label: Some("trailing comma".to_string()),
         help: Some(hint),
     })
@@ -1692,12 +1672,10 @@ fn detect_unclosed_brace(error: &SyntaxError, source: &str) -> Option<SyntaxErro
 
     let line_prefix = extract_line_prefix(&error.message);
     let msg = match construct {
-        Some(name) => format!(
-            "{line_prefix}unexpected end of file -- missing closing `}}` for {name}"
-        ),
-        None => format!(
-            "{line_prefix}unexpected end of file -- missing closing `}}`"
-        ),
+        Some(name) => {
+            format!("{line_prefix}unexpected end of file -- missing closing `}}` for {name}")
+        }
+        None => format!("{line_prefix}unexpected end of file -- missing closing `}}`"),
     };
     let label_text = match construct {
         Some(name) => format!("this {name} is never closed"),
@@ -1869,7 +1847,11 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
             // to remove internal tokens like `'\u001A'` and replace `<EOF>`
             // with "end of file", then humanize internal token names like
             // `IdentifierToken` to plain-language equivalents.
-            None => (humanize_antlr_message(&sanitize_antlr_message(msg)), None, None),
+            None => (
+                humanize_antlr_message(&sanitize_antlr_message(msg)),
+                None,
+                None,
+            ),
         };
 
         self.errors.borrow_mut().push(SyntaxError {
@@ -4138,17 +4120,11 @@ fn parse_integer_as_u32(text: &str) -> Result<u32> {
     }
 
     let value: u32 = if number.starts_with("0x") || number.starts_with("0X") {
-        u32::from_str_radix(&number[2..], 16).map_err(|e| {
-            friendly_int_error(text, &e)
-        })?
+        u32::from_str_radix(&number[2..], 16).map_err(|e| friendly_int_error(text, &e))?
     } else if number.starts_with('0') && number.len() > 1 {
-        u32::from_str_radix(&number, 8).map_err(|e| {
-            friendly_int_error(text, &e)
-        })?
+        u32::from_str_radix(&number, 8).map_err(|e| friendly_int_error(text, &e))?
     } else {
-        number.parse().map_err(|e| {
-            friendly_int_error(text, &e)
-        })?
+        number.parse().map_err(|e| friendly_int_error(text, &e))?
     };
     Ok(value)
 }
@@ -4402,12 +4378,7 @@ fn try_promote_logical_type(schema: AvroSchema) -> AvroSchema {
                 // ignored. The schema is returned unchanged either way -- the
                 // validation ensures we recognize the combination even though
                 // the representation stays as Fixed.
-                let _valid = validate_logical_type_on_fixed(
-                    logical_name,
-                    size,
-                    precision,
-                    scale,
-                );
+                let _valid = validate_logical_type_on_fixed(logical_name, size, precision, scale);
                 // TODO: emit a warning diagnostic for invalid logical types on
                 // fixed schemas, matching Java's debug-level logging.
             }
@@ -5692,8 +5663,9 @@ mod tests {
         let result = crate::compiler::Idl::new()
             .convert_str(idl)
             .expect("compile should succeed");
-        insta::assert_snapshot!(serde_json::to_string_pretty(&result.json)
-            .expect("JSON serialization should succeed"));
+        insta::assert_snapshot!(
+            serde_json::to_string_pretty(&result.json).expect("JSON serialization should succeed")
+        );
     }
 
     #[test]
@@ -5778,9 +5750,7 @@ mod tests {
         let schema = parse_first_named_type(idl);
         match &schema {
             AvroSchema::Fixed {
-                name,
-                properties,
-                ..
+                name, properties, ..
             } => {
                 assert_eq!(name, "BadDate");
                 assert_eq!(
@@ -6426,10 +6396,7 @@ mod tests {
             enriched.message,
             "unexpected token `protocl` -- did you mean `protocol`?"
         );
-        assert_eq!(
-            enriched.label.as_deref(),
-            Some("did you mean `protocol`?")
-        );
+        assert_eq!(enriched.label.as_deref(), Some("did you mean `protocol`?"));
     }
 
     #[test]
@@ -6510,20 +6477,14 @@ mod tests {
     fn sanitize_removes_u001a_keeps_other_tokens() {
         let msg = "mismatched input 'foo' expecting {<EOF>, '\\u001A', ';'}";
         let sanitized = sanitize_antlr_message(msg);
-        assert_eq!(
-            sanitized,
-            "unexpected 'foo' expected end of file or ';'"
-        );
+        assert_eq!(sanitized, "unexpected 'foo' expected end of file or ';'");
     }
 
     #[test]
     fn sanitize_replaces_eof_in_expecting_set() {
         let msg = "extraneous input 'x' expecting {<EOF>, ';'}";
         let sanitized = sanitize_antlr_message(msg);
-        assert_eq!(
-            sanitized,
-            "unexpected 'x' expected end of file or ';'"
-        );
+        assert_eq!(sanitized, "unexpected 'x' expected end of file or ';'");
     }
 
     #[test]
@@ -7039,7 +7000,8 @@ protocol Test {
             label: Some("unexpected `}`".to_string()),
             help: None,
         };
-        let refined = detect_empty_union(&error, source).expect("should detect empty union pattern");
+        let refined =
+            detect_empty_union(&error, source).expect("should detect empty union pattern");
         insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
@@ -7135,8 +7097,8 @@ protocol Test {
             label: Some("unexpected `)`".to_string()),
             help: None,
         };
-        let refined =
-            detect_fixed_non_integer(&error, source).expect("should detect fixed non-integer pattern");
+        let refined = detect_fixed_non_integer(&error, source)
+            .expect("should detect fixed non-integer pattern");
         insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
@@ -7202,8 +7164,7 @@ protocol Test {
             label: Some("unexpected end of file".to_string()),
             help: Some("expected one of: protocol, ...".to_string()),
         };
-        let refined =
-            detect_unclosed_brace(&error, source).expect("should detect unclosed brace");
+        let refined = detect_unclosed_brace(&error, source).expect("should detect unclosed brace");
         insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
@@ -7391,10 +7352,7 @@ protocol Test {
     #[test]
     fn annotation_name_starts_with_keyword_not_annotation() {
         // Normal annotation names should not trigger.
-        assert_eq!(
-            annotation_name_starts_with_keyword("beta"),
-            None,
-        );
+        assert_eq!(annotation_name_starts_with_keyword("beta"), None,);
     }
 
     // ------------------------------------------------------------------

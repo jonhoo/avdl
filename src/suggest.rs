@@ -43,11 +43,7 @@ pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
 /// For short names (length <= 4), we require distance <= 1 to avoid noisy
 /// suggestions. For longer names, we allow distance <= 2.
 pub(crate) fn max_edit_distance(name_len: usize) -> usize {
-    if name_len <= 4 {
-        1
-    } else {
-        2
-    }
+    if name_len <= 4 { 1 } else { 2 }
 }
 
 #[cfg(test)]

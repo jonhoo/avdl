@@ -867,10 +867,13 @@ pub fn validate_default(value: &Value, schema: &AvroSchema) -> Option<String> {
         }
         // Check for fields with invalid default values.
         for field in fields {
-            if let Some(field_val) = obj.get(&field.name) {
-                if let Some(reason) = validate_default(field_val, &field.schema) {
-                    return Some(format!("invalid value for field `{}`: {reason}", field.name));
-                }
+            if let Some(field_val) = obj.get(&field.name)
+                && let Some(reason) = validate_default(field_val, &field.schema)
+            {
+                return Some(format!(
+                    "invalid value for field `{}`: {reason}",
+                    field.name
+                ));
             }
         }
     }
@@ -1074,11 +1077,7 @@ impl Field {
 #[cfg(test)]
 impl AvroSchema {
     /// Create a record with no doc, aliases, properties, or error flag.
-    pub(crate) fn simple_record(
-        name: &str,
-        namespace: Option<&str>,
-        fields: Vec<Field>,
-    ) -> Self {
+    pub(crate) fn simple_record(name: &str, namespace: Option<&str>, fields: Vec<Field>) -> Self {
         AvroSchema::Record {
             name: name.to_string(),
             namespace: namespace.map(str::to_string),
@@ -1091,11 +1090,7 @@ impl AvroSchema {
     }
 
     /// Create an enum with no doc, default, aliases, or properties.
-    pub(crate) fn simple_enum(
-        name: &str,
-        namespace: Option<&str>,
-        symbols: Vec<String>,
-    ) -> Self {
+    pub(crate) fn simple_enum(name: &str, namespace: Option<&str>, symbols: Vec<String>) -> Self {
         AvroSchema::Enum {
             name: name.to_string(),
             namespace: namespace.map(str::to_string),
@@ -1404,32 +1399,20 @@ mod tests {
 
     #[test]
     fn record_rejects_wrong_field_type_in_default() {
-        let schema = AvroSchema::simple_record(
-            "Inner",
-            None,
-            vec![Field::simple("count", AvroSchema::Int)],
-        );
+        let schema =
+            AvroSchema::simple_record("Inner", None, vec![Field::simple("count", AvroSchema::Int)]);
         // Field is provided but with wrong type (string instead of int).
         assert!(!is_valid_default(&json!({"count": "not_an_int"}), &schema));
     }
 
     #[test]
     fn record_nested_validates_inner_record() {
-        let inner_schema = AvroSchema::simple_record(
-            "Inner",
-            None,
-            vec![Field::simple("x", AvroSchema::Int)],
-        );
-        let outer_schema = AvroSchema::simple_record(
-            "Outer",
-            None,
-            vec![Field::simple("inner", inner_schema)],
-        );
+        let inner_schema =
+            AvroSchema::simple_record("Inner", None, vec![Field::simple("x", AvroSchema::Int)]);
+        let outer_schema =
+            AvroSchema::simple_record("Outer", None, vec![Field::simple("inner", inner_schema)]);
         // Inner record must also be complete.
-        assert!(is_valid_default(
-            &json!({"inner": {"x": 1}}),
-            &outer_schema
-        ));
+        assert!(is_valid_default(&json!({"inner": {"x": 1}}), &outer_schema));
         assert!(!is_valid_default(&json!({"inner": {}}), &outer_schema));
     }
 
@@ -1455,8 +1438,8 @@ mod tests {
                 Field::simple("field_b", AvroSchema::Int),
             ],
         );
-        let msg = validate_default(&json!({}), &schema)
-            .expect("should have a reason for missing fields");
+        let msg =
+            validate_default(&json!({}), &schema).expect("should have a reason for missing fields");
         insta::assert_snapshot!(msg);
     }
 
