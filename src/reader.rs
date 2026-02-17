@@ -7063,7 +7063,6 @@ protocol Test {
     #[test]
     fn detect_trailing_comma_in_enum_pattern() {
         let source = "protocol T {\n  enum Color {\n    RED,\n    GREEN,\n    BLUE,\n  }\n}";
-        let close_brace_pos = source.rfind('}').expect("has }") - 2;
         // The error is on `}` after the trailing comma.
         let inner_close = source[..source.len() - 2].rfind('}').expect("has inner }");
         let error = SyntaxError {
