@@ -1,0 +1,13 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x parse `<input>`
+  `-> invalid fixed size for `Hash`: value must be a non-negative integer, got `-5`
+   ,-[<input>:2:14]
+ 1 | protocol Test {
+ 2 |   fixed Hash(-5);
+   :              ^|
+   :               `-- invalid fixed size for `Hash`: value must be a non-negative integer, got `-5`
+ 3 | }
+   `----

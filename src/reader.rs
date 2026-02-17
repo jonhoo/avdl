@@ -1077,6 +1077,16 @@ fn refine_errors_with_source(errors: &[SyntaxError], source: &str) -> Option<Vec
         return Some(vec![refined]);
     }
 
+    // ---- Pattern: empty type parameter (`map<>` or `array<>`) ----
+    //
+    // When ANTLR sees `>` immediately after `<` in `map<>` or `array<>`,
+    // it tries to match a `fullType` inside the angle brackets. `>` is not
+    // a valid start for a type, so ANTLR reports a large expected-token set
+    // and then cascades a second error. We collapse this into one message.
+    if let Some(refined) = detect_empty_type_parameter(first, source) {
+        return Some(vec![refined]);
+    }
+
     // ---- Pattern: `fixed Name(non_integer)` ----
     //
     // When `fixed Name(abc)` is written, ANTLR treats `abc` as a type
@@ -1117,6 +1127,17 @@ fn refine_errors_with_source(errors: &[SyntaxError], source: &str) -> Option<Vec
         if let Some(refined) = detect_misspelled_keyword(first, source) {
             return Some(vec![refined]);
         }
+    }
+
+    // ---- Pattern: missing `}` before another declaration ----
+    //
+    // When a record's `}` is missing and another `record`/`enum`/`error`/
+    // `fixed` keyword follows, ANTLR interprets the keyword as a field
+    // type inside the previous record. It then sees `{` instead of `;`
+    // and reports "expected ';' or ','". We detect this mid-file pattern
+    // by checking if a declaration keyword precedes the `{`.
+    if let Some(refined) = detect_missing_close_brace_before_declaration(first, source) {
+        return Some(vec![refined]);
     }
 
     // ---- Pattern: unclosed brace (missing `}`) ----
@@ -1190,6 +1211,191 @@ fn detect_empty_union(error: &SyntaxError, source: &str) -> Option<SyntaxError> 
         ),
         label: Some("empty union".to_string()),
         help: Some("add at least one type inside the braces, e.g., `union { null, string }`".to_string()),
+    })
+}
+
+/// Detects `map<>` or `array<>` (empty type parameter) by checking whether
+/// the error token is `>` and the source text before it matches
+/// `(map|array)\s*<\s*`.
+fn detect_empty_type_parameter(error: &SyntaxError, source: &str) -> Option<SyntaxError> {
+    // The first error in the cascade points at `>` in `map<>` or `array<>`.
+    let error_text = source.get(error.offset..error.offset + error.length)?;
+    if error_text.trim() != ">" {
+        return None;
+    }
+
+    let before = source[..error.offset].trim_end();
+
+    // Check if the previous non-whitespace character is `<`.
+    if !before.ends_with('<') {
+        return None;
+    }
+
+    // Look for `map` or `array` keyword before the `<`.
+    let before_angle = before[..before.len() - 1].trim_end();
+    let keyword = if before_angle.ends_with("map") {
+        "map"
+    } else if before_angle.ends_with("array") {
+        "array"
+    } else {
+        return None;
+    };
+
+    // Find the offset of the keyword to point the error there.
+    let keyword_offset = before_angle.len() - keyword.len();
+
+    // Span covers `map<>` or `array<>`.
+    let span_len = (error.offset + error.length) - keyword_offset;
+
+    let line_prefix = extract_line_prefix(&error.message);
+
+    let example = if keyword == "map" {
+        "map<string>"
+    } else {
+        "array<string>"
+    };
+
+    Some(SyntaxError {
+        offset: keyword_offset,
+        length: span_len,
+        message: format!(
+            "{line_prefix}`{keyword}` type requires a type parameter"
+        ),
+        label: Some(format!("missing type inside `<>`")),
+        help: Some(format!("specify the value type, e.g., `{example}`")),
+    })
+}
+
+/// Detects the pattern where a record/enum/error/fixed keyword appears inside
+/// another record that was never closed. ANTLR interprets the keyword as a
+/// field type and then sees `{` instead of `;`, producing the confusing error
+/// "unexpected `{` expected `;` or `,`".
+///
+/// We detect this by checking if the offending token is `{`, the error
+/// mentions "expected" `';'` or `','`, and a declaration keyword
+/// (`record`/`enum`/`error`/`fixed`) precedes the `{`. When these conditions
+/// hold, we walk the brace stack from the start of the file to find the
+/// innermost unclosed `{` and point the error there.
+fn detect_missing_close_brace_before_declaration(
+    error: &SyntaxError,
+    source: &str,
+) -> Option<SyntaxError> {
+    // The error token should be `{`.
+    let error_text = source.get(error.offset..error.offset + error.length)?;
+    if error_text.trim() != "{" {
+        return None;
+    }
+
+    // The error message should mention expecting `;` or `,` -- that's the
+    // telltale sign that ANTLR parsed the declaration keyword as a type name.
+    let mentions_semicolon_or_comma =
+        error.message.contains("';'") || error.message.contains("','");
+    if !mentions_semicolon_or_comma {
+        return None;
+    }
+
+    // Look backwards from the `{` to find a declaration keyword.
+    let before = source[..error.offset].trim_end();
+
+    // Skip the name (e.g., `Bar` in `record Bar {`).
+    let name_end = before.len();
+    let name_start = before
+        .bytes()
+        .rposition(|b| !b.is_ascii_alphanumeric() && b != b'_' && b != b'`')
+        .map(|p| p + 1)
+        .unwrap_or(0);
+
+    if name_start >= name_end {
+        return None;
+    }
+
+    let name_text = &before[name_start..name_end];
+
+    // Check if the "name" is actually a declaration keyword (for cases
+    // like `enum {` without a name, though those are rare here).
+    let is_decl_keyword = matches!(name_text, "record" | "enum" | "error" | "fixed");
+
+    // If it's not a keyword, check if the word before the name is.
+    let keyword_before_name = if !is_decl_keyword {
+        let before_name = before[..name_start].trim_end();
+        let kw_end = before_name.len();
+        let kw_start = before_name
+            .bytes()
+            .rposition(|b| !b.is_ascii_alphanumeric() && b != b'_')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        if kw_start < kw_end {
+            matches!(
+                &before_name[kw_start..kw_end],
+                "record" | "enum" | "error" | "fixed"
+            )
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if !is_decl_keyword && !keyword_before_name {
+        return None;
+    }
+
+    // Count braces in the source up to (but not including) the error offset,
+    // to find the innermost unclosed `{`. We ignore braces inside strings.
+    let mut brace_stack: Vec<usize> = Vec::new();
+    let mut in_string = false;
+    let mut prev_backslash = false;
+    for (i, b) in source[..error.offset].bytes().enumerate() {
+        if in_string {
+            if b == b'"' && !prev_backslash {
+                in_string = false;
+            }
+            prev_backslash = b == b'\\' && !prev_backslash;
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => brace_stack.push(i),
+            b'}' => {
+                brace_stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    // If there's no unclosed brace, this pattern doesn't apply.
+    if brace_stack.is_empty() {
+        return None;
+    }
+
+    // The last unclosed `{` is the most likely culprit (the record that
+    // was never closed).
+    let unmatched_pos = *brace_stack.last().expect("non-empty stack");
+    let before_unmatched = source[..unmatched_pos].trim_end();
+    let construct = identify_construct(before_unmatched);
+
+    let line_prefix = extract_line_prefix(&error.message);
+
+    let msg = match construct {
+        Some(name) => format!(
+            "{line_prefix}missing closing `}}` for {name}"
+        ),
+        None => format!(
+            "{line_prefix}missing closing `}}`"
+        ),
+    };
+
+    let label_text = match construct {
+        Some(name) => format!("this {name} is never closed"),
+        None => "this `{` is never closed".to_string(),
+    };
+
+    Some(SyntaxError {
+        offset: unmatched_pos,
+        length: 1,
+        message: msg,
+        label: Some(label_text),
+        help: Some("add a closing `}` before the next type declaration".to_string()),
     })
 }
 
@@ -3913,18 +4119,54 @@ fn parse_hex_float_mantissa_and_exponent(hex_body: &str, original: &str) -> Resu
 /// Parse an integer literal text into a u32 (for fixed size, decimal precision/scale).
 fn parse_integer_as_u32(text: &str) -> Result<u32> {
     let number = text.replace('_', "");
+
+    // Detect negative numbers early so we can produce a clear error instead
+    // of leaking Rust's `IntErrorKind::InvalidDigit` message ("invalid digit
+    // found in string"), which is confusing when the input is e.g. `-5`.
+    let stripped = number.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    if stripped.starts_with('-') {
+        return Err(miette::miette!(
+            "value must be a non-negative integer, got `{text}`"
+        ));
+    }
+
     let value: u32 = if number.starts_with("0x") || number.starts_with("0X") {
-        u32::from_str_radix(&number[2..], 16)
-            .map_err(|e| miette::miette!("invalid integer '{text}': {e}"))?
+        u32::from_str_radix(&number[2..], 16).map_err(|e| {
+            friendly_int_error(text, &e)
+        })?
     } else if number.starts_with('0') && number.len() > 1 {
-        u32::from_str_radix(&number, 8)
-            .map_err(|e| miette::miette!("invalid integer '{text}': {e}"))?
+        u32::from_str_radix(&number, 8).map_err(|e| {
+            friendly_int_error(text, &e)
+        })?
     } else {
-        number
-            .parse()
-            .map_err(|e| miette::miette!("invalid integer '{text}': {e}"))?
+        number.parse().map_err(|e| {
+            friendly_int_error(text, &e)
+        })?
     };
     Ok(value)
+}
+
+/// Convert a `ParseIntError` into a user-friendly miette error, mapping
+/// Rust's internal error kinds to messages that make sense in context.
+fn friendly_int_error(text: &str, e: &std::num::ParseIntError) -> miette::Report {
+    use std::num::IntErrorKind;
+    match e.kind() {
+        IntErrorKind::PosOverflow => {
+            miette::miette!("integer `{text}` is too large (maximum is {})", u32::MAX)
+        }
+        IntErrorKind::NegOverflow => {
+            miette::miette!("value must be a non-negative integer, got `{text}`")
+        }
+        IntErrorKind::InvalidDigit => {
+            miette::miette!("invalid integer `{text}`: contains non-digit characters")
+        }
+        IntErrorKind::Empty => {
+            miette::miette!("expected an integer, got an empty value")
+        }
+        _ => {
+            miette::miette!("invalid integer `{text}`: {e}")
+        }
+    }
 }
 
 /// Given an identifier (which may contain dots like `com.example.MyType`),
@@ -6646,6 +6888,88 @@ protocol Test {
     }
 
     // ------------------------------------------------------------------
+    // Issue 32f97df5: negative fixed size leaks Rust internals
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_fixed_negative_size() {
+        // `fixed Hash(-5)` should say the size must be non-negative, not
+        // leak Rust's `IntErrorKind::InvalidDigit` text.
+        let idl = "protocol Test {\n  fixed Hash(-5);\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    // ------------------------------------------------------------------
+    // Issue cbb63c6b: map<>/array<> without type parameter
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_map_empty_type_parameter() {
+        // `map<>` should produce one clear error, not cascading errors.
+        let idl = "protocol Test {\n  record Foo {\n    map<> data;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn parse_error_array_empty_type_parameter() {
+        // `array<>` should produce one clear error, not cascading errors.
+        let idl = "protocol Test {\n  record Foo {\n    array<> items;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn detect_empty_type_parameter_map() {
+        // Unit test for the empty type parameter detection (map).
+        let source = "protocol T {\n  record R {\n    map<> data;\n  }\n}";
+        let close_angle_pos = source.find("<>").expect("source has <>") + 1;
+        let error = SyntaxError {
+            offset: close_angle_pos,
+            length: 1,
+            message: "line 3:8 unexpected token `>`".to_string(),
+            label: Some("unexpected `>`".to_string()),
+            help: None,
+        };
+        let result = detect_empty_type_parameter(&error, source);
+        assert!(result.is_some(), "should detect empty type parameter for map");
+        let refined = result.expect("just checked");
+        assert!(
+            refined.message.contains("`map`"),
+            "message should mention map: {}",
+            refined.message,
+        );
+        assert!(
+            refined.message.contains("type parameter"),
+            "message should mention type parameter: {}",
+            refined.message,
+        );
+    }
+
+    #[test]
+    fn detect_empty_type_parameter_array() {
+        // Unit test for the empty type parameter detection (array).
+        let source = "protocol T {\n  record R {\n    array<> items;\n  }\n}";
+        let close_angle_pos = source.find("<>").expect("source has <>") + 1;
+        let error = SyntaxError {
+            offset: close_angle_pos,
+            length: 1,
+            message: "line 3:10 unexpected token `>`".to_string(),
+            label: Some("unexpected `>`".to_string()),
+            help: None,
+        };
+        let result = detect_empty_type_parameter(&error, source);
+        assert!(result.is_some(), "should detect empty type parameter for array");
+        let refined = result.expect("just checked");
+        assert!(
+            refined.message.contains("`array`"),
+            "message should mention array: {}",
+            refined.message,
+        );
+    }
+
+    // ------------------------------------------------------------------
     // Issue 9f8508fb: fixed with invalid size
     // ------------------------------------------------------------------
 
@@ -6767,6 +7091,55 @@ protocol Test {
         );
         assert!(
             refined.message.contains("protocol"),
+            "message should identify the construct: {}",
+            refined.message,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue e0e6791e: missing record brace before another record
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_missing_record_brace_before_record() {
+        // Missing `}` for `Foo` followed by `record Bar {` should point at
+        // the unclosed `Foo` record, not say "unexpected `{` expected `;`".
+        let idl = "protocol Test {\n  record Foo {\n    string name;\n    int age;\n\n  record Bar {\n    string value;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn parse_error_missing_record_brace_before_enum() {
+        // Missing `}` for a record followed by `enum Color {`.
+        let idl = "protocol Test {\n  record Foo {\n    string name;\n\n  enum Color {\n    RED, GREEN, BLUE\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn detect_missing_close_brace_before_declaration_pattern() {
+        // Unit test for the mid-file unclosed brace detection.
+        let source = "protocol Test {\n  record Foo {\n    string name;\n\n  record Bar {\n    string value;\n  }\n}";
+        // The error points at `{` in `record Bar {`.
+        let bar_brace_pos = source.find("Bar {").expect("has Bar {") + 4;
+        let error = SyntaxError {
+            offset: bar_brace_pos,
+            length: 1,
+            message: "line 5:13 unexpected '{' expected ';' or ','".to_string(),
+            label: Some("line 5:13 unexpected '{' expected ';' or ','".to_string()),
+            help: None,
+        };
+        let result = detect_missing_close_brace_before_declaration(&error, source);
+        assert!(result.is_some(), "should detect missing close brace before declaration");
+        let refined = result.expect("just checked");
+        assert!(
+            refined.message.contains("missing closing `}`"),
+            "message should mention missing closing brace: {}",
+            refined.message,
+        );
+        assert!(
+            refined.message.contains("record"),
             "message should identify the construct: {}",
             refined.message,
         );

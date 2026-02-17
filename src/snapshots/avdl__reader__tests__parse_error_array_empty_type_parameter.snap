@@ -1,0 +1,13 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 3:10 `array` type requires a type parameter
+   ,-[<input>:3:5]
+ 2 |   record Foo {
+ 3 |     array<> items;
+   :     ^^^|^^^
+   :        `-- missing type inside `<>`
+ 4 |   }
+   `----
+  help: specify the value type, e.g., `array<string>`

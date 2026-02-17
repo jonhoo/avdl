@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report "value must be a non-negative integer" for negative fixed
+  sizes like `fixed Hash(-5)` instead of leaking Rust's internal
+  `IntErrorKind::InvalidDigit` message
+- Collapse cascading errors for `map<>` and `array<>` (empty type
+  parameter) into a single message explaining that a type parameter
+  is required
+- Detect missing closing `}` when another `record`/`enum`/`error`/
+  `fixed` declaration follows, and point at the unclosed construct
+  instead of reporting a confusing "unexpected `{` expected `;`"
 - Reject record default values that omit required fields; previously
   the compiler silently produced invalid Avro JSON (aec527c)
 - Filter ANTLR-internal `'\u001A'` (SUB) and `DocComment` tokens from

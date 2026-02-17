@@ -1,0 +1,13 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 5:13 missing closing `}` for record
+   ,-[<input>:2:14]
+ 1 | protocol Test {
+ 2 |   record Foo {
+   :              |
+   :              `-- this record is never closed
+ 3 |     string name;
+   `----
+  help: add a closing `}` before the next type declaration
