@@ -332,3 +332,19 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   a coherent commit with no internal conflicts and was more efficient
   than 5 separate agents that would each need to understand the
   enrichment pipeline independently.
+- **Path-dependent snapshots need CWD normalization**: When a test uses
+  `convert_str()` (which resolves imports relative to CWD), and the
+  test is converted to an insta snapshot, the snapshot must normalize
+  the CWD to a placeholder like `<cwd>`. Worktree paths baked into
+  snapshots break when cherry-picked to main.
+- **Independent file sets enable zero-conflict parallel waves**: In
+  iteration 20, Waves 2 (reader.rs), 3a (compiler.rs), and 3b
+  (schema.rs) ran in parallel with zero cherry-pick conflicts because
+  they touched entirely disjoint file sets. CHANGELOG.md was the only
+  shared file and auto-merged cleanly.
+- **The codebase is approaching maturity**: After 138 edge case tests
+  across iterations 19-20 found zero functional discrepancies with
+  Java, and a full grammar/spec audit confirmed all 32 productions are
+  handled, future iterations should prioritize error UX, performance,
+  and documentation over correctness hunting. Broad discovery agents
+  are yielding diminishing returns compared to focused ones.

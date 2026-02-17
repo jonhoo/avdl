@@ -35,13 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Report "value must be a non-negative integer" for negative fixed
   sizes like `fixed Hash(-5)` instead of leaking Rust's internal
-  `IntErrorKind::InvalidDigit` message
+  `IntErrorKind::InvalidDigit` message (9af17af)
 - Collapse cascading errors for `map<>` and `array<>` (empty type
   parameter) into a single message explaining that a type parameter
-  is required
+  is required (9af17af)
 - Detect missing closing `}` when another `record`/`enum`/`error`/
   `fixed` declaration follows, and point at the unclosed construct
   instead of reporting a confusing "unexpected `{` expected `;`"
+  (9af17af)
+- Validate `@logicalType` annotations on `Fixed` schemas (e.g.,
+  `duration` requires `fixed(12)`, `decimal` precision must fit the
+  fixed byte size) (b687d72)
 - Reject record default values that omit required fields; previously
   the compiler silently produced invalid Avro JSON (aec527c)
 - Filter ANTLR-internal `'\u001A'` (SUB) and `DocComment` tokens from
@@ -57,9 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   becomes "unexpected input", and token set notation `{';', ','}`
   becomes natural language "expected ';' or ','" (3c7afeb)
 - Explain that `void` can only be used as a message return type instead
-  of reporting a misleading "Undefined name: void" error
+  of reporting a misleading "Undefined name: void" error (12cc7fd)
 - Explain that `decimal` requires `(precision, scale)` parameters
   instead of reporting a misleading "Undefined name: decimal" error
+  (12cc7fd)
 
 ### Security
 
