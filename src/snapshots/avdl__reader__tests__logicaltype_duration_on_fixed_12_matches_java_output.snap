@@ -1,0 +1,17 @@
+---
+source: src/reader.rs
+expression: "serde_json::to_string_pretty(&result.json).expect(\"JSON serialization should succeed\")"
+---
+{
+  "messages": {},
+  "namespace": "test",
+  "protocol": "P",
+  "types": [
+    {
+      "logicalType": "duration",
+      "name": "Duration",
+      "size": 12,
+      "type": "fixed"
+    }
+  ]
+}

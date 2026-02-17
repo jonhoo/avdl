@@ -42,7 +42,7 @@ use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{
     AvroSchema, Field, FieldOrder, LogicalType, PRIMITIVE_TYPE_NAMES, parse_logical_type,
-    split_full_name, validate_default,
+    split_full_name, validate_default, validate_logical_type_on_fixed,
 };
 use crate::resolve::is_valid_avro_name;
 use miette::{Context, Result};
@@ -3172,14 +3172,21 @@ fn walk_fixed<'input>(
         )
     })?;
 
-    Ok(AvroSchema::Fixed {
+    let schema = AvroSchema::Fixed {
         name: fixed_name,
         namespace: fixed_namespace,
         doc,
         size,
         aliases: props.aliases,
         properties: props.properties,
-    })
+    };
+
+    // Validate any `@logicalType` annotation on the fixed schema. This mirrors
+    // Java's `copyProperties` which calls `LogicalTypes.fromSchemaIgnoreInvalid`
+    // on every schema type, including Fixed. Named type declarations go through
+    // `walk_fixed` rather than `apply_properties_to_schema`, so we must call
+    // the validation here explicitly.
+    Ok(try_promote_logical_type(schema))
 }
 
 // ==========================================================================
@@ -4297,64 +4304,117 @@ fn apply_properties_to_schema(
     try_promote_logical_type(schema.with_merged_properties(properties))
 }
 
-/// If the schema is an `AnnotatedPrimitive` whose properties contain a
-/// `logicalType` key matching a recognized Avro logical type with a compatible
-/// base primitive, promote it to `AvroSchema::Logical`. This mirrors Java's
-/// `LogicalTypes.fromSchemaIgnoreInvalid()` call in `SchemaProperties.copyProperties()`.
+/// If the schema carries a `logicalType` property matching a recognized Avro
+/// logical type with a compatible base, promote or validate it. This mirrors
+/// Java's `LogicalTypes.fromSchemaIgnoreInvalid()` call in
+/// `SchemaProperties.copyProperties()`.
 ///
-/// Uses the shared `parse_logical_type` helper for name-to-variant mapping,
-/// then validates that the base primitive type is compatible (e.g., `date`
-/// requires `int`, `timestamp-millis` requires `long`).
+/// For `AnnotatedPrimitive` schemas: promotes to `AvroSchema::Logical` when the
+/// primitive base is compatible (e.g., `date` requires `int`).
+///
+/// For `Fixed` schemas: validates the logical type annotation against the fixed
+/// size (e.g., `duration` requires `fixed(12)`, `decimal` checks precision fits
+/// within the fixed size). Valid combinations are left as `Fixed` with the
+/// `logicalType` property intact, since the JSON output is already correct.
+/// Invalid combinations are also left as-is, matching Java's
+/// `fromSchemaIgnoreInvalid` behavior which silently ignores invalid logical
+/// types.
 fn try_promote_logical_type(schema: AvroSchema) -> AvroSchema {
-    let AvroSchema::AnnotatedPrimitive {
-        kind,
-        mut properties,
-    } = schema
-    else {
-        return schema;
-    };
+    match schema {
+        AvroSchema::AnnotatedPrimitive {
+            kind,
+            mut properties,
+        } => {
+            let Some(Value::String(logical_name)) = properties.get("logicalType").cloned() else {
+                return AvroSchema::AnnotatedPrimitive { kind, properties };
+            };
 
-    let Some(Value::String(logical_name)) = properties.get("logicalType").cloned() else {
-        return AvroSchema::AnnotatedPrimitive { kind, properties };
-    };
+            // For `decimal`, extract precision and scale from properties before
+            // calling the shared helper. Java uses signed 32-bit `int` for
+            // precision/scale, so values exceeding `i32::MAX` are treated as
+            // invalid even though they fit in `u32`. We filter accordingly.
+            let precision = properties
+                .get("precision")
+                .and_then(json_value_as_u32)
+                .filter(|&v| v <= i32::MAX as u32);
+            let scale = properties
+                .get("scale")
+                .and_then(json_value_as_u32)
+                .filter(|&v| v <= i32::MAX as u32);
 
-    // For `decimal`, extract precision and scale from properties before
-    // calling the shared helper. Java uses signed 32-bit `int` for
-    // precision/scale, so values exceeding `i32::MAX` are treated as
-    // invalid even though they fit in `u32`. We filter accordingly.
-    let precision = properties
-        .get("precision")
-        .and_then(json_value_as_u32)
-        .filter(|&v| v <= i32::MAX as u32);
-    let scale = properties
-        .get("scale")
-        .and_then(json_value_as_u32)
-        .filter(|&v| v <= i32::MAX as u32);
+            let Some(logical_type) = parse_logical_type(&logical_name, precision, scale) else {
+                // Unrecognized logical type name (or decimal missing precision):
+                // leave as AnnotatedPrimitive.
+                return AvroSchema::AnnotatedPrimitive { kind, properties };
+            };
 
-    let Some(logical_type) = parse_logical_type(&logical_name, precision, scale) else {
-        // Unrecognized logical type name (or decimal missing precision):
-        // leave as AnnotatedPrimitive.
-        return AvroSchema::AnnotatedPrimitive { kind, properties };
-    };
+            // Validate that the base primitive type is compatible with this
+            // logical type. For example, `date` requires `int`; applying it to
+            // `long` is invalid and should be left as-is.
+            if logical_type.expected_base_type() != kind {
+                return AvroSchema::AnnotatedPrimitive { kind, properties };
+            }
 
-    // Validate that the base primitive type is compatible with this logical
-    // type. For example, `date` requires `int`; applying it to `long` is
-    // invalid and should be left as-is.
-    if logical_type.expected_base_type() != kind {
-        return AvroSchema::AnnotatedPrimitive { kind, properties };
-    }
+            // Remove the consumed keys from properties so they are not
+            // duplicated in the serialized output.
+            properties.remove("logicalType");
+            if matches!(logical_type, LogicalType::Decimal { .. }) {
+                properties.remove("precision");
+                properties.remove("scale");
+            }
 
-    // Remove the consumed keys from properties so they are not duplicated
-    // in the serialized output.
-    properties.remove("logicalType");
-    if matches!(logical_type, LogicalType::Decimal { .. }) {
-        properties.remove("precision");
-        properties.remove("scale");
-    }
+            AvroSchema::Logical {
+                logical_type,
+                properties,
+            }
+        }
 
-    AvroSchema::Logical {
-        logical_type,
-        properties,
+        // =====================================================================
+        // Fixed schemas: validate logical type annotations against the fixed
+        // size. Java's `copyProperties` calls `fromSchemaIgnoreInvalid` on all
+        // schema types, including Fixed. Valid combinations (duration on
+        // fixed(12), decimal on fixed(N)) are recognized; invalid ones are
+        // silently ignored (the logicalType property stays but is not promoted).
+        //
+        // Unlike primitive-based logical types, Fixed schemas are not promoted
+        // to `AvroSchema::Logical` because the `Logical` variant is designed
+        // for primitive overlays. The `Fixed` representation with a
+        // `logicalType` property already produces correct JSON output.
+        // =====================================================================
+        AvroSchema::Fixed {
+            ref properties,
+            size,
+            ..
+        } => {
+            if let Some(Value::String(logical_name)) = properties.get("logicalType") {
+                let precision = properties
+                    .get("precision")
+                    .and_then(json_value_as_u32)
+                    .filter(|&v| v <= i32::MAX as u32);
+                let scale = properties
+                    .get("scale")
+                    .and_then(json_value_as_u32)
+                    .filter(|&v| v <= i32::MAX as u32);
+
+                // Validate the logical type against the fixed base. This call
+                // mirrors Java's validation: duration requires fixed(12),
+                // decimal checks precision fits, and anything else is silently
+                // ignored. The schema is returned unchanged either way -- the
+                // validation ensures we recognize the combination even though
+                // the representation stays as Fixed.
+                let _valid = validate_logical_type_on_fixed(
+                    logical_name,
+                    size,
+                    precision,
+                    scale,
+                );
+                // TODO: emit a warning diagnostic for invalid logical types on
+                // fixed schemas, matching Java's debug-level logging.
+            }
+            schema
+        }
+
+        other => other,
     }
 }
 
@@ -5542,6 +5602,169 @@ mod tests {
                 );
             }
             other => panic!("expected Logical(Date) with extra properties, got: {other:?}"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Logical type validation on Fixed schemas (issue #6ed53f7e)
+    // ------------------------------------------------------------------
+
+    /// Helper: parse an IDL protocol and return the first named type schema
+    /// (record, enum, or fixed).
+    fn parse_first_named_type(idl: &str) -> AvroSchema {
+        let (_idl_file, decl_items, _warnings) =
+            parse_idl_for_test(idl).expect("IDL should parse successfully");
+        for item in &decl_items {
+            if let DeclItem::Type(schema, _, _) = item {
+                return schema.clone();
+            }
+        }
+        panic!("no named type found in declaration items");
+    }
+
+    #[test]
+    fn logicaltype_duration_on_fixed_12_is_valid() {
+        // `@logicalType("duration") fixed Duration(12)` is the standard
+        // duration type. The schema stays as Fixed with the logicalType
+        // property, matching Java's output.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @logicalType("duration") fixed Duration(12);
+            }
+        "#;
+        let schema = parse_first_named_type(idl);
+        match &schema {
+            AvroSchema::Fixed {
+                name,
+                size,
+                properties,
+                ..
+            } => {
+                assert_eq!(name, "Duration");
+                assert_eq!(*size, 12);
+                assert_eq!(
+                    properties.get("logicalType"),
+                    Some(&Value::String("duration".to_string())),
+                    "logicalType property should be preserved on the Fixed schema"
+                );
+            }
+            other => panic!("expected Fixed, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn logicaltype_duration_on_fixed_12_matches_java_output() {
+        // Verify the full protocol JSON output matches Java's avro-tools.
+        // Java produces: {"type":"fixed","name":"Duration","namespace":"test",
+        //   "size":12,"logicalType":"duration"}
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @logicalType("duration") fixed Duration(12);
+            }
+        "#;
+        let result = crate::compiler::Idl::new()
+            .convert_str(idl)
+            .expect("compile should succeed");
+        insta::assert_snapshot!(serde_json::to_string_pretty(&result.json)
+            .expect("JSON serialization should succeed"));
+    }
+
+    #[test]
+    fn logicaltype_duration_on_wrong_size_fixed_silently_accepted() {
+        // `@logicalType("duration") fixed BadDuration(8)` is invalid (duration
+        // requires fixed(12)), but Java silently ignores this. The schema stays
+        // as Fixed with the logicalType property.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @logicalType("duration") fixed BadDuration(8);
+            }
+        "#;
+        let schema = parse_first_named_type(idl);
+        match &schema {
+            AvroSchema::Fixed {
+                name,
+                size,
+                properties,
+                ..
+            } => {
+                assert_eq!(name, "BadDuration");
+                assert_eq!(*size, 8);
+                assert_eq!(
+                    properties.get("logicalType"),
+                    Some(&Value::String("duration".to_string())),
+                    "invalid logicalType should still be preserved as a property"
+                );
+            }
+            other => panic!("expected Fixed (invalid duration), got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn logicaltype_decimal_on_fixed_is_valid() {
+        // `@logicalType("decimal") @precision(10) @scale(2) fixed DecimalFixed(8)`
+        // is valid because precision 10 fits within fixed(8).
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @logicalType("decimal") @precision(10) @scale(2) fixed DecimalFixed(8);
+            }
+        "#;
+        let schema = parse_first_named_type(idl);
+        match &schema {
+            AvroSchema::Fixed {
+                name,
+                size,
+                properties,
+                ..
+            } => {
+                assert_eq!(name, "DecimalFixed");
+                assert_eq!(*size, 8);
+                assert_eq!(
+                    properties.get("logicalType"),
+                    Some(&Value::String("decimal".to_string())),
+                );
+                assert_eq!(
+                    properties.get("precision"),
+                    Some(&Value::Number(serde_json::Number::from(10))),
+                );
+                assert_eq!(
+                    properties.get("scale"),
+                    Some(&Value::Number(serde_json::Number::from(2))),
+                );
+            }
+            other => panic!("expected Fixed with decimal properties, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn logicaltype_date_on_fixed_silently_accepted() {
+        // `@logicalType("date") fixed BadDate(4)` is invalid (date requires
+        // int, not fixed), but Java silently ignores this via
+        // `fromSchemaIgnoreInvalid`. The logicalType property stays.
+        let idl = r#"
+            @namespace("test")
+            protocol P {
+                @logicalType("date") fixed BadDate(4);
+            }
+        "#;
+        let schema = parse_first_named_type(idl);
+        match &schema {
+            AvroSchema::Fixed {
+                name,
+                properties,
+                ..
+            } => {
+                assert_eq!(name, "BadDate");
+                assert_eq!(
+                    properties.get("logicalType"),
+                    Some(&Value::String("date".to_string())),
+                    "invalid logicalType should still be preserved as a property"
+                );
+            }
+            other => panic!("expected Fixed (invalid date on fixed), got: {other:?}"),
         }
     }
 

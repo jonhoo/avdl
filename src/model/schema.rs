@@ -128,6 +128,12 @@ impl FromStr for PrimitiveType {
 }
 
 /// Avro logical types that overlay primitive types.
+///
+/// Note: some logical types like `duration` require a non-primitive base (e.g.,
+/// `fixed(12)`). These are not represented as `LogicalType` variants because
+/// they don't fit the primitive-overlay model. Instead, they are validated
+/// separately via `validate_logical_type_on_fixed` and kept as `Fixed` schemas
+/// with a `logicalType` property.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogicalType {
     /// `date` -> int
@@ -146,7 +152,11 @@ pub enum LogicalType {
     LocalTimestampMicros,
     /// `uuid` -> string
     Uuid,
-    /// `decimal` -> bytes, with precision and scale
+    /// `decimal` -> bytes, with precision and scale.
+    ///
+    /// Note: `decimal` can also use `fixed(N)` as its base (validated via
+    /// `validate_logical_type_on_fixed`), but when backed by `bytes` it is
+    /// represented as this variant in `AvroSchema::Logical`.
     Decimal { precision: u32, scale: u32 },
 }
 
@@ -224,6 +234,45 @@ pub(crate) fn parse_logical_type(
             })
         }
         _ => None,
+    }
+}
+
+/// Validate whether a `logicalType` annotation is compatible with a `fixed(size)`
+/// base schema. Returns `true` if the combination is valid.
+///
+/// This mirrors Java's `LogicalTypes.fromSchemaIgnoreInvalid()` validation for
+/// fixed-based logical types:
+///
+/// - `"duration"` requires exactly `fixed(12)`
+/// - `"decimal"` is valid on `fixed(N)` if the precision fits within `N` bytes
+///   (max precision = floor(log10(2^(8*N - 1))))
+///
+/// Returns `false` for logical type names that are unrecognized or require a
+/// primitive base (e.g., `"date"` on `fixed` is always invalid).
+pub(crate) fn validate_logical_type_on_fixed(
+    logical_name: &str,
+    size: u32,
+    precision: Option<u32>,
+    scale: Option<u32>,
+) -> bool {
+    match logical_name {
+        "duration" => size == 12,
+        "decimal" => {
+            let Some(precision) = precision else {
+                return false;
+            };
+            // Scale defaults to 0 when absent, matching Java.
+            let scale = scale.unwrap_or(0);
+            if precision < 1 || scale > precision {
+                return false;
+            }
+            // Maximum precision for a fixed(N) is floor(log10(2^(8*N-1))).
+            // This matches Java's Decimal.maxPrecision(Schema).
+            let max_precision =
+                ((8.0 * size as f64 - 1.0) * std::f64::consts::LOG10_2).floor() as u32;
+            precision <= max_precision
+        }
+        _ => false,
     }
 }
 
@@ -2283,5 +2332,84 @@ mod tests {
         let original = schema.clone();
         let result = schema.with_merged_properties(test_props("ignored", "value"));
         assert_eq!(result, original, "union should be returned unchanged");
+    }
+
+    // =========================================================================
+    // validate_logical_type_on_fixed
+    // =========================================================================
+
+    #[test]
+    fn validate_duration_on_fixed_12_is_valid() {
+        assert!(validate_logical_type_on_fixed("duration", 12, None, None));
+    }
+
+    #[test]
+    fn validate_duration_on_fixed_8_is_invalid() {
+        assert!(!validate_logical_type_on_fixed("duration", 8, None, None));
+    }
+
+    #[test]
+    fn validate_duration_on_fixed_16_is_invalid() {
+        assert!(!validate_logical_type_on_fixed("duration", 16, None, None));
+    }
+
+    #[test]
+    fn validate_decimal_on_fixed_8_with_valid_precision() {
+        // fixed(8) has max precision floor(log10(2^63)) = 18
+        assert!(validate_logical_type_on_fixed(
+            "decimal",
+            8,
+            Some(18),
+            Some(2)
+        ));
+    }
+
+    #[test]
+    fn validate_decimal_on_fixed_8_with_excess_precision() {
+        // precision 19 exceeds max for fixed(8) = 18
+        assert!(!validate_logical_type_on_fixed(
+            "decimal",
+            8,
+            Some(19),
+            Some(2)
+        ));
+    }
+
+    #[test]
+    fn validate_decimal_on_fixed_without_precision_is_invalid() {
+        assert!(!validate_logical_type_on_fixed("decimal", 8, None, None));
+    }
+
+    #[test]
+    fn validate_decimal_on_fixed_scale_exceeds_precision() {
+        assert!(!validate_logical_type_on_fixed(
+            "decimal",
+            8,
+            Some(5),
+            Some(6)
+        ));
+    }
+
+    #[test]
+    fn validate_date_on_fixed_is_invalid() {
+        // date requires int, not fixed
+        assert!(!validate_logical_type_on_fixed("date", 4, None, None));
+    }
+
+    #[test]
+    fn validate_uuid_on_fixed_is_invalid() {
+        // uuid requires string, not fixed (Java supports uuid on fixed(16)
+        // but that's a separate validation not covered by parse_logical_type)
+        assert!(!validate_logical_type_on_fixed("uuid", 16, None, None));
+    }
+
+    #[test]
+    fn validate_unknown_logical_type_on_fixed_is_invalid() {
+        assert!(!validate_logical_type_on_fixed(
+            "custom-type",
+            8,
+            None,
+            None
+        ));
     }
 }
