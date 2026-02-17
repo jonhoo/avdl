@@ -1938,7 +1938,7 @@ pub enum DeclItem {
     /// highlight the offending default value when validating Reference-typed
     /// fields in the compiler.
     Type(
-        AvroSchema,
+        Box<AvroSchema>,
         Option<miette::SourceSpan>,
         HashMap<String, miette::SourceSpan>,
     ),
@@ -2628,7 +2628,7 @@ fn walk_idl_file<'input>(
             let (schema, field_spans) =
                 walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
             local_schemas.push(schema.clone());
-            decl_items.push(DeclItem::Type(schema, span, field_spans));
+            decl_items.push(DeclItem::Type(Box::new(schema), span, field_spans));
         }
     }
 
@@ -2715,7 +2715,7 @@ fn walk_protocol<'input>(
             let span = span_from_context(&*ns_ctx);
             let (schema, field_spans) =
                 walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
-            decl_items.push(DeclItem::Type(schema, span, field_spans));
+            decl_items.push(DeclItem::Type(Box::new(schema), span, field_spans));
         } else if let Ok(msg_ctx) = child.downcast_rc::<MessageDeclarationContextAll<'input>>() {
             let (msg_name, message) = walk_message(&msg_ctx, token_stream, src, namespace)?;
             messages.insert(msg_name, message);
@@ -5356,7 +5356,9 @@ mod tests {
             parse_idl_for_test(idl).expect("IDL should parse successfully");
         // Find the record among declaration items.
         for item in &decl_items {
-            if let DeclItem::Type(AvroSchema::Record { fields, .. }, _, _) = item {
+            if let DeclItem::Type(schema, _, _) = item
+                && let AvroSchema::Record { fields, .. } = schema.as_ref()
+            {
                 return fields[0].schema.clone();
             }
         }
@@ -5612,7 +5614,7 @@ mod tests {
             parse_idl_for_test(idl).expect("IDL should parse successfully");
         for item in &decl_items {
             if let DeclItem::Type(schema, _, _) = item {
-                return schema.clone();
+                return schema.as_ref().clone();
             }
         }
         panic!("no named type found in declaration items");
@@ -5913,8 +5915,10 @@ mod tests {
         let record = decl_items
             .iter()
             .find_map(|item| {
-                if let DeclItem::Type(schema @ AvroSchema::Record { .. }, _, _) = item {
-                    Some(schema)
+                if let DeclItem::Type(schema, _, _) = item
+                    && matches!(schema.as_ref(), AvroSchema::Record { .. })
+                {
+                    Some(schema.as_ref())
                 } else {
                     None
                 }

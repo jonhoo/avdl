@@ -666,7 +666,7 @@ fn process_decl_items(
                 resolve_single_import(import, ctx, current_dir, source, source_name)?;
             }
             DeclItem::Type(schema, span, field_spans) => {
-                if let Err(msg) = ctx.registry.register(schema.clone()) {
+                if let Err(msg) = ctx.registry.register(schema.as_ref().clone()) {
                     if let Some(span) = span {
                         return Err(ParseDiagnostic {
                             src: miette::NamedSource::new(source_name, source.to_string()),
