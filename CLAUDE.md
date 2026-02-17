@@ -322,7 +322,7 @@ full control over JSON key ordering and formatting.
 In Avro protocol JSON, named types (record, enum, fixed) appear
 inline (full definition) on first occurrence, then as bare string
 names in subsequent references. The `schema_to_json` function tracks
-`known_names: &mut IndexSet<String>` to decide which form to use.
+`known_names: &mut HashSet<String>` to decide which form to use.
 `Reference` nodes are resolved against a `SchemaLookup` table to
 enable inlining at first use.
 
