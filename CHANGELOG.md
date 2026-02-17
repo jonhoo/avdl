@@ -12,10 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Suggest similar type names in "undefined name" errors using edit
   distance, including a note that Avro primitives are lowercase when
   the user writes e.g. `String` instead of `string` (3b31889)
+- Validate record, array, and map default values deeply: reject record
+  defaults that omit required fields and array/map defaults whose
+  elements have the wrong type (aec527c)
 - Detect missing import kind specifier (`import "file.avdl"`) and
   suggest `import idl`, `import protocol`, or `import schema` (450d85f)
-- Include the imported file path in undefined type errors originating
-  from `.avsc`/`.avpr` imports (2fc4544)
 - Suggest `protocol` when misspelled at the top level, matching the
   existing did-you-mean behavior inside protocol bodies (3c7afeb)
 - Detect `protocol`/`record`/`enum`/`fixed` followed by `{` and report
@@ -27,44 +28,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Display `identifier` instead of `IdentifierToken` in expected-token
+  lists, and similarly humanize `StringLiteral`, `IntegerLiteral`, and
+  `FloatingPointLiteral` to plain-language equivalents (continuing the
+  token list simplification from 0.1.4) (d6605a9)
+- Rewrite ANTLR jargon in error messages: "extraneous input" and
+  "mismatched input" become "unexpected", "no viable alternative"
+  becomes "unexpected input", and token set notation `{';', ','}`
+  becomes natural language "expected ';' or ','" (3c7afeb)
+
 ### Deprecated
 
 ### Removed
 
 ### Fixed
 
+- Validate `@logicalType` annotations on `Fixed` schemas (e.g.,
+  `duration` requires `fixed(12)`, `decimal` precision must fit the
+  fixed byte size) (b687d72)
+- Include the imported file path in undefined type errors originating
+  from `.avsc`/`.avpr` imports (2fc4544)
 - Report "value must be a non-negative integer" for negative fixed
   sizes like `fixed Hash(-5)` instead of leaking Rust's internal
   `IntErrorKind::InvalidDigit` message (9af17af)
-- Collapse cascading errors for `map<>` and `array<>` (empty type
-  parameter) into a single message explaining that a type parameter
-  is required (9af17af)
 - Detect missing closing `}` when another `record`/`enum`/`error`/
   `fixed` declaration follows, and point at the unclosed construct
   instead of reporting a confusing "unexpected `{` expected `;`"
   (9af17af)
-- Validate `@logicalType` annotations on `Fixed` schemas (e.g.,
-  `duration` requires `fixed(12)`, `decimal` precision must fit the
-  fixed byte size) (b687d72)
-- Reject record default values that omit required fields; previously
-  the compiler silently produced invalid Avro JSON (aec527c)
-- Filter ANTLR-internal `'\u001A'` (SUB) and `DocComment` tokens from
-  error messages, and display `<EOF>` as "end of file" (35cfa50)
-- Display `identifier` instead of `IdentifierToken` in expected-token
-  lists, and similarly humanize `StringLiteral`, `IntegerLiteral`, and
-  `FloatingPointLiteral` to plain-language equivalents (d6605a9)
+- Collapse cascading errors for `map<>` and `array<>` (empty type
+  parameter) into a single message explaining that a type parameter
+  is required (9af17af)
 - Collapse cascading ANTLR errors for empty unions, misspelled keywords,
   non-integer fixed sizes, and unclosed braces into single actionable
-  messages (704ff7d)
-- Rewrite ANTLR jargon in error messages: "extraneous input" and
-  "mismatched input" become "unexpected", "no viable alternative"
-  becomes "unexpected input", and token set notation `{';', ','}`
-  becomes natural language "expected ';' or ','" (3c7afeb)
-- Explain that `void` can only be used as a message return type instead
-  of reporting a misleading "Undefined name: void" error (12cc7fd)
-- Explain that `decimal` requires `(precision, scale)` parameters
-  instead of reporting a misleading "Undefined name: decimal" error
-  (12cc7fd)
+  messages (exposed by multi-error reporting in 0.1.5) (704ff7d)
+- Filter ANTLR-internal `'\u001A'` (SUB) and `DocComment` tokens from
+  error messages, and display `<EOF>` as "end of file" (35cfa50)
+- Explain that `void` can only be used as a message return type and
+  that `decimal` requires `(precision, scale)` parameters, instead of
+  reporting misleading "Undefined name" errors (12cc7fd)
 
 ### Security
 
