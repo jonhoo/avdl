@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "mismatched input" become "unexpected", "no viable alternative"
   becomes "unexpected input", and token set notation `{';', ','}`
   becomes natural language "expected ';' or ','" (3c7afeb)
+- Explain that `void` can only be used as a message return type instead
+  of reporting a misleading "Undefined name: void" error
+- Explain that `decimal` requires `(precision, scale)` parameters
+  instead of reporting a misleading "Undefined name: decimal" error
 
 ### Security
 

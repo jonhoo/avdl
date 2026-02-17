@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Undefined name: test.void
+   ,-[<input>:4:28]
+ 3 |             protocol P {
+ 4 |                 record R { void nothing; }
+   :                            ^^|^
+   :                              `-- Undefined name: test.void
+ 5 |             }
+   `----
+  help: `void` can only be used as a message return type, not as a field or schema type

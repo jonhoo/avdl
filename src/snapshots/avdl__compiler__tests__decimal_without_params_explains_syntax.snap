@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Undefined name: test.decimal
+   ,-[<input>:4:28]
+ 3 |             protocol P {
+ 4 |                 record R { decimal value; }
+   :                            ^^^|^^^
+   :                               `-- Undefined name: test.decimal
+ 5 |             }
+   `----
+  help: `decimal` requires precision and scale parameters: use `decimal(precision, scale)` syntax

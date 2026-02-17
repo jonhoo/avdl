@@ -900,6 +900,28 @@ fn wrap_import_error(
 use crate::model::schema::PRIMITIVE_TYPE_NAMES;
 use crate::suggest::{levenshtein, max_edit_distance};
 
+/// Check whether an unresolved simple name is actually a keyword that was used
+/// in the wrong context. Returns a targeted help message when it matches, or
+/// `None` for genuinely unknown names that should fall through to edit-distance
+/// suggestions.
+///
+/// This prevents misleading "Undefined name" errors for keywords like `void`
+/// (valid only as a message return type) and `decimal` (requires parenthesized
+/// precision and scale parameters).
+fn keyword_misuse_hint(simple: &str) -> Option<String> {
+    match simple {
+        "void" => Some(
+            "`void` can only be used as a message return type, not as a field or schema type"
+                .to_string(),
+        ),
+        "decimal" => Some(
+            "`decimal` requires precision and scale parameters: use `decimal(precision, scale)` syntax"
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
 /// Build a "did you mean?" help string for an unresolved type name.
 ///
 /// Checks the unresolved name against:
@@ -921,6 +943,13 @@ fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<S
         .rsplit('.')
         .next()
         .expect("rsplit always yields at least one element");
+
+    // Certain keywords are valid in specific contexts but produce misleading
+    // "Undefined name" errors when used elsewhere. Intercept them before the
+    // edit-distance logic to provide targeted guidance.
+    if let Some(hint) = keyword_misuse_hint(simple) {
+        return Some(hint);
+    }
 
     let mut best: Option<(String, usize, bool)> = None; // (suggestion, distance, is_primitive)
 
@@ -1879,6 +1908,38 @@ mod tests {
             has_suggestion == false,
             "error should NOT include 'did you mean' for unrelated name, got:\n{rendered}"
         );
+    }
+
+    // =========================================================================
+    // Keyword-in-wrong-context errors (issues be52575a, 9f950393)
+    // =========================================================================
+
+    #[test]
+    fn void_as_field_type_explains_usage() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record R { void nothing; }
+            }
+            "#,
+        );
+        let err = result.expect_err("void as field type should fail");
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
+    }
+
+    #[test]
+    fn decimal_without_params_explains_syntax() {
+        let result = Idl::new().convert_str(
+            r#"
+            @namespace("test")
+            protocol P {
+                record R { decimal value; }
+            }
+            "#,
+        );
+        let err = result.expect_err("decimal without params should fail");
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     // =========================================================================
