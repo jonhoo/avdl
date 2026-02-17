@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.1.6] - 2026-02-17
+
+### Added
+
 - Suggest similar type names in "undefined name" errors using edit
   distance, including a note that Avro primitives are lowercase when
   the user writes e.g. `String` instead of `string` (3b31889)
@@ -37,10 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   becomes "unexpected input", and token set notation `{';', ','}`
   becomes natural language "expected ';' or ','" (3c7afeb)
 
-### Deprecated
-
-### Removed
-
 ### Fixed
 
 - Validate `@logicalType` annotations on `Fixed` schemas (e.g.,
@@ -66,8 +76,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explain that `void` can only be used as a message return type and
   that `decimal` requires `(precision, scale)` parameters, instead of
   reporting misleading "Undefined name" errors (12cc7fd)
-
-### Security
 
 ## [0.1.5] - 2026-02-11
 
@@ -222,7 +230,8 @@ that created the initial crate. Rust port of Apache Avro's
   one-way message return types, fixed-size bounds, decimal
   precision/scale (3ffc409)
 
-[Unreleased]: https://github.com/jonhoo/avdl/compare/v0.1.5+1.12.1...HEAD
+[Unreleased]: https://github.com/jonhoo/avdl/compare/v0.1.6+1.12.1...HEAD
+[0.1.6]: https://github.com/jonhoo/avdl/compare/v0.1.5+1.12.1...v0.1.6+1.12.1
 [0.1.5]: https://github.com/jonhoo/avdl/compare/v0.1.4+1.12.1...v0.1.5+1.12.1
 [0.1.4]: https://github.com/jonhoo/avdl/compare/v0.1.3+1.12.1...v0.1.4+1.12.1
 [0.1.3]: https://github.com/jonhoo/avdl/compare/v0.1.2+1.12.1...v0.1.3+1.12.1

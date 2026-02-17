@@ -72,7 +72,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "avdl"
-version = "0.1.5+1.12.1"
+version = "0.1.6+1.12.1"
 dependencies = [
  "antlr4rust",
  "assert_cmd",
