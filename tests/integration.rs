@@ -1407,3 +1407,525 @@ fn test_schema_mode_custom_logical_type_annotation() {
     assert_eq!(json["type"], "int");
     assert_eq!(json["logicalType"], "date");
 }
+
+// ==============================================================================
+// IdlUtils Test Files (idl_utils_test_protocol.avdl, idl_utils_test_schema.avdl)
+// ==============================================================================
+//
+// These files live in the Java `resources/` directory (for classpath loading)
+// rather than in `test/idl/input/`, so they were not picked up by the golden-file
+// test sweep. They combine many features in a single file: `@version()` with
+// numeric values, `@aliases()` on records, `@generator()` annotations, hyphenated
+// annotation keys, `@order()`, cross-namespace references, `oneway`, `throws`,
+// annotations inside unions, `decimal()`, and custom logical types.
+
+const IDL_UTILS_DIR: &str =
+    "avro/lang/java/idl/src/test/resources/org/apache/avro/util";
+
+#[test]
+fn test_idl_utils_test_protocol() {
+    let avdl_path = PathBuf::from(IDL_UTILS_DIR).join("idl_utils_test_protocol.avdl");
+    let output = Idl::new()
+        .convert(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    let json = &output.json;
+
+    // Protocol-level metadata.
+    assert_eq!(json["protocol"], "HappyFlow");
+    assert_eq!(json["namespace"], "naming");
+    assert_eq!(json["version"], "1.0.5");
+
+    // Top-level types: NewMessage and Failure. Counter, Flag, and Nonce are
+    // inlined within NewMessage (first occurrence), so they do not appear as
+    // separate top-level entries.
+    let types = json["types"].as_array().expect("missing types array");
+    let type_names: Vec<&str> = types.iter().filter_map(|t| t["name"].as_str()).collect();
+    assert!(type_names.contains(&"NewMessage"), "should define NewMessage");
+    assert!(type_names.contains(&"Failure"), "should define Failure");
+    assert_eq!(types.len(), 2, "expected NewMessage and Failure as top-level types");
+
+    // NewMessage should have the `@aliases` annotation.
+    let new_message = types
+        .iter()
+        .find(|t| t["name"] == "NewMessage")
+        .expect("NewMessage not found");
+    assert_eq!(new_message["doc"], "A sample record type.");
+    assert_eq!(new_message["version"], 2);
+    let aliases = new_message["aliases"]
+        .as_array()
+        .expect("NewMessage should have aliases");
+    assert!(aliases.iter().any(|a| a == "OldMessage"));
+
+    // NewMessage fields should include the `@generator` annotation on `id`.
+    let fields = new_message["fields"]
+        .as_array()
+        .expect("NewMessage should have fields");
+    let id_field = fields.iter().find(|f| f["name"] == "id").expect("id field");
+    assert_eq!(id_field["generator"], "uuid-type1");
+
+    // The `flags` field should have `@order("DESCENDING")`.
+    let flags_field = fields
+        .iter()
+        .find(|f| f["name"] == "flags")
+        .expect("flags field");
+    assert_eq!(flags_field["order"], "descending");
+
+    // Nonce is inlined within NewMessage (first occurrence). Verify it
+    // appears as a fixed type with size 8 on the `nonce` field.
+    let nonce_field = fields
+        .iter()
+        .find(|f| f["name"] == "nonce")
+        .expect("nonce field");
+    assert_eq!(nonce_field["type"]["type"], "fixed");
+    assert_eq!(nonce_field["type"]["name"], "Nonce");
+    assert_eq!(nonce_field["type"]["size"], 8);
+
+    // Messages: `send` (oneway) and `echo` (throws Failure).
+    let messages = json["messages"]
+        .as_object()
+        .expect("should have messages");
+    assert_eq!(messages.len(), 2);
+
+    let send = messages.get("send").expect("send message");
+    assert_eq!(send["one-way"], true);
+
+    let echo = messages.get("echo").expect("echo message");
+    assert_eq!(echo["doc"], "Simple echoing service");
+    let errors = echo["errors"]
+        .as_array()
+        .expect("echo should have errors");
+    assert!(errors.iter().any(|e| e == "Failure"));
+}
+
+#[test]
+fn test_idl_utils_test_protocol_idl2schemata() {
+    let avdl_path = PathBuf::from(IDL_UTILS_DIR).join("idl_utils_test_protocol.avdl");
+    let schemata = parse_idl2schemata(&avdl_path, &[]);
+
+    let mut names: Vec<&String> = schemata.keys().collect();
+    names.sort();
+    assert_eq!(
+        names,
+        vec!["Counter", "Failure", "Flag", "NewMessage", "Nonce"],
+        "idl_utils_test_protocol should produce 5 named schemas"
+    );
+
+    // Verify the Counter record has the expected fields.
+    let counter = &schemata["Counter"];
+    assert_eq!(counter["type"], "record");
+    let counter_fields = counter["fields"]
+        .as_array()
+        .expect("Counter should have fields");
+    assert_eq!(counter_fields.len(), 3);
+}
+
+#[test]
+fn test_idl_utils_test_schema() {
+    let avdl_path = PathBuf::from(IDL_UTILS_DIR).join("idl_utils_test_schema.avdl");
+    let output = Idl::new()
+        .convert(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    let json = &output.json;
+
+    // Schema mode: the top-level output should be a record (NewMessage).
+    assert_eq!(json["type"], "record");
+    assert_eq!(json["name"], "NewMessage");
+    assert_eq!(json["namespace"], "naming");
+    assert_eq!(json["doc"], "A sample record type.");
+    assert_eq!(json["version"], 2);
+
+    let aliases = json["aliases"]
+        .as_array()
+        .expect("NewMessage should have aliases");
+    assert!(aliases.iter().any(|a| a == "OldMessage"));
+
+    let fields = json["fields"]
+        .as_array()
+        .expect("NewMessage should have fields");
+    // NewMessage has 11 fields: id, message, flags, mainCounter, otherCounters,
+    // nonce, my_date, my_time, my_timestamp, my_number, my_dummy.
+    assert_eq!(fields.len(), 11);
+
+    // Spot-check the decimal field.
+    let my_number = fields
+        .iter()
+        .find(|f| f["name"] == "my_number")
+        .expect("my_number field");
+    assert_eq!(my_number["type"]["logicalType"], "decimal");
+    assert_eq!(my_number["type"]["precision"], 12);
+    assert_eq!(my_number["type"]["scale"], 3);
+
+    // Spot-check the custom logical type field.
+    let my_dummy = fields
+        .iter()
+        .find(|f| f["name"] == "my_dummy")
+        .expect("my_dummy field");
+    assert_eq!(my_dummy["type"]["logicalType"], "time-micros");
+}
+
+#[test]
+fn test_idl_utils_test_schema_idl2schemata() {
+    let avdl_path = PathBuf::from(IDL_UTILS_DIR).join("idl_utils_test_schema.avdl");
+    let schemata = parse_idl2schemata(&avdl_path, &[]);
+
+    let mut names: Vec<&String> = schemata.keys().collect();
+    names.sort();
+    assert_eq!(
+        names,
+        vec!["Counter", "Flag", "NewMessage", "Nonce"],
+        "idl_utils_test_schema should produce 4 named schemas"
+    );
+}
+
+// ==============================================================================
+// Doc Comment Content Assertions
+// ==============================================================================
+//
+// These tests parse `comments.avdl` and assert specific doc comment string
+// values, replicating Java's `testDocCommentsAndWarnings` assertions. The
+// golden-file comparison test (`test_comments`) implicitly verifies the same
+// values, but these explicit assertions survive golden file regeneration that
+// might accidentally drop or corrupt a doc string.
+
+#[test]
+fn test_comments_doc_content() {
+    let json = parse_and_serialize(&input_path("comments.avdl"), &[]);
+    let types = json["types"].as_array().expect("missing types array");
+
+    // ---- Named type doc strings ----
+
+    // DocumentedEnum: doc == "Documented Enum"
+    let documented_enum = types
+        .iter()
+        .find(|t| t["name"] == "DocumentedEnum")
+        .expect("DocumentedEnum not found");
+    assert_eq!(
+        documented_enum["doc"], "Documented Enum",
+        "DocumentedEnum should have doc 'Documented Enum'"
+    );
+
+    // UndocumentedEnum: doc should be absent
+    let undocumented_enum = types
+        .iter()
+        .find(|t| t["name"] == "UndocumentedEnum")
+        .expect("UndocumentedEnum not found");
+    assert!(
+        undocumented_enum.get("doc").is_none()
+            || undocumented_enum["doc"].is_null(),
+        "UndocumentedEnum should not have a doc string"
+    );
+
+    // DocumentedFixed: doc == "Documented Fixed Type"
+    let documented_fixed = types
+        .iter()
+        .find(|t| t["name"] == "DocumentedFixed")
+        .expect("DocumentedFixed not found");
+    assert_eq!(
+        documented_fixed["doc"], "Documented Fixed Type",
+        "DocumentedFixed should have doc 'Documented Fixed Type'"
+    );
+
+    // UndocumentedFixed: doc should be absent
+    let undocumented_fixed = types
+        .iter()
+        .find(|t| t["name"] == "UndocumentedFixed")
+        .expect("UndocumentedFixed not found");
+    assert!(
+        undocumented_fixed.get("doc").is_none()
+            || undocumented_fixed["doc"].is_null(),
+        "UndocumentedFixed should not have a doc string"
+    );
+
+    // DocumentedError: doc == "Documented Error"
+    let documented_error = types
+        .iter()
+        .find(|t| t["name"] == "DocumentedError")
+        .expect("DocumentedError not found");
+    assert_eq!(
+        documented_error["doc"], "Documented Error",
+        "DocumentedError should have doc 'Documented Error'"
+    );
+
+    // DocumentedError field docs.
+    let error_fields = documented_error["fields"]
+        .as_array()
+        .expect("DocumentedError should have fields");
+
+    let reason_field = error_fields
+        .iter()
+        .find(|f| f["name"] == "reason")
+        .expect("reason field not found");
+    assert_eq!(
+        reason_field["doc"], "Documented Reason Field",
+        "reason field should have doc 'Documented Reason Field'"
+    );
+
+    let explanation_field = error_fields
+        .iter()
+        .find(|f| f["name"] == "explanation")
+        .expect("explanation field not found");
+    assert_eq!(
+        explanation_field["doc"], "Default Doc Explanation Field",
+        "explanation field should have doc 'Default Doc Explanation Field'"
+    );
+
+    // UndocumentedRecord: doc should be absent
+    let undocumented_record = types
+        .iter()
+        .find(|t| t["name"] == "UndocumentedRecord")
+        .expect("UndocumentedRecord not found");
+    assert!(
+        undocumented_record.get("doc").is_none()
+            || undocumented_record["doc"].is_null(),
+        "UndocumentedRecord should not have a doc string"
+    );
+
+    // ---- Message doc strings ----
+
+    let messages = json["messages"]
+        .as_object()
+        .expect("should have messages");
+
+    // documentedMethod: doc == "Documented Method"
+    let documented_method = messages
+        .get("documentedMethod")
+        .expect("documentedMethod not found");
+    assert_eq!(
+        documented_method["doc"], "Documented Method",
+        "documentedMethod should have doc 'Documented Method'"
+    );
+
+    // documentedMethod parameter docs.
+    let params = documented_method["request"]
+        .as_array()
+        .expect("documentedMethod should have request params");
+
+    let message_param = params
+        .iter()
+        .find(|p| p["name"] == "message")
+        .expect("message param not found");
+    assert_eq!(
+        message_param["doc"], "Documented Parameter",
+        "message param should have doc 'Documented Parameter'"
+    );
+
+    let def_msg_param = params
+        .iter()
+        .find(|p| p["name"] == "defMsg")
+        .expect("defMsg param not found");
+    assert_eq!(
+        def_msg_param["doc"], "Default Documented Parameter",
+        "defMsg param should have doc 'Default Documented Parameter'"
+    );
+
+    // undocumentedMethod: doc should be absent
+    let undocumented_method = messages
+        .get("undocumentedMethod")
+        .expect("undocumentedMethod not found");
+    assert!(
+        undocumented_method.get("doc").is_none()
+            || undocumented_method["doc"].is_null(),
+        "undocumentedMethod should not have a doc string"
+    );
+}
+
+// ==============================================================================
+// gRPC, Maven, and Integration-Test Subproject Tests
+// ==============================================================================
+//
+// These `.avdl` files live in Java subprojects outside the main `idl/` and
+// `tools/` test directories. Having them in `cargo test` guards against
+// regressions in feature combinations that are otherwise only exercised by
+// `compare-adhoc.sh`.
+
+#[test]
+fn test_grpc_test_service() {
+    let avdl_path =
+        PathBuf::from("avro/lang/java/grpc/src/test/avro/TestService.avdl");
+    let output = Idl::new()
+        .convert(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    let json = &output.json;
+
+    assert_eq!(json["protocol"], "TestService");
+    assert_eq!(json["namespace"], "org.apache.avro.grpc.test");
+    assert_eq!(json["doc"], "An example protocol in Avro IDL");
+
+    // Named types: Kind (enum), MD5 (fixed, size 4), TestRecord, TestError.
+    let types = json["types"].as_array().expect("missing types");
+    let type_names: Vec<&str> = types.iter().filter_map(|t| t["name"].as_str()).collect();
+    assert!(type_names.contains(&"Kind"));
+    assert!(type_names.contains(&"MD5"));
+    assert!(type_names.contains(&"TestRecord"));
+    assert!(type_names.contains(&"TestError"));
+
+    // MD5 fixed with size 4 (not the usual 16).
+    let md5 = types.iter().find(|t| t["name"] == "MD5").expect("MD5");
+    assert_eq!(md5["type"], "fixed");
+    assert_eq!(md5["size"], 4);
+
+    // Messages: echo, add (3 args), error (throws TestError), ping (oneway),
+    // concatenate (union return).
+    let messages = json["messages"]
+        .as_object()
+        .expect("should have messages");
+    assert_eq!(messages.len(), 5);
+
+    // `add` has 3 int arguments.
+    let add = messages.get("add").expect("add message");
+    let add_params = add["request"]
+        .as_array()
+        .expect("add should have request params");
+    assert_eq!(add_params.len(), 3);
+
+    // `ping` is oneway.
+    let ping = messages.get("ping").expect("ping message");
+    assert_eq!(ping["one-way"], true);
+
+    // `error` throws TestError.
+    let error_msg = messages.get("error").expect("error message");
+    let errors = error_msg["errors"]
+        .as_array()
+        .expect("error message should have errors");
+    assert!(errors.iter().any(|e| e == "TestError"));
+
+    // `concatenate` returns union {null, string}.
+    let concatenate = messages.get("concatenate").expect("concatenate message");
+    let response = concatenate["response"]
+        .as_array()
+        .expect("concatenate response should be a union array");
+    assert_eq!(response.len(), 2);
+    assert_eq!(response[0], "null");
+    assert_eq!(response[1], "string");
+}
+
+#[test]
+fn test_maven_user() {
+    let avdl_path =
+        PathBuf::from("avro/lang/java/maven-plugin/src/test/avro/User.avdl");
+    let output = Idl::new()
+        .convert(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    let json = &output.json;
+
+    assert_eq!(json["protocol"], "IdlTest");
+    assert_eq!(json["namespace"], "test");
+
+    let types = json["types"].as_array().expect("missing types");
+    let type_names: Vec<&str> = types.iter().filter_map(|t| t["name"].as_str()).collect();
+    assert!(type_names.contains(&"IdlPrivacy"));
+    assert!(type_names.contains(&"IdlUser"));
+
+    // IdlPrivacy is an enum with mixed-case symbols.
+    let privacy = types
+        .iter()
+        .find(|t| t["name"] == "IdlPrivacy")
+        .expect("IdlPrivacy");
+    assert_eq!(privacy["type"], "enum");
+    let symbols = privacy["symbols"]
+        .as_array()
+        .expect("IdlPrivacy should have symbols");
+    assert_eq!(symbols, &[serde_json::json!("Public"), serde_json::json!("Private")]);
+
+    // IdlUser has a `timestamp_ms` logical type field.
+    let user = types
+        .iter()
+        .find(|t| t["name"] == "IdlUser")
+        .expect("IdlUser");
+    let fields = user["fields"]
+        .as_array()
+        .expect("IdlUser should have fields");
+
+    let modified_on = fields
+        .iter()
+        .find(|f| f["name"] == "modifiedOn")
+        .expect("modifiedOn field");
+    assert_eq!(modified_on["type"]["logicalType"], "timestamp-millis");
+
+    // `privacy` field is a nullable union with IdlPrivacy.
+    let privacy_field = fields
+        .iter()
+        .find(|f| f["name"] == "privacy")
+        .expect("privacy field");
+    let privacy_type = privacy_field["type"]
+        .as_array()
+        .expect("privacy field type should be a union");
+    assert_eq!(privacy_type[0], "null");
+}
+
+#[test]
+fn test_custom_conversion_idl() {
+    let avdl_path = PathBuf::from(
+        "avro/lang/java/integration-test/codegen-test/src/test/resources/avro/custom_conversion_idl.avdl",
+    );
+    let output = Idl::new()
+        .convert(&avdl_path)
+        .unwrap_or_else(|e| panic!("failed to parse {}: {e}", avdl_path.display()));
+
+    let json = &output.json;
+
+    assert_eq!(json["protocol"], "LogicalTypesWithCustomConversionIdlProtocol");
+    assert_eq!(json["namespace"], "org.apache.avro.codegentest.testdata");
+
+    let types = json["types"].as_array().expect("missing types");
+    assert_eq!(types.len(), 1);
+
+    let record = &types[0];
+    assert_eq!(record["name"], "LogicalTypesWithCustomConversionIdl");
+    assert_eq!(
+        record["doc"],
+        "Test unions with logical types in generated Java classes"
+    );
+
+    let fields = record["fields"]
+        .as_array()
+        .expect("record should have fields");
+    assert_eq!(fields.len(), 4);
+
+    // `nullableCustomField`: union { null, decimal(9,2) } with default null.
+    let nullable_custom = fields
+        .iter()
+        .find(|f| f["name"] == "nullableCustomField")
+        .expect("nullableCustomField");
+    let nc_type = nullable_custom["type"]
+        .as_array()
+        .expect("nullableCustomField should be a union");
+    assert_eq!(nc_type[0], "null");
+    assert_eq!(nc_type[1]["logicalType"], "decimal");
+    assert_eq!(nc_type[1]["precision"], 9);
+    assert_eq!(nc_type[1]["scale"], 2);
+
+    // `nonNullCustomField`: decimal(9,2) directly.
+    let non_null_custom = fields
+        .iter()
+        .find(|f| f["name"] == "nonNullCustomField")
+        .expect("nonNullCustomField");
+    assert_eq!(non_null_custom["type"]["logicalType"], "decimal");
+    assert_eq!(non_null_custom["type"]["precision"], 9);
+
+    // `nullableFixedSizeString`: union with @logicalType and @minLength/@maxLength.
+    let nullable_fss = fields
+        .iter()
+        .find(|f| f["name"] == "nullableFixedSizeString")
+        .expect("nullableFixedSizeString");
+    let nfss_type = nullable_fss["type"]
+        .as_array()
+        .expect("nullableFixedSizeString should be a union");
+    assert_eq!(nfss_type[0], "null");
+    assert_eq!(nfss_type[1]["logicalType"], "fixed-size-string");
+    assert_eq!(nfss_type[1]["minLength"], 1);
+    assert_eq!(nfss_type[1]["maxLength"], 50);
+
+    // `nonNullFixedSizeString`: direct @logicalType bytes field.
+    let non_null_fss = fields
+        .iter()
+        .find(|f| f["name"] == "nonNullFixedSizeString")
+        .expect("nonNullFixedSizeString");
+    assert_eq!(non_null_fss["type"]["logicalType"], "fixed-size-string");
+    assert_eq!(non_null_fss["type"]["minLength"], 1);
+    assert_eq!(non_null_fss["type"]["maxLength"], 50);
+}

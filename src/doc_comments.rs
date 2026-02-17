@@ -395,4 +395,44 @@ mod tests {
         let input = "* First\n\t * Second\n \t* Third";
         assert_eq!(strip_indents(input), "First\nSecond\nThird");
     }
+
+    // =========================================================================
+    // Java `DocCommentHelperTest` parity tests
+    // =========================================================================
+    //
+    // These two tests use the exact input/output strings from Java's
+    // `DocCommentHelperTest.stripIndentsFromDocCommentWithStars` and
+    // `stripIndentsFromDocCommentWithoutStars`, ensuring byte-for-byte
+    // parity with the Java reference implementation.
+
+    #[test]
+    fn test_strip_indents_java_parity_with_stars() {
+        // Java: `stripIndentsFromDocCommentWithStars`
+        //
+        // Key behaviors exercised:
+        // - `\t * * Third Line` keeps the second `*` (only the leading star
+        //   prefix is stripped).
+        // - `\t  *` (star-only line) becomes an empty line.
+        assert_eq!(
+            strip_indents(
+                "* First line\n\t  * Second Line\n\t * * Third Line\n\t  *\n\t  * Fifth Line"
+            ),
+            "First line\nSecond Line\n* Third Line\n\nFifth Line"
+        );
+    }
+
+    #[test]
+    fn test_strip_indents_java_parity_without_stars() {
+        // Java: `stripIndentsFromDocCommentWithoutStars`
+        //
+        // Key behavior: non-star-prefixed mode strips the common tab indent
+        // (`\t`) from all subsequent lines, preserving any additional internal
+        // whitespace beyond that common prefix.
+        assert_eq!(
+            strip_indents(
+                "First line\n\t Second Line\n\t  * Third Line\n\t  \n\t  Fifth Line"
+            ),
+            "First line\nSecond Line\n * Third Line\n \n Fifth Line"
+        );
+    }
 }
