@@ -4919,33 +4919,33 @@ mod tests {
 
     #[test]
     fn float_decimal_no_suffix() {
-        let val = parse_float_text("3.14").expect("plain decimal");
-        assert!((val - 3.14).abs() < f64::EPSILON);
+        let val = parse_float_text("3.25").expect("plain decimal");
+        assert!((val - 3.25).abs() < f64::EPSILON);
     }
 
     #[test]
     fn float_suffix_f_lowercase() {
         // Java-style `f` suffix is stripped before parsing.
-        let val = parse_float_text("3.14f").expect("f suffix");
-        assert!((val - 3.14).abs() < f64::EPSILON);
+        let val = parse_float_text("3.25f").expect("f suffix");
+        assert!((val - 3.25).abs() < f64::EPSILON);
     }
 
     #[test]
     fn float_suffix_f_uppercase() {
-        let val = parse_float_text("3.14F").expect("F suffix");
-        assert!((val - 3.14).abs() < f64::EPSILON);
+        let val = parse_float_text("3.25F").expect("F suffix");
+        assert!((val - 3.25).abs() < f64::EPSILON);
     }
 
     #[test]
     fn float_suffix_d_lowercase() {
-        let val = parse_float_text("3.14d").expect("d suffix");
-        assert!((val - 3.14).abs() < f64::EPSILON);
+        let val = parse_float_text("3.25d").expect("d suffix");
+        assert!((val - 3.25).abs() < f64::EPSILON);
     }
 
     #[test]
     fn float_suffix_d_uppercase() {
-        let val = parse_float_text("3.14D").expect("D suffix");
-        assert!((val - 3.14).abs() < f64::EPSILON);
+        let val = parse_float_text("3.25D").expect("D suffix");
+        assert!((val - 3.25).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -6046,7 +6046,7 @@ mod tests {
 
     #[test]
     fn default_int_float_is_rejected() {
-        let idl = r#"protocol P { record R { int count = 3.14; } }"#;
+        let idl = r#"protocol P { record R { int count = 3.25; } }"#;
         let result = parse_idl_for_test(idl);
         assert!(result.is_err(), "int with float default should be rejected");
     }
@@ -6154,7 +6154,7 @@ mod tests {
 
     #[test]
     fn default_double_valid() {
-        let idl = r#"protocol P { record R { double value = 3.14; } }"#;
+        let idl = r#"protocol P { record R { double value = 3.25; } }"#;
         assert!(
             parse_idl_for_test(idl).is_ok(),
             "double with float default should be accepted"

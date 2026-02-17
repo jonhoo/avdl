@@ -1207,7 +1207,7 @@ mod tests {
 
     #[test]
     fn float_accepts_number() {
-        assert!(is_valid_default(&json!(3.14), &AvroSchema::Float));
+        assert!(is_valid_default(&json!(3.25), &AvroSchema::Float));
     }
 
     #[test]
@@ -1217,7 +1217,7 @@ mod tests {
 
     #[test]
     fn double_accepts_number() {
-        assert!(is_valid_default(&json!(2.718), &AvroSchema::Double));
+        assert!(is_valid_default(&json!(2.75), &AvroSchema::Double));
     }
 
     #[test]
@@ -1276,7 +1276,7 @@ mod tests {
 
     #[test]
     fn int_rejects_float() {
-        assert!(!is_valid_default(&json!(3.14), &AvroSchema::Int));
+        assert!(!is_valid_default(&json!(3.25), &AvroSchema::Int));
     }
 
     #[test]
@@ -1304,7 +1304,7 @@ mod tests {
 
     #[test]
     fn long_rejects_float() {
-        assert!(!is_valid_default(&json!(3.14), &AvroSchema::Long));
+        assert!(!is_valid_default(&json!(3.25), &AvroSchema::Long));
     }
 
     #[test]
@@ -1330,7 +1330,7 @@ mod tests {
 
     #[test]
     fn float_rejects_regular_string() {
-        assert!(!is_valid_default(&json!("3.14"), &AvroSchema::Float));
+        assert!(!is_valid_default(&json!("3.25"), &AvroSchema::Float));
     }
 
     // =========================================================================
