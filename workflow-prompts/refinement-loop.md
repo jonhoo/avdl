@@ -45,9 +45,12 @@ Each agent should pursue its own line of investigation autonomously. If it finds
   reproduction, suggested fix
 - Avoid modifying `src/` to prevent agents stepping on each others'
   toes — prefer filing issues and using `tmp/` + `examples/`
-- Do not update `SESSION.md`, that will be done by the orchestrating
-  agent. Instead, anything an agent _would_ have put in `SESSION.md`
-  should be reported to the orchestrating agent.
+- **Do not write to `SESSION.md`** — the orchestrating agent handles
+  SESSION.md. Instead, include any SESSION.md-worthy observations in
+  the agent's final return message to the orchestrating agent.
+  Discovery agents have consistently ignored this rule; the
+  orchestrating agent prompt for discovery agents must explicitly
+  say "report observations back, do NOT write to SESSION.md".
 - **Check existing issues before filing** — read the contents of each
   file in `issues/` to avoid filing duplicates. Also check SESSION.md
   for previously investigated items.
@@ -131,6 +134,9 @@ in CLAUDE.md.
       - Stages changes with `git add <specific-files>` (the `git rm`
         above already stages the deletion)
       - Commits using the `commit-writer` skill
+      - Runs `cargo check` to verify zero warnings before committing.
+        Past iterations introduced unused variable warnings that the
+        parent had to fix as drive-by commits.
       - If modifying library code (e.g., `reader.rs`), use
         `touch src/reader.rs` before `cargo test` if test results
         seem stale — build caches sometimes miss recompilation.
@@ -311,3 +317,18 @@ See the "Non-goal: byte-identical output" section in CLAUDE.md.
   documentation, and inconsistencies between comments and actual code.
   These are low-cost to fix and prevent confusion during future
   development.
+- **Triage non-goal issues before resolution**: In iteration 19, the
+  float serialization format difference was correctly identified as a
+  non-goal during triage (values are numerically identical, per
+  CLAUDE.md's "Non-goal: byte-identical output"). Close such issues
+  during Phase 2 analysis rather than spending agent time on them.
+- **Ensure `issues/` directory exists before launching discovery**:
+  If the previous iteration resolved all issues, the directory may
+  be deleted. Run `mkdir -p issues/` before launching discovery
+  agents to prevent file-creation errors.
+- **Batch all same-file error message fixes into a single agent**:
+  In iteration 19, 5 error message issues all touching `reader.rs`
+  error enrichment code were batch-fixed by one agent. This produced
+  a coherent commit with no internal conflicts and was more efficient
+  than 5 separate agents that would each need to understand the
+  enrichment pipeline independently.
