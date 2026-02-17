@@ -682,23 +682,10 @@ mod tests {
             namespace: Some("com.example".to_string()),
             doc: Some("A person record.".to_string()),
             fields: vec![
+                Field::simple("name", AvroSchema::String),
                 Field {
-                    name: "name".to_string(),
-                    schema: AvroSchema::String,
-                    doc: None,
-                    default: None,
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                },
-                Field {
-                    name: "age".to_string(),
-                    schema: AvroSchema::Int,
-                    doc: None,
                     default: Some(json!(0)),
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
+                    ..Field::simple("age", AvroSchema::Int)
                 },
             ],
             is_error: false,
@@ -728,15 +715,7 @@ mod tests {
             name: "TestError".to_string(),
             namespace: None,
             doc: None,
-            fields: vec![Field {
-                name: "message".to_string(),
-                schema: AvroSchema::String,
-                doc: None,
-                default: None,
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
+            fields: vec![Field::simple("message", AvroSchema::String)],
             is_error: true,
             aliases: vec![],
             properties: HashMap::new(),
@@ -771,15 +750,7 @@ mod tests {
     fn record_omits_namespace_when_same_as_enclosing() {
         // When the record's namespace matches the enclosing protocol namespace,
         // the "namespace" key should be omitted from the JSON output.
-        let schema = AvroSchema::Record {
-            name: "Rec".to_string(),
-            namespace: Some("org.example".to_string()),
-            doc: None,
-            fields: vec![],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_record("Rec", Some("org.example"), vec![]);
 
         let result = schema_to_json(
             &schema,
@@ -792,15 +763,7 @@ mod tests {
 
     #[test]
     fn record_includes_namespace_when_different_from_enclosing() {
-        let schema = AvroSchema::Record {
-            name: "Rec".to_string(),
-            namespace: Some("org.other".to_string()),
-            doc: None,
-            fields: vec![],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_record("Rec", Some("org.other"), vec![]);
 
         let result = schema_to_json(
             &schema,
@@ -843,15 +806,8 @@ mod tests {
 
     #[test]
     fn enum_omits_default_when_absent() {
-        let schema = AvroSchema::Enum {
-            name: "Kind".to_string(),
-            namespace: None,
-            doc: None,
-            symbols: vec!["FOO".to_string(), "BAR".to_string()],
-            default: None,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema =
+            AvroSchema::simple_enum("Kind", None, vec!["FOO".to_string(), "BAR".to_string()]);
 
         let result = serialize_schema(&schema);
         assert!(result.get("default").is_none());
@@ -1069,23 +1025,11 @@ mod tests {
     fn reference_inlines_full_definition_on_first_use() {
         // Build a lookup with a record definition. A Reference pointing to it
         // should inline the full record JSON on first encounter.
-        let record = AvroSchema::Record {
-            name: "Ping".to_string(),
-            namespace: Some("org.example".to_string()),
-            doc: None,
-            fields: vec![Field {
-                name: "ts".to_string(),
-                schema: AvroSchema::Long,
-                doc: None,
-                default: None,
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let record = AvroSchema::simple_record(
+            "Ping",
+            Some("org.example"),
+            vec![Field::simple("ts", AvroSchema::Long)],
+        );
 
         let mut lookup = HashMap::new();
         lookup.insert("org.example.Ping".to_string(), record);
@@ -1111,15 +1055,7 @@ mod tests {
 
     #[test]
     fn reference_emits_bare_name_on_subsequent_use() {
-        let record = AvroSchema::Record {
-            name: "Ping".to_string(),
-            namespace: Some("org.example".to_string()),
-            doc: None,
-            fields: vec![],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let record = AvroSchema::simple_record("Ping", Some("org.example"), vec![]);
 
         let mut lookup = HashMap::new();
         lookup.insert("org.example.Ping".to_string(), record);
@@ -1141,15 +1077,7 @@ mod tests {
 
     #[test]
     fn reference_uses_short_name_when_namespace_matches_enclosing() {
-        let record = AvroSchema::Record {
-            name: "Ping".to_string(),
-            namespace: Some("org.example".to_string()),
-            doc: None,
-            fields: vec![],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let record = AvroSchema::simple_record("Ping", Some("org.example"), vec![]);
 
         let mut lookup = HashMap::new();
         lookup.insert("org.example.Ping".to_string(), record);
@@ -1451,23 +1379,11 @@ mod tests {
     fn reference_uses_full_name_for_schema_type_collision() {
         // A type named `record` in namespace `test.kw`. On second occurrence
         // within the same namespace, it should still use the full name.
-        let record = AvroSchema::Record {
-            name: "record".to_string(),
-            namespace: Some("test.kw".to_string()),
-            doc: None,
-            fields: vec![Field {
-                name: "x".to_string(),
-                schema: AvroSchema::String,
-                doc: None,
-                default: None,
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let record = AvroSchema::simple_record(
+            "record",
+            Some("test.kw"),
+            vec![Field::simple("x", AvroSchema::String)],
+        );
 
         let mut lookup = HashMap::new();
         lookup.insert("test.kw.record".to_string(), record.clone());
@@ -1495,13 +1411,10 @@ mod tests {
     #[test]
     fn field_with_doc_default_and_order() {
         let field = Field {
-            name: "kind".to_string(),
-            schema: AvroSchema::String,
             doc: Some("The kind.".to_string()),
             default: Some(json!("FOO")),
             order: Some(FieldOrder::Descending),
-            aliases: vec![],
-            properties: HashMap::new(),
+            ..Field::simple("kind", AvroSchema::String)
         };
 
         let result = field_to_json(&field, &mut HashSet::new(), None, &HashMap::new());
@@ -1515,13 +1428,8 @@ mod tests {
     #[test]
     fn field_ascending_order_is_omitted() {
         let field = Field {
-            name: "x".to_string(),
-            schema: AvroSchema::Int,
-            doc: None,
-            default: None,
             order: Some(FieldOrder::Ascending),
-            aliases: vec![],
-            properties: HashMap::new(),
+            ..Field::simple("x", AvroSchema::Int)
         };
 
         let result = field_to_json(&field, &mut HashSet::new(), None, &HashMap::new());
@@ -1532,13 +1440,8 @@ mod tests {
     #[test]
     fn field_with_ignore_order() {
         let field = Field {
-            name: "x".to_string(),
-            schema: AvroSchema::Int,
-            doc: None,
-            default: None,
             order: Some(FieldOrder::Ignore),
-            aliases: vec![],
-            properties: HashMap::new(),
+            ..Field::simple("x", AvroSchema::Int)
         };
 
         let result = field_to_json(&field, &mut HashSet::new(), None, &HashMap::new());
@@ -1576,23 +1479,14 @@ mod tests {
             namespace: Some("org.example".to_string()),
             doc: None,
             properties: HashMap::new(),
-            types: vec![AvroSchema::Record {
-                name: "Ping".to_string(),
-                namespace: Some("org.example".to_string()),
-                doc: None,
-                fields: vec![Field {
-                    name: "ts".to_string(),
-                    schema: AvroSchema::Long,
-                    doc: None,
+            types: vec![AvroSchema::simple_record(
+                "Ping",
+                Some("org.example"),
+                vec![Field {
                     default: Some(json!(-1)),
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
+                    ..Field::simple("ts", AvroSchema::Long)
                 }],
-                is_error: false,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
+            )],
             messages: HashMap::new(),
         };
 
@@ -1663,15 +1557,7 @@ mod tests {
                     Message {
                         doc: Some("Say hello.".to_string()),
                         properties: HashMap::new(),
-                        request: vec![Field {
-                            name: "greeting".to_string(),
-                            schema: AvroSchema::String,
-                            doc: None,
-                            default: None,
-                            order: None,
-                            aliases: vec![],
-                            properties: HashMap::new(),
-                        }],
+                        request: vec![Field::simple("greeting", AvroSchema::String)],
                         response: AvroSchema::String,
                         errors: None,
                         one_way: false,
@@ -1716,33 +1602,17 @@ mod tests {
     fn build_lookup_collects_nested_types() {
         // A record containing a field with an enum type. Both the record and
         // the enum should appear in the lookup.
-        let status_enum = AvroSchema::Enum {
-            name: "Status".to_string(),
-            namespace: Some("org.example".to_string()),
-            doc: None,
-            symbols: vec!["A".to_string(), "B".to_string()],
-            default: None,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let status_enum = AvroSchema::simple_enum(
+            "Status",
+            Some("org.example"),
+            vec!["A".to_string(), "B".to_string()],
+        );
 
-        let record = AvroSchema::Record {
-            name: "Rec".to_string(),
-            namespace: Some("org.example".to_string()),
-            doc: None,
-            fields: vec![Field {
-                name: "status".to_string(),
-                schema: status_enum,
-                doc: None,
-                default: None,
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let record = AvroSchema::simple_record(
+            "Rec",
+            Some("org.example"),
+            vec![Field::simple("status", status_enum)],
+        );
 
         let lookup = build_lookup(&[record], Some("org.example"));
         assert!(lookup.contains_key("org.example.Rec"));
@@ -1752,15 +1622,7 @@ mod tests {
     #[test]
     fn build_lookup_uses_default_namespace_for_unqualified_types() {
         // A record with no explicit namespace should inherit the default.
-        let record = AvroSchema::Record {
-            name: "Rec".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let record = AvroSchema::simple_record("Rec", None, vec![]);
 
         let lookup = build_lookup(&[record], Some("org.default"));
         assert!(lookup.contains_key("org.default.Rec"));
@@ -1772,15 +1634,7 @@ mod tests {
 
     #[test]
     fn named_type_second_occurrence_is_bare_string() {
-        let schema = AvroSchema::Record {
-            name: "Rec".to_string(),
-            namespace: Some("org.test".to_string()),
-            doc: None,
-            fields: vec![],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_record("Rec", Some("org.test"), vec![]);
 
         let mut known = HashSet::new();
         let lookup = HashMap::new();
@@ -1796,15 +1650,8 @@ mod tests {
 
     #[test]
     fn named_type_second_occurrence_uses_short_name_in_same_namespace() {
-        let schema = AvroSchema::Enum {
-            name: "Color".to_string(),
-            namespace: Some("org.palette".to_string()),
-            doc: None,
-            symbols: vec!["RED".to_string()],
-            default: None,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema =
+            AvroSchema::simple_enum("Color", Some("org.palette"), vec!["RED".to_string()]);
 
         let mut known = HashSet::new();
         let lookup = HashMap::new();

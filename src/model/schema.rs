@@ -1056,6 +1056,59 @@ where
 }
 
 #[cfg(test)]
+impl Field {
+    /// Create a field with no aliases, properties, doc, default, or order.
+    pub(crate) fn simple(name: &str, schema: AvroSchema) -> Self {
+        Field {
+            name: name.to_string(),
+            schema,
+            aliases: vec![],
+            properties: HashMap::new(),
+            doc: None,
+            default: None,
+            order: None,
+        }
+    }
+}
+
+#[cfg(test)]
+impl AvroSchema {
+    /// Create a record with no doc, aliases, properties, or error flag.
+    pub(crate) fn simple_record(
+        name: &str,
+        namespace: Option<&str>,
+        fields: Vec<Field>,
+    ) -> Self {
+        AvroSchema::Record {
+            name: name.to_string(),
+            namespace: namespace.map(str::to_string),
+            doc: None,
+            fields,
+            is_error: false,
+            aliases: vec![],
+            properties: HashMap::new(),
+        }
+    }
+
+    /// Create an enum with no doc, default, aliases, or properties.
+    pub(crate) fn simple_enum(
+        name: &str,
+        namespace: Option<&str>,
+        symbols: Vec<String>,
+    ) -> Self {
+        AvroSchema::Enum {
+            name: name.to_string(),
+            namespace: namespace.map(str::to_string),
+            doc: None,
+            symbols,
+            default: None,
+            aliases: vec![],
+            properties: HashMap::new(),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -1291,62 +1344,26 @@ mod tests {
 
     #[test]
     fn record_accepts_object() {
-        let schema = AvroSchema::Record {
-            name: "TestRecord".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_record("TestRecord", None, vec![]);
         assert!(is_valid_default(&json!({"name": "bar"}), &schema));
     }
 
     #[test]
     fn record_rejects_string() {
-        let schema = AvroSchema::Record {
-            name: "TestRecord".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_record("TestRecord", None, vec![]);
         assert!(!is_valid_default(&json!("not_an_object"), &schema));
     }
 
     #[test]
     fn record_with_required_field_accepts_complete_default() {
-        let schema = AvroSchema::Record {
-            name: "Inner".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![
-                Field {
-                    name: "name".to_string(),
-                    schema: AvroSchema::String,
-                    doc: None,
-                    default: None, // required
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                },
-                Field {
-                    name: "value".to_string(),
-                    schema: AvroSchema::Int,
-                    doc: None,
-                    default: None, // required
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                },
+        let schema = AvroSchema::simple_record(
+            "Inner",
+            None,
+            vec![
+                Field::simple("name", AvroSchema::String),
+                Field::simple("value", AvroSchema::Int),
             ],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        );
         // Both required fields are provided with correct types.
         assert!(is_valid_default(
             &json!({"name": "test", "value": 42}),
@@ -1356,131 +1373,58 @@ mod tests {
 
     #[test]
     fn record_with_required_field_rejects_partial_default() {
-        let schema = AvroSchema::Record {
-            name: "Inner".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![
-                Field {
-                    name: "name".to_string(),
-                    schema: AvroSchema::String,
-                    doc: None,
-                    default: None, // required
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                },
-                Field {
-                    name: "value".to_string(),
-                    schema: AvroSchema::Int,
-                    doc: None,
-                    default: None, // required
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                },
+        let schema = AvroSchema::simple_record(
+            "Inner",
+            None,
+            vec![
+                Field::simple("name", AvroSchema::String),
+                Field::simple("value", AvroSchema::Int),
             ],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        );
         // "value" is required but not provided.
         assert!(!is_valid_default(&json!({"name": "partial"}), &schema));
     }
 
     #[test]
     fn record_with_field_default_accepts_partial_default() {
-        let schema = AvroSchema::Record {
-            name: "Inner".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![
+        let schema = AvroSchema::simple_record(
+            "Inner",
+            None,
+            vec![
+                Field::simple("name", AvroSchema::String),
                 Field {
-                    name: "name".to_string(),
-                    schema: AvroSchema::String,
-                    doc: None,
-                    default: None, // required
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                },
-                Field {
-                    name: "value".to_string(),
-                    schema: AvroSchema::Int,
-                    doc: None,
                     default: Some(json!(0)), // has default
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
+                    ..Field::simple("value", AvroSchema::Int)
                 },
             ],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        );
         // "value" has a default in the schema, so omitting it is valid.
         assert!(is_valid_default(&json!({"name": "valid"}), &schema));
     }
 
     #[test]
     fn record_rejects_wrong_field_type_in_default() {
-        let schema = AvroSchema::Record {
-            name: "Inner".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![Field {
-                name: "count".to_string(),
-                schema: AvroSchema::Int,
-                doc: None,
-                default: None,
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_record(
+            "Inner",
+            None,
+            vec![Field::simple("count", AvroSchema::Int)],
+        );
         // Field is provided but with wrong type (string instead of int).
         assert!(!is_valid_default(&json!({"count": "not_an_int"}), &schema));
     }
 
     #[test]
     fn record_nested_validates_inner_record() {
-        let inner_schema = AvroSchema::Record {
-            name: "Inner".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![Field {
-                name: "x".to_string(),
-                schema: AvroSchema::Int,
-                doc: None,
-                default: None,
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
-        let outer_schema = AvroSchema::Record {
-            name: "Outer".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![Field {
-                name: "inner".to_string(),
-                schema: inner_schema,
-                doc: None,
-                default: None,
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let inner_schema = AvroSchema::simple_record(
+            "Inner",
+            None,
+            vec![Field::simple("x", AvroSchema::Int)],
+        );
+        let outer_schema = AvroSchema::simple_record(
+            "Outer",
+            None,
+            vec![Field::simple("inner", inner_schema)],
+        );
         // Inner record must also be complete.
         assert!(is_valid_default(
             &json!({"inner": {"x": 1}}),
@@ -1491,25 +1435,11 @@ mod tests {
 
     #[test]
     fn validate_default_reports_missing_required_field() {
-        let schema = AvroSchema::Record {
-            name: "TestRecord".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![
-                Field {
-                    name: "required_field".to_string(),
-                    schema: AvroSchema::String,
-                    doc: None,
-                    default: None, // required
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                },
-            ],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_record(
+            "TestRecord",
+            None,
+            vec![Field::simple("required_field", AvroSchema::String)],
+        );
         let reason = validate_default(&json!({}), &schema);
         let msg = reason.expect("should have a reason for missing required field");
         assert!(
@@ -1521,34 +1451,14 @@ mod tests {
 
     #[test]
     fn validate_default_reports_multiple_missing_fields() {
-        let schema = AvroSchema::Record {
-            name: "TestRecord".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![
-                Field {
-                    name: "field_a".to_string(),
-                    schema: AvroSchema::String,
-                    doc: None,
-                    default: None,
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                },
-                Field {
-                    name: "field_b".to_string(),
-                    schema: AvroSchema::Int,
-                    doc: None,
-                    default: None,
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                },
+        let schema = AvroSchema::simple_record(
+            "TestRecord",
+            None,
+            vec![
+                Field::simple("field_a", AvroSchema::String),
+                Field::simple("field_b", AvroSchema::Int),
             ],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        );
         let reason = validate_default(&json!({}), &schema);
         let msg = reason.expect("should have a reason for missing fields");
         assert!(
@@ -1561,23 +1471,11 @@ mod tests {
 
     #[test]
     fn validate_default_reports_invalid_field_value() {
-        let schema = AvroSchema::Record {
-            name: "TestRecord".to_string(),
-            namespace: None,
-            doc: None,
-            fields: vec![Field {
-                name: "count".to_string(),
-                schema: AvroSchema::Int,
-                doc: None,
-                default: None,
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_record(
+            "TestRecord",
+            None,
+            vec![Field::simple("count", AvroSchema::Int)],
+        );
         let reason = validate_default(&json!({"count": "not_an_int"}), &schema);
         let msg = reason.expect("should have a reason for invalid field value");
         assert!(
@@ -1589,29 +1487,17 @@ mod tests {
 
     #[test]
     fn enum_accepts_string() {
-        let schema = AvroSchema::Enum {
-            name: "Suit".to_string(),
-            namespace: None,
-            doc: None,
-            symbols: vec!["HEARTS".to_string(), "DIAMONDS".to_string()],
-            default: None,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_enum(
+            "Suit",
+            None,
+            vec!["HEARTS".to_string(), "DIAMONDS".to_string()],
+        );
         assert!(is_valid_default(&json!("HEARTS"), &schema));
     }
 
     #[test]
     fn enum_rejects_integer() {
-        let schema = AvroSchema::Enum {
-            name: "Suit".to_string(),
-            namespace: None,
-            doc: None,
-            symbols: vec!["HEARTS".to_string()],
-            default: None,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+        let schema = AvroSchema::simple_enum("Suit", None, vec!["HEARTS".to_string()]);
         assert!(!is_valid_default(&json!(0), &schema));
     }
 
@@ -1936,45 +1822,24 @@ mod tests {
         field_schema: AvroSchema,
         default: Value,
     ) -> AvroSchema {
-        AvroSchema::Record {
-            name: "Outer".to_string(),
-            namespace: Some("org.test".to_string()),
-            doc: None,
-            fields: vec![Field {
-                name: field_name.to_string(),
-                schema: field_schema,
-                doc: None,
+        AvroSchema::simple_record(
+            "Outer",
+            Some("org.test"),
+            vec![Field {
                 default: Some(default),
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
+                ..Field::simple(field_name, field_schema)
             }],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        }
+        )
     }
 
     /// Resolver that maps "org.test.Inner" to a record schema.
     fn record_resolver(full_name: &str) -> Option<AvroSchema> {
         if full_name == "org.test.Inner" {
-            Some(AvroSchema::Record {
-                name: "Inner".to_string(),
-                namespace: Some("org.test".to_string()),
-                doc: None,
-                fields: vec![Field {
-                    name: "name".to_string(),
-                    schema: AvroSchema::String,
-                    doc: None,
-                    default: None,
-                    order: None,
-                    aliases: vec![],
-                    properties: HashMap::new(),
-                }],
-                is_error: false,
-                aliases: vec![],
-                properties: HashMap::new(),
-            })
+            Some(AvroSchema::simple_record(
+                "Inner",
+                Some("org.test"),
+                vec![Field::simple("name", AvroSchema::String)],
+            ))
         } else {
             None
         }
@@ -2115,28 +1980,19 @@ mod tests {
 
     #[test]
     fn field_without_default_is_not_validated() {
-        let schema = AvroSchema::Record {
-            name: "Outer".to_string(),
-            namespace: Some("org.test".to_string()),
-            doc: None,
-            fields: vec![Field {
-                name: "inner".to_string(),
-                schema: AvroSchema::Reference {
+        let schema = AvroSchema::simple_record(
+            "Outer",
+            Some("org.test"),
+            vec![Field::simple(
+                "inner",
+                AvroSchema::Reference {
                     name: "Inner".to_string(),
                     namespace: Some("org.test".to_string()),
                     properties: HashMap::new(),
                     span: None,
                 },
-                doc: None,
-                default: None,
-                order: None,
-                aliases: vec![],
-                properties: HashMap::new(),
-            }],
-            is_error: false,
-            aliases: vec![],
-            properties: HashMap::new(),
-        };
+            )],
+        );
         let errors = validate_record_field_defaults(&schema, record_resolver);
         assert!(errors.is_empty());
     }
