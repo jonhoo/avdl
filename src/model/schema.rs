@@ -443,16 +443,9 @@ impl AvroSchema {
             // Logical types: keyed by the underlying primitive type name.
             // Java treats logical types as their underlying type for union
             // duplicate checking (e.g., `date` is `int`, `uuid` is `string`).
-            AvroSchema::Logical { logical_type, .. } => match logical_type {
-                LogicalType::Date | LogicalType::TimeMillis => "int".to_string(),
-                LogicalType::TimeMicros
-                | LogicalType::TimestampMillis
-                | LogicalType::TimestampMicros
-                | LogicalType::LocalTimestampMillis
-                | LogicalType::LocalTimestampMicros => "long".to_string(),
-                LogicalType::Uuid => "string".to_string(),
-                LogicalType::Decimal { .. } => "bytes".to_string(),
-            },
+            AvroSchema::Logical { logical_type, .. } => {
+                logical_type.expected_base_type().as_str().to_string()
+            }
 
             // Primitives are handled above by `primitive_type_name()`.
             _ => unreachable!("all AvroSchema variants are covered"),
@@ -761,17 +754,7 @@ pub fn is_valid_default(value: &Value, schema: &AvroSchema) -> bool {
         // Logical types: validate against the underlying physical type.
         // =====================================================================
         AvroSchema::Logical { logical_type, .. } => {
-            let underlying = match logical_type {
-                LogicalType::Date | LogicalType::TimeMillis => AvroSchema::Int,
-                LogicalType::TimeMicros
-                | LogicalType::TimestampMillis
-                | LogicalType::TimestampMicros
-                | LogicalType::LocalTimestampMillis
-                | LogicalType::LocalTimestampMicros => AvroSchema::Long,
-                LogicalType::Uuid => AvroSchema::String,
-                LogicalType::Decimal { .. } => AvroSchema::Bytes,
-            };
-            is_valid_default(value, &underlying)
+            is_valid_default(value, &logical_type.expected_base_type().to_schema())
         }
 
         // =====================================================================
