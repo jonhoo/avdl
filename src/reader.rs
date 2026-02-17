@@ -3000,8 +3000,8 @@ fn walk_full_type<'input>(
     // reference to a previously-defined named type, any accumulated schema
     // properties (from annotations like `@foo("bar")`) are semantically invalid
     // -- the annotation is ambiguous (does it apply to the field or the type?).
-    // The Java implementation checks this in exitNullableType (IdlReader.java
-    // lines 776-777) and throws "Type references may not be annotated".
+    // Java checks this in `exitNullableType()` and throws
+    // "Type references may not be annotated".
     if !props.properties.is_empty() && is_type_reference(&schema) {
         return Err(make_diagnostic(
             src,
@@ -3380,7 +3380,7 @@ fn walk_message<'input>(
 
     // One-way messages must return void (AvroSchema::Null). The Avro specification
     // requires one-way messages to have a null response and no errors. The Java
-    // implementation checks this in exitMessageDeclaration (IdlReader.java line 715).
+    // implementation checks this in `exitMessageDeclaration()`.
     if one_way && response != AvroSchema::Null {
         return Err(make_diagnostic(
             src,

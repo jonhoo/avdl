@@ -205,7 +205,9 @@ cargo run -- idl --import-dir ./extra/ input.avdl
 src/
   main.rs               CLI (lexopt): `idl` and `idl2schemata` subcommands
   lib.rs                 Module declarations
+  compiler.rs            Public API: Idl and Idl2Schemata builders, compilation pipeline
   reader.rs              Core ANTLR tree walker — the heart of the parser
+  suggest.rs             Levenshtein edit distance for "did you mean?" suggestions
   model/
     mod.rs               Re-exports schema, protocol, json modules
     schema.rs            AvroSchema enum, Field, LogicalType, FieldOrder, PrimitiveType

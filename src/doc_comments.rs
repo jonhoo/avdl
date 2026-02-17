@@ -107,12 +107,14 @@ where
 /// all subsequent lines start with `*` after optional horizontal whitespace.
 /// Empty lines are allowed (they don't need a star).
 static STAR_1_VALIDATE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)^\*[^\r\n]*(?:\r?\n[\t ]*\*[^\r\n]*|\r?\n[\t ]*)*$").unwrap()
+    Regex::new(r"(?s)^\*[^\r\n]*(?:\r?\n[\t ]*\*[^\r\n]*|\r?\n[\t ]*)*$")
+        .expect("constant regex pattern")
 });
 
 /// Validation pattern for double-star prefix: same as above but with `**`.
 static STAR_2_VALIDATE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)^\*\*[^\r\n]*(?:\r?\n[\t ]*\*\*[^\r\n]*|\r?\n[\t ]*)*$").unwrap()
+    Regex::new(r"(?s)^\*\*[^\r\n]*(?:\r?\n[\t ]*\*\*[^\r\n]*|\r?\n[\t ]*)*$")
+        .expect("constant regex pattern")
 });
 
 /// Replacement pattern for single-star: matches start-of-string or
@@ -121,19 +123,19 @@ static STAR_2_VALIDATE: LazyLock<Regex> = LazyLock::new(|| {
 ///
 /// Java equivalent: `(?U)(?:^|(\R)\h*)\Q*\E\h?`
 static STAR_1_REPLACE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|(\r?\n)[\t ]*)\*[\t ]?").unwrap());
+    LazyLock::new(|| Regex::new(r"(?:^|(\r?\n)[\t ]*)\*[\t ]?").expect("constant regex pattern"));
 
 /// Replacement pattern for double-star.
 ///
 /// Java equivalent: `(?U)(?:^|(\R)\h*)\Q**\E\h?`
 static STAR_2_REPLACE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|(\r?\n)[\t ]*)\*\*[\t ]?").unwrap());
+    LazyLock::new(|| Regex::new(r"(?:^|(\r?\n)[\t ]*)\*\*[\t ]?").expect("constant regex pattern"));
 
 /// Validation pattern for common whitespace indent: the comment has at least
 /// two lines and all non-empty subsequent lines share a common leading
 /// whitespace prefix. We determine the actual indent length manually.
 static WS_INDENT_VALIDATE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)[^\r\n]*\r?\n[\t ]+[^\r\n]*").unwrap());
+    LazyLock::new(|| Regex::new(r"(?s)[^\r\n]*\r?\n[\t ]+[^\r\n]*").expect("constant regex pattern"));
 
 /// Strip common indentation from a doc comment body, matching Java's
 /// `IdlReader.stripIndents()` behavior.

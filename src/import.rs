@@ -54,9 +54,9 @@ fn parse_json_with_comments(input: &str) -> std::result::Result<Value, serde_jso
 /// configurable import search directories, which serves the same purpose.
 pub struct ImportContext {
     /// Files that have already been imported (canonical paths, for cycle prevention).
-    pub read_locations: HashSet<PathBuf>,
+    read_locations: HashSet<PathBuf>,
     /// Additional directories to search for imports (replaces Java classpath).
-    pub import_dirs: Vec<PathBuf>,
+    import_dirs: Vec<PathBuf>,
 }
 
 impl ImportContext {
