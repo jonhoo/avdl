@@ -1,0 +1,5 @@
+---
+source: src/model/schema.rs
+expression: msg
+---
+missing required fields in record `TestRecord`: field_a, field_b

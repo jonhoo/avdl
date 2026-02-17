@@ -546,9 +546,8 @@ mod tests {
     #[test]
     fn test_register_non_named_schema_fails() {
         let mut reg = SchemaRegistry::new();
-        let result = reg.register(AvroSchema::Int);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("non-named"));
+        let err = reg.register(AvroSchema::Int).unwrap_err();
+        insta::assert_snapshot!(err);
     }
 
     // =========================================================================
@@ -606,10 +605,8 @@ mod tests {
             aliases: vec![],
             properties: HashMap::new(),
         });
-        assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("invalid Avro name"), "error was: {err}");
-        assert!(err.contains("my-record"), "error was: {err}");
+        insta::assert_snapshot!(err);
     }
 
     #[test]
@@ -624,8 +621,8 @@ mod tests {
             aliases: vec![],
             properties: HashMap::new(),
         });
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid Avro name"));
+        let err = result.unwrap_err();
+        insta::assert_snapshot!(err);
     }
 
     #[test]
@@ -640,13 +637,8 @@ mod tests {
             aliases: vec![],
             properties: HashMap::new(),
         });
-        assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            err.contains("invalid Avro namespace segment"),
-            "error was: {err}"
-        );
-        assert!(err.contains("bad-segment"), "error was: {err}");
+        insta::assert_snapshot!(err);
     }
 
     #[test]

@@ -1,0 +1,5 @@
+---
+source: src/reader.rs
+expression: format_enriched(&enriched)
+---
+message: mismatched input 'string' expecting '(' (annotations require `@name(value)` syntax)

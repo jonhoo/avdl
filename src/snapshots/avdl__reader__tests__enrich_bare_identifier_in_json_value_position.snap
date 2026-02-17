@@ -1,0 +1,8 @@
+---
+source: src/reader.rs
+expression: format_enriched(&enriched)
+---
+message: unexpected token `YELLOW` -- did you mean `"YELLOW"`?
+label: unexpected `YELLOW` -- did you mean `"YELLOW"`?
+help: expected one of: null, true, false, {, [, string literal, integer literal, floating-point literal
+hint: did you mean "YELLOW"? Enum default values must be quoted strings

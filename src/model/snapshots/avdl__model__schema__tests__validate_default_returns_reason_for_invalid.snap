@@ -1,0 +1,5 @@
+---
+source: src/model/schema.rs
+expression: msg
+---
+expected int, got string

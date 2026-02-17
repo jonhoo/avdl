@@ -1,0 +1,5 @@
+---
+source: src/resolve.rs
+expression: err
+---
+cannot register non-named schema

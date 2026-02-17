@@ -1,0 +1,12 @@
+---
+source: src/compiler.rs
+expression: "crate::error::render_diagnostic(&err)"
+---
+  x Undefined name: test.CompletelyUnrelated
+   ,-[<input>:4:28]
+ 3 |             protocol P {
+ 4 |                 record R { CompletelyUnrelated field; }
+   :                            ^^^^^^^^^|^^^^^^^^^
+   :                                     `-- Undefined name: test.CompletelyUnrelated
+ 5 |             }
+   `----

@@ -1729,51 +1729,25 @@ mod tests {
     #[test]
     fn suggest_primitive_typo_stiring() {
         let reg = SchemaRegistry::new();
-        let suggestion = suggest_similar_name("test.stiring", &reg);
-        assert!(
-            suggestion.is_some(),
-            "should suggest something for 'stiring'"
-        );
-        let s = suggestion.expect("just checked is_some");
-        assert!(
-            s.contains("string"),
-            "should suggest 'string', got: {s}"
-        );
+        let suggestion =
+            suggest_similar_name("test.stiring", &reg).expect("should suggest something for 'stiring'");
+        insta::assert_snapshot!(suggestion);
     }
 
     #[test]
     fn suggest_primitive_case_mismatch() {
         let reg = SchemaRegistry::new();
-        let suggestion = suggest_similar_name("String", &reg);
-        assert!(
-            suggestion.is_some(),
-            "should suggest something for 'String'"
-        );
-        let s = suggestion.expect("just checked is_some");
-        assert!(
-            s.contains("string"),
-            "should suggest 'string', got: {s}"
-        );
-        assert!(
-            s.contains("lowercase"),
-            "should mention primitives are lowercase, got: {s}"
-        );
+        let suggestion =
+            suggest_similar_name("String", &reg).expect("should suggest something for 'String'");
+        insta::assert_snapshot!(suggestion);
     }
 
     #[test]
     fn suggest_primitive_int_capitalized() {
         let reg = SchemaRegistry::new();
-        let suggestion = suggest_similar_name("Int", &reg);
-        assert!(
-            suggestion.is_some(),
-            "should suggest something for 'Int'"
-        );
-        let s = suggestion.expect("just checked is_some");
-        assert!(s.contains("int"), "should suggest 'int', got: {s}");
-        assert!(
-            s.contains("lowercase"),
-            "should mention primitives are lowercase, got: {s}"
-        );
+        let suggestion =
+            suggest_similar_name("Int", &reg).expect("should suggest something for 'Int'");
+        insta::assert_snapshot!(suggestion);
     }
 
     #[test]
@@ -1800,16 +1774,9 @@ mod tests {
         })
         .expect("registration succeeds");
 
-        let suggestion = suggest_similar_name("com.example.UserProfle", &reg);
-        assert!(
-            suggestion.is_some(),
-            "should suggest something for 'UserProfle'"
-        );
-        let s = suggestion.expect("just checked is_some");
-        assert!(
-            s.contains("com.example.UserProfile"),
-            "should suggest the full name, got: {s}"
-        );
+        let suggestion = suggest_similar_name("com.example.UserProfle", &reg)
+            .expect("should suggest something for 'UserProfle'");
+        insta::assert_snapshot!(suggestion);
     }
 
     #[test]
@@ -1827,16 +1794,9 @@ mod tests {
         .expect("registration succeeds");
 
         // Typo in the simple name part, correct namespace.
-        let suggestion = suggest_similar_name("org.bank.Acount", &reg);
-        assert!(
-            suggestion.is_some(),
-            "should suggest something for 'Acount'"
-        );
-        let s = suggestion.expect("just checked is_some");
-        assert!(
-            s.contains("org.bank.Account"),
-            "should suggest the full registered name, got: {s}"
-        );
+        let suggestion = suggest_similar_name("org.bank.Acount", &reg)
+            .expect("should suggest something for 'Acount'");
+        insta::assert_snapshot!(suggestion);
     }
 
     // =========================================================================
@@ -1897,17 +1857,9 @@ mod tests {
             "#,
         );
         let err = result.expect_err("should fail with undefined type");
-        let rendered = crate::error::render_diagnostic(&err);
-        assert!(
-            rendered.contains("Undefined name"),
-            "error should report undefined name, got:\n{rendered}"
-        );
-        // Should NOT contain "did you mean" since nothing is close.
-        let has_suggestion = rendered.contains("did you mean");
-        assert!(
-            has_suggestion == false,
-            "error should NOT include 'did you mean' for unrelated name, got:\n{rendered}"
-        );
+        // The snapshot verifies the error says "Undefined name" without any
+        // "did you mean" suggestion, since nothing is close.
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     // =========================================================================
@@ -1965,17 +1917,18 @@ mod tests {
         )
         .expect("write .avdl");
 
-        let result = Idl::new().convert(&avdl_path);
-        let err = result.expect_err("should fail with undefined type");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("Undefined name"),
-            "should report undefined name, got: {msg}"
-        );
-        assert!(
-            msg.contains("bad.avsc"),
-            "error should mention the imported file path, got: {msg}"
-        );
+        let err = Idl::new()
+            .convert(&avdl_path)
+            .expect_err("should fail with undefined type");
+        let rendered = crate::error::render_diagnostic(&err);
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let stable = rendered
+            .replace(&canonical_dir.display().to_string(), "<tmpdir>")
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
@@ -2086,17 +2039,18 @@ mod tests {
         )
         .expect("write .avdl");
 
-        let result = Idl::new().convert(&avdl_path);
-        let err = result.expect_err("should fail with undefined type");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("Undefined name"),
-            "should report undefined name, got: {msg}"
-        );
-        assert!(
-            msg.contains("bad.avpr"),
-            "error should mention the imported file path, got: {msg}"
-        );
+        let err = Idl::new()
+            .convert(&avdl_path)
+            .expect_err("should fail with undefined type");
+        let rendered = crate::error::render_diagnostic(&err);
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let stable = rendered
+            .replace(&canonical_dir.display().to_string(), "<tmpdir>")
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     // =========================================================================
@@ -2129,16 +2083,7 @@ mod tests {
             "#,
         );
         let err = result.expect_err("should fail with two undefined types");
-        let rendered = crate::error::render_diagnostic(&err);
-        assert!(
-            rendered.contains("AlphaType"),
-            "error should mention first undefined type, got:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("BetaType"),
-            "error should mention second undefined type as related, got:\n{rendered}"
-        );
-        insta::assert_snapshot!(rendered);
+        insta::assert_snapshot!(crate::error::render_diagnostic(&err));
     }
 
     #[test]
@@ -2190,14 +2135,6 @@ mod tests {
             .replace(&canonical_str, "<tmpdir>")
             .replace(&raw_str, "<tmpdir>");
 
-        assert!(
-            stable.contains("Undefined name"),
-            "should report undefined name, got:\n{stable}"
-        );
-        assert!(
-            stable.contains("spanless.avsc"),
-            "should mention the imported file, got:\n{stable}"
-        );
         insta::assert_snapshot!(stable);
     }
 
@@ -2250,14 +2187,6 @@ mod tests {
             .replace(&canonical_str, "<tmpdir>")
             .replace(&raw_str, "<tmpdir>");
 
-        assert!(
-            stable.contains("FromIdlOnly"),
-            "should report spanned undefined type, got:\n{stable}"
-        );
-        assert!(
-            stable.contains("FromJsonOnly"),
-            "should report spanless undefined type as related, got:\n{stable}"
-        );
         insta::assert_snapshot!(stable);
     }
 
@@ -2398,18 +2327,14 @@ mod tests {
             "#,
         );
         let err = result.expect_err("missing import file should be rejected");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("import not found"),
-            "should report import not found, got: {msg}"
-        );
-        assert!(
-            msg.contains("nonexistent-file.avsc"),
-            "should mention the missing file, got: {msg}"
-        );
+        let rendered = crate::error::render_diagnostic(&err);
+        let cwd = std::env::current_dir().expect("current dir");
+        let stable = rendered.replace(&cwd.display().to_string(), "<cwd>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn idl_import_parse_failure() {
         let dir = tempfile::tempdir().expect("create temp dir");
 
@@ -2423,16 +2348,22 @@ mod tests {
         )
         .expect("write main .avdl");
 
-        let result = Idl::new().convert(&main_avdl);
-        let err = result.expect_err("invalid imported IDL should be rejected");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("bad-syntax.avdl"),
-            "error should mention the imported file, got: {msg}"
-        );
+        let err = Idl::new()
+            .convert(&main_avdl)
+            .expect_err("invalid imported IDL should be rejected");
+        let rendered = crate::error::render_diagnostic(&err);
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let stable = rendered
+            .replace(&canonical_dir.display().to_string(), "<tmpdir>")
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn idl_import_read_failure() {
         let dir = tempfile::tempdir().expect("create temp dir");
 
@@ -2446,16 +2377,22 @@ mod tests {
         )
         .expect("write main .avdl");
 
-        let result = Idl::new().convert(&main_avdl);
-        let err = result.expect_err("reading a directory as IDL should fail");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("not-a-file.avdl"),
-            "error should mention the import path, got: {msg}"
-        );
+        let err = Idl::new()
+            .convert(&main_avdl)
+            .expect_err("reading a directory as IDL should fail");
+        let rendered = crate::error::render_diagnostic(&err);
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let stable = rendered
+            .replace(&canonical_dir.display().to_string(), "<tmpdir>")
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn nested_import_resolution_failure() {
         let dir = tempfile::tempdir().expect("create temp dir");
 
@@ -2473,16 +2410,22 @@ mod tests {
         )
         .expect("write main .avdl");
 
-        let result = Idl::new().convert(&main_avdl);
-        let err = result.expect_err("nested missing import should fail");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("deeply-missing.avsc"),
-            "error should mention the missing nested file, got: {msg}"
-        );
+        let err = Idl::new()
+            .convert(&main_avdl)
+            .expect_err("nested missing import should fail");
+        let rendered = crate::error::render_diagnostic(&err);
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let stable = rendered
+            .replace(&canonical_dir.display().to_string(), "<tmpdir>")
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn protocol_import_with_invalid_json_shows_import_context() {
         let dir = tempfile::tempdir().expect("create temp dir");
 
@@ -2496,20 +2439,22 @@ mod tests {
         )
         .expect("write .avdl");
 
-        let result = Idl::new().convert(&avdl_path);
-        let err = result.expect_err("invalid JSON in .avpr should be rejected");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("malformed.avpr"),
-            "error should mention the .avpr file, got: {msg}"
-        );
-        assert!(
-            msg.contains("invalid JSON") || msg.contains("import protocol"),
-            "error should indicate the nature of the failure, got: {msg}"
-        );
+        let err = Idl::new()
+            .convert(&avdl_path)
+            .expect_err("invalid JSON in .avpr should be rejected");
+        let rendered = crate::error::render_diagnostic(&err);
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let stable = rendered
+            .replace(&canonical_dir.display().to_string(), "<tmpdir>")
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn schema_import_with_invalid_structure_shows_import_context() {
         let dir = tempfile::tempdir().expect("create temp dir");
 
@@ -2523,12 +2468,17 @@ mod tests {
         )
         .expect("write .avdl");
 
-        let result = Idl::new().convert(&avdl_path);
-        let err = result.expect_err("invalid schema structure should be rejected");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("bad-structure.avsc"),
-            "error should mention the .avsc file, got: {msg}"
-        );
+        let err = Idl::new()
+            .convert(&avdl_path)
+            .expect_err("invalid schema structure should be rejected");
+        let rendered = crate::error::render_diagnostic(&err);
+        let canonical_dir = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize temp dir");
+        let stable = rendered
+            .replace(&canonical_dir.display().to_string(), "<tmpdir>")
+            .replace(&dir.path().display().to_string(), "<tmpdir>");
+        insta::assert_snapshot!(stable);
     }
 }

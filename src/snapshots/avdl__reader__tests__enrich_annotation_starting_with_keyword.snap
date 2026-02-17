@@ -1,0 +1,6 @@
+---
+source: src/reader.rs
+expression: format_enriched(&enriched)
+---
+message: unexpected `@` before `record` -- did you mean to add an annotation? annotations use `@name("value")` syntax
+label: unexpected `@` before `record`

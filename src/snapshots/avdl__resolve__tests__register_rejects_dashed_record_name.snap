@@ -1,0 +1,5 @@
+---
+source: src/resolve.rs
+expression: err
+---
+invalid Avro name: `my-record` (names must start with a letter or underscore, followed by letters, digits, or underscores)

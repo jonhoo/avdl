@@ -1,0 +1,5 @@
+---
+source: src/reader.rs
+expression: format_enriched(&enriched)
+---
+message: annotation `@beta` is missing its value -- use `@beta("value")` syntax

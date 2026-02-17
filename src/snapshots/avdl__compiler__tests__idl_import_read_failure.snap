@@ -1,0 +1,6 @@
+---
+source: src/compiler.rs
+expression: stable
+---
+  x read imported IDL <tmpdir>/not-a-file.avdl
+  `-> Is a directory (os error 21)

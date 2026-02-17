@@ -1,0 +1,12 @@
+---
+source: src/compiler.rs
+expression: stable
+---
+  x import not found: nonexistent-file.avsc (searched: <cwd>)
+   ,-[<input>:3:17]
+ 2 |             protocol P {
+ 3 |                 import schema "nonexistent-file.avsc";
+   :                 ^^^|^^
+   :                    `-- import not found: nonexistent-file.avsc (searched: <cwd>)
+ 4 |             }
+   `----

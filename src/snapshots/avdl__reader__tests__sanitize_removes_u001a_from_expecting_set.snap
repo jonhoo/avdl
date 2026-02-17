@@ -1,0 +1,5 @@
+---
+source: src/reader.rs
+expression: sanitized
+---
+unexpected 'extra' expected end of file

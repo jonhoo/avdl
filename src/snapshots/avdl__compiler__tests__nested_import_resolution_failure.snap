@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: stable
+---
+  x resolve nested imports from `<tmpdir>/inner.avdl`
+  `-> import not found: deeply-missing.avsc (searched: <tmpdir>)
+   ,-[<tmpdir>/inner.avdl:2:3]
+ 1 | protocol Inner {
+ 2 |   import schema "deeply-missing.avsc";
+   :   ^^^|^^
+   :      `-- import not found: deeply-missing.avsc (searched: <tmpdir>)
+ 3 | }
+   `----

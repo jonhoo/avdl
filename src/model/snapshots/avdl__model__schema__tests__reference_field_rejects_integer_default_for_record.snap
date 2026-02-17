@@ -1,0 +1,5 @@
+---
+source: src/model/schema.rs
+expression: "errors[0].1"
+---
+expected record Inner, got number

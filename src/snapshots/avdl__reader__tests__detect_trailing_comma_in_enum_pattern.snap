@@ -1,0 +1,7 @@
+---
+source: src/reader.rs
+expression: format_syntax_error(&refined)
+---
+message: line 6:2 trailing comma is not allowed in enum declaration
+label: trailing comma
+help: remove the comma after `BLUE`

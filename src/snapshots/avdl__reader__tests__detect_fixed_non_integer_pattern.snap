@@ -1,0 +1,6 @@
+---
+source: src/reader.rs
+expression: format_syntax_error(&refined)
+---
+message: line 2:15 fixed type requires an integer size -- use `fixed MD5(<integer>)`, e.g., `fixed MD5(16)`
+label: `abc` is not an integer

@@ -1,0 +1,7 @@
+---
+source: src/reader.rs
+expression: format_syntax_error(&refined)
+---
+message: line 5:0 unexpected end of file -- missing closing `}` for protocol
+label: this protocol is never closed
+help: add a closing `}` to match this opening brace

@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: stable
+---
+  x Undefined name: MissingRef
+   ,-[<tmpdir>/test.avdl:2:3]
+ 1 | protocol Test {
+ 2 |   import protocol "bad.avpr";
+   :   ^^^|^^
+   :      `-- this import contains undefined type references
+ 3 | }
+   `----
+  help: the undefined type(s) may be referenced in imported file(s): <tmpdir>/bad.avpr

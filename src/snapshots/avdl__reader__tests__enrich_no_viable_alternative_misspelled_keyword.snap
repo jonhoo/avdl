@@ -1,0 +1,6 @@
+---
+source: src/reader.rs
+expression: format_enriched(&enriched)
+---
+message: unrecognized token `protocl` -- did you mean `protocol`?
+label: did you mean `protocol`?

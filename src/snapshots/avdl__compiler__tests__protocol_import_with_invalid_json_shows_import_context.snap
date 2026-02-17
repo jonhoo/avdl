@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: stable
+---
+  x invalid JSON in <tmpdir>/malformed.avpr: key must be a string at line 1 column 3
+  `-> import protocol <tmpdir>/malformed.avpr
+   ,-[<tmpdir>/test.avdl:2:3]
+ 1 | protocol Test {
+ 2 |   import protocol "malformed.avpr";
+   :   ^^^|^^
+   :      `-- import protocol <tmpdir>/malformed.avpr
+ 3 | }
+   `----

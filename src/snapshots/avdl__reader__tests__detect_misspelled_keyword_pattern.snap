@@ -1,0 +1,6 @@
+---
+source: src/reader.rs
+expression: format_syntax_error(&refined)
+---
+message: line 2:13 unrecognized `recrod` -- did you mean `record`?
+label: did you mean `record`?

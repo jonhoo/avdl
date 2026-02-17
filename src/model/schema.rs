@@ -1440,13 +1440,9 @@ mod tests {
             None,
             vec![Field::simple("required_field", AvroSchema::String)],
         );
-        let reason = validate_default(&json!({}), &schema);
-        let msg = reason.expect("should have a reason for missing required field");
-        assert!(
-            msg.contains("missing required field"),
-            "message was: {msg}"
-        );
-        assert!(msg.contains("required_field"), "message was: {msg}");
+        let msg = validate_default(&json!({}), &schema)
+            .expect("should have a reason for missing required field");
+        insta::assert_snapshot!(msg);
     }
 
     #[test]
@@ -1459,14 +1455,9 @@ mod tests {
                 Field::simple("field_b", AvroSchema::Int),
             ],
         );
-        let reason = validate_default(&json!({}), &schema);
-        let msg = reason.expect("should have a reason for missing fields");
-        assert!(
-            msg.contains("missing required fields"),
-            "message was: {msg}"
-        );
-        assert!(msg.contains("field_a"), "message was: {msg}");
-        assert!(msg.contains("field_b"), "message was: {msg}");
+        let msg = validate_default(&json!({}), &schema)
+            .expect("should have a reason for missing fields");
+        insta::assert_snapshot!(msg);
     }
 
     #[test]
@@ -1476,13 +1467,9 @@ mod tests {
             None,
             vec![Field::simple("count", AvroSchema::Int)],
         );
-        let reason = validate_default(&json!({"count": "not_an_int"}), &schema);
-        let msg = reason.expect("should have a reason for invalid field value");
-        assert!(
-            msg.contains("invalid value for field"),
-            "message was: {msg}"
-        );
-        assert!(msg.contains("count"), "message was: {msg}");
+        let msg = validate_default(&json!({"count": "not_an_int"}), &schema)
+            .expect("should have a reason for invalid field value");
+        insta::assert_snapshot!(msg);
     }
 
     #[test]
@@ -1776,28 +1763,23 @@ mod tests {
 
     #[test]
     fn validate_default_returns_reason_for_invalid() {
-        let reason = validate_default(&json!("hello"), &AvroSchema::Int);
-        assert!(reason.is_some());
-        let msg = reason.expect("should have a reason");
-        assert!(msg.contains("expected int"), "message was: {msg}");
-        assert!(msg.contains("got string"), "message was: {msg}");
+        let msg = validate_default(&json!("hello"), &AvroSchema::Int)
+            .expect("should have a reason for invalid default");
+        insta::assert_snapshot!(msg);
     }
 
     #[test]
     fn validate_default_int_out_of_range_message() {
-        let reason = validate_default(&json!(9_999_999_999_i64), &AvroSchema::Int);
-        let msg = reason.expect("should have a reason for out-of-range int");
-        assert!(msg.contains("out of range"), "message was: {msg}");
-        assert!(msg.contains("9999999999"), "message was: {msg}");
-        assert!(msg.contains(&i32::MIN.to_string()), "message was: {msg}");
-        assert!(msg.contains(&i32::MAX.to_string()), "message was: {msg}");
+        let msg = validate_default(&json!(9_999_999_999_i64), &AvroSchema::Int)
+            .expect("should have a reason for out-of-range int");
+        insta::assert_snapshot!(msg);
     }
 
     #[test]
     fn validate_default_int_below_range_message() {
-        let reason = validate_default(&json!(i32::MIN as i64 - 1), &AvroSchema::Int);
-        let msg = reason.expect("should have a reason for below-range int");
-        assert!(msg.contains("out of range"), "message was: {msg}");
+        let msg = validate_default(&json!(i32::MIN as i64 - 1), &AvroSchema::Int)
+            .expect("should have a reason for below-range int");
+        insta::assert_snapshot!(msg);
     }
 
     #[test]
@@ -1806,9 +1788,9 @@ mod tests {
         // We construct this via raw JSON parsing since json!(u64::MAX) might not
         // produce the exact representation we need.
         let big_val: Value = serde_json::from_str("18446744073709551615").expect("valid JSON");
-        let reason = validate_default(&big_val, &AvroSchema::Long);
-        let msg = reason.expect("should have a reason for out-of-range long");
-        assert!(msg.contains("out of range"), "message was: {msg}");
+        let msg = validate_default(&big_val, &AvroSchema::Long)
+            .expect("should have a reason for out-of-range long");
+        insta::assert_snapshot!(msg);
     }
 
     // =========================================================================
@@ -1860,11 +1842,7 @@ mod tests {
         let errors = validate_record_field_defaults(&schema, record_resolver);
         assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
         assert_eq!(errors[0].0, "inner");
-        assert!(
-            errors[0].1.contains("got string"),
-            "reason was: {}",
-            errors[0].1
-        );
+        insta::assert_snapshot!(errors[0].1);
     }
 
     #[test]
@@ -1882,11 +1860,7 @@ mod tests {
         let errors = validate_record_field_defaults(&schema, record_resolver);
         assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
         assert_eq!(errors[0].0, "inner");
-        assert!(
-            errors[0].1.contains("got number"),
-            "reason was: {}",
-            errors[0].1
-        );
+        insta::assert_snapshot!(errors[0].1);
     }
 
     #[test]
@@ -1942,11 +1916,7 @@ mod tests {
         let errors = validate_record_field_defaults(&schema, record_resolver);
         assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
         assert_eq!(errors[0].0, "inner");
-        assert!(
-            errors[0].1.contains("got array"),
-            "reason was: {}",
-            errors[0].1
-        );
+        insta::assert_snapshot!(errors[0].1);
     }
 
     #[test]
@@ -1964,11 +1934,7 @@ mod tests {
         let errors = validate_record_field_defaults(&schema, record_resolver);
         assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
         assert_eq!(errors[0].0, "inner");
-        assert!(
-            errors[0].1.contains("got null"),
-            "reason was: {}",
-            errors[0].1
-        );
+        insta::assert_snapshot!(errors[0].1);
     }
 
     #[test]

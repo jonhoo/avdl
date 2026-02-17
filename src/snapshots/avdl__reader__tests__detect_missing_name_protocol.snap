@@ -1,0 +1,7 @@
+---
+source: src/reader.rs
+expression: format_syntax_error(&refined)
+---
+message: line 1:9 expected name after `protocol`, found `{`
+label: expected protocol name before `{`
+help: add a name, e.g., `protocol MyProtocol { ... }`

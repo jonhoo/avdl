@@ -1,0 +1,5 @@
+---
+source: src/compiler.rs
+expression: suggestion
+---
+did you mean `string`? (note: Avro primitives are lowercase)

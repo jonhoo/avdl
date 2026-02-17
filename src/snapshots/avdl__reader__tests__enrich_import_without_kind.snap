@@ -1,0 +1,6 @@
+---
+source: src/reader.rs
+expression: format_enriched(&enriched)
+---
+message: import statement missing kind specifier -- use `import idl`, `import protocol`, or `import schema`
+label: missing import kind

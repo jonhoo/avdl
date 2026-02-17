@@ -1,0 +1,5 @@
+---
+source: src/model/schema.rs
+expression: msg
+---
+invalid value for field `count`: expected int, got string

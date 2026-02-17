@@ -1,0 +1,7 @@
+---
+source: src/reader.rs
+expression: format_syntax_error(&refined)
+---
+message: line 3:11 union must contain at least one type member
+label: empty union
+help: add at least one type inside the braces, e.g., `union { null, string }`

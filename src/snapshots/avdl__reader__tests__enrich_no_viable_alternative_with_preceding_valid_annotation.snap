@@ -1,0 +1,5 @@
+---
+source: src/reader.rs
+expression: format_enriched(&enriched)
+---
+message: annotation `@version` is missing its value -- use `@version("value")` syntax

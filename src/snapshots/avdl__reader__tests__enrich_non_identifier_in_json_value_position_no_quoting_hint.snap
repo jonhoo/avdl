@@ -1,0 +1,7 @@
+---
+source: src/reader.rs
+expression: format_enriched(&enriched)
+---
+message: unexpected token `;`
+label: unexpected `;`
+help: expected one of: null, true, false, {, [, string literal, integer literal, floating-point literal

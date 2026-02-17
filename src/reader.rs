@@ -4537,6 +4537,31 @@ mod tests {
     use crate::error::render_diagnostic;
     use pretty_assertions::assert_eq;
 
+    /// Format an `EnrichedError` into a deterministic string for snapshot tests.
+    /// Displays each field on a separate line so diffs are easy to read.
+    fn format_enriched(e: &EnrichedError) -> String {
+        let mut s = format!("message: {}", e.message);
+        if let Some(label) = &e.label {
+            s.push_str(&format!("\nlabel: {label}"));
+        }
+        if let Some(help) = &e.help {
+            s.push_str(&format!("\nhelp: {help}"));
+        }
+        s
+    }
+
+    /// Format a `SyntaxError` into a deterministic string for snapshot tests.
+    fn format_syntax_error(e: &SyntaxError) -> String {
+        let mut s = format!("message: {}", e.message);
+        if let Some(label) = &e.label {
+            s.push_str(&format!("\nlabel: {label}"));
+        }
+        if let Some(help) = &e.help {
+            s.push_str(&format!("\nhelp: {help}"));
+        }
+        s
+    }
+
     // ------------------------------------------------------------------
     // Octal escapes (issue #5)
     // ------------------------------------------------------------------
@@ -6327,15 +6352,8 @@ mod tests {
     fn enrich_no_viable_alternative_with_annotation() {
         // ANTLR merges `@beta` and `record` into `@betarecord`.
         let msg = "no viable alternative at input '@betarecord'";
-        let enriched = enrich_antlr_error(msg).expect("should match").message;
-        assert!(
-            enriched.contains("@beta"),
-            "should extract annotation name: {enriched}"
-        );
-        assert!(
-            enriched.contains("@beta(\"value\")"),
-            "should suggest correct syntax: {enriched}"
-        );
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        insta::assert_snapshot!(format_enriched(&enriched));
     }
 
     #[test]
@@ -6343,16 +6361,8 @@ mod tests {
         // When a valid `@namespace(...)` precedes a bare `@version`, ANTLR
         // merges everything: `@namespace("com.example")@versionprotocol`.
         let msg = "no viable alternative at input '@namespace(\"com.example\")@versionprotocol'";
-        let enriched = enrich_antlr_error(msg).expect("should match").message;
-        assert!(
-            enriched.contains("@version"),
-            "should identify the bare annotation: {enriched}"
-        );
-        // Should NOT include the trailing keyword in the annotation name.
-        assert!(
-            !enriched.contains("@versionprotocol\""),
-            "should strip trailing keyword: {enriched}"
-        );
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        insta::assert_snapshot!(format_enriched(&enriched));
     }
 
     #[test]
@@ -6360,45 +6370,14 @@ mod tests {
         // ANTLR merges `import` and `"foo.avdl"` into `import"foo.avdl"`.
         let msg = r#"no viable alternative at input 'import"foo.avdl"'"#;
         let enriched = enrich_antlr_error(msg).expect("should match");
-        assert!(
-            enriched.message.contains("missing kind specifier"),
-            "should mention missing kind: {}",
-            enriched.message,
-        );
-        assert!(
-            enriched.message.contains("import idl"),
-            "should suggest `import idl`: {}",
-            enriched.message,
-        );
-        assert!(
-            enriched.message.contains("import protocol"),
-            "should suggest `import protocol`: {}",
-            enriched.message,
-        );
-        assert!(
-            enriched.message.contains("import schema"),
-            "should suggest `import schema`: {}",
-            enriched.message,
-        );
-        assert_eq!(
-            enriched.label.as_deref(),
-            Some("missing import kind"),
-        );
+        insta::assert_snapshot!(format_enriched(&enriched));
     }
 
     #[test]
     fn enrich_mismatched_input_expecting_lparen() {
         let msg = "mismatched input 'string' expecting '('";
-        let enriched = enrich_antlr_error(msg).expect("should match").message;
-        assert!(
-            enriched.contains("@name(value)"),
-            "should explain annotation syntax: {enriched}"
-        );
-        // Should preserve the original message for context.
-        assert!(
-            enriched.contains("mismatched input"),
-            "should include original message: {enriched}"
-        );
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        insta::assert_snapshot!(format_enriched(&enriched));
     }
 
     #[test]
@@ -6524,11 +6503,7 @@ mod tests {
     fn sanitize_removes_u001a_from_expecting_set() {
         let msg = "extraneous input 'extra' expecting {<EOF>, '\\u001A'}";
         let sanitized = sanitize_antlr_message(msg);
-        assert_eq!(sanitized, "unexpected 'extra' expected end of file");
-        assert!(
-            !sanitized.contains("\\u001A"),
-            "should not contain \\u001A: {sanitized}"
-        );
+        insta::assert_snapshot!(sanitized);
     }
 
     #[test]
@@ -6725,29 +6700,7 @@ mod tests {
         let msg = "mismatched input 'YELLOW' expecting {'null', 'true', 'false', \
                    '{', '[', StringLiteral, IntegerLiteral, FloatingPointLiteral}";
         let enriched = enrich_antlr_error(msg).expect("should match");
-        assert!(
-            enriched.message.contains("\"YELLOW\""),
-            "message should suggest quoting: {}",
-            enriched.message,
-        );
-        assert!(
-            enriched
-                .label
-                .as_deref()
-                .expect("should have label")
-                .contains("\"YELLOW\""),
-            "label should suggest quoting: {:?}",
-            enriched.label,
-        );
-        let help = enriched.help.as_deref().expect("should have help");
-        assert!(
-            help.contains("did you mean \"YELLOW\""),
-            "help should suggest quoting: {help}",
-        );
-        assert!(
-            help.contains("quoted strings"),
-            "help should mention quoted strings: {help}",
-        );
+        insta::assert_snapshot!(format_enriched(&enriched));
     }
 
     #[test]
@@ -6757,12 +6710,7 @@ mod tests {
         let msg = "mismatched input ';' expecting {'null', 'true', 'false', \
                    '{', '[', StringLiteral, IntegerLiteral, FloatingPointLiteral}";
         let enriched = enrich_antlr_error(msg).expect("should match");
-        // `;` is not a bare identifier, so no quoting hint should appear.
-        let help = enriched.help.as_deref().unwrap_or("");
-        assert!(
-            !help.contains("did you mean"),
-            "should not suggest quoting for non-identifiers: {help}",
-        );
+        insta::assert_snapshot!(format_enriched(&enriched));
     }
 
     // ------------------------------------------------------------------
@@ -7053,16 +7001,7 @@ protocol Test {
         // word `protocl` should be detected as a misspelling of `protocol`.
         let msg = "no viable alternative at input '@namespace(\"test\")protocl'";
         let enriched = enrich_antlr_error(msg).expect("should match");
-        assert!(
-            enriched.message.contains("protocl"),
-            "should mention the misspelled token: {}",
-            enriched.message,
-        );
-        assert!(
-            enriched.message.contains("protocol"),
-            "should suggest the correct keyword: {}",
-            enriched.message,
-        );
+        insta::assert_snapshot!(format_enriched(&enriched));
     }
 
     #[test]
@@ -7100,14 +7039,8 @@ protocol Test {
             label: Some("unexpected `}`".to_string()),
             help: None,
         };
-        let result = detect_empty_union(&error, source);
-        assert!(result.is_some(), "should detect empty union pattern");
-        let refined = result.expect("just checked");
-        assert!(
-            refined.message.contains("union must contain"),
-            "message should mention empty union: {}",
-            refined.message,
-        );
+        let refined = detect_empty_union(&error, source).expect("should detect empty union pattern");
+        insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
     // ------------------------------------------------------------------
@@ -7155,19 +7088,9 @@ protocol Test {
             label: Some("unexpected `>`".to_string()),
             help: None,
         };
-        let result = detect_empty_type_parameter(&error, source);
-        assert!(result.is_some(), "should detect empty type parameter for map");
-        let refined = result.expect("just checked");
-        assert!(
-            refined.message.contains("`map`"),
-            "message should mention map: {}",
-            refined.message,
-        );
-        assert!(
-            refined.message.contains("type parameter"),
-            "message should mention type parameter: {}",
-            refined.message,
-        );
+        let refined = detect_empty_type_parameter(&error, source)
+            .expect("should detect empty type parameter for map");
+        insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
     #[test]
@@ -7182,14 +7105,9 @@ protocol Test {
             label: Some("unexpected `>`".to_string()),
             help: None,
         };
-        let result = detect_empty_type_parameter(&error, source);
-        assert!(result.is_some(), "should detect empty type parameter for array");
-        let refined = result.expect("just checked");
-        assert!(
-            refined.message.contains("`array`"),
-            "message should mention array: {}",
-            refined.message,
-        );
+        let refined = detect_empty_type_parameter(&error, source)
+            .expect("should detect empty type parameter for array");
+        insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
     // ------------------------------------------------------------------
@@ -7217,19 +7135,9 @@ protocol Test {
             label: Some("unexpected `)`".to_string()),
             help: None,
         };
-        let result = detect_fixed_non_integer(&error, source);
-        assert!(result.is_some(), "should detect fixed non-integer pattern");
-        let refined = result.expect("just checked");
-        assert!(
-            refined.message.contains("integer size"),
-            "message should mention integer size: {}",
-            refined.message,
-        );
-        assert!(
-            refined.label.as_deref().unwrap_or("").contains("abc"),
-            "label should mention the non-integer content: {:?}",
-            refined.label,
-        );
+        let refined =
+            detect_fixed_non_integer(&error, source).expect("should detect fixed non-integer pattern");
+        insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
     // ------------------------------------------------------------------
@@ -7257,19 +7165,9 @@ protocol Test {
             label: Some("unexpected `{`".to_string()),
             help: None,
         };
-        let result = detect_misspelled_keyword(&error, source);
-        assert!(result.is_some(), "should detect misspelled keyword");
-        let refined = result.expect("just checked");
-        assert!(
-            refined.message.contains("recrod"),
-            "message should mention the misspelled keyword: {}",
-            refined.message,
-        );
-        assert!(
-            refined.message.contains("record"),
-            "message should suggest `record`: {}",
-            refined.message,
-        );
+        let refined =
+            detect_misspelled_keyword(&error, source).expect("should detect misspelled keyword");
+        insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
     // ------------------------------------------------------------------
@@ -7304,19 +7202,9 @@ protocol Test {
             label: Some("unexpected end of file".to_string()),
             help: Some("expected one of: protocol, ...".to_string()),
         };
-        let result = detect_unclosed_brace(&error, source);
-        assert!(result.is_some(), "should detect unclosed brace");
-        let refined = result.expect("just checked");
-        assert!(
-            refined.message.contains("missing closing `}`"),
-            "message should mention missing closing brace: {}",
-            refined.message,
-        );
-        assert!(
-            refined.message.contains("protocol"),
-            "message should identify the construct: {}",
-            refined.message,
-        );
+        let refined =
+            detect_unclosed_brace(&error, source).expect("should detect unclosed brace");
+        insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
     // ------------------------------------------------------------------
@@ -7353,19 +7241,9 @@ protocol Test {
             label: Some("line 5:13 unexpected '{' expected ';' or ','".to_string()),
             help: None,
         };
-        let result = detect_missing_close_brace_before_declaration(&error, source);
-        assert!(result.is_some(), "should detect missing close brace before declaration");
-        let refined = result.expect("just checked");
-        assert!(
-            refined.message.contains("missing closing `}`"),
-            "message should mention missing closing brace: {}",
-            refined.message,
-        );
-        assert!(
-            refined.message.contains("record"),
-            "message should identify the construct: {}",
-            refined.message,
-        );
+        let refined = detect_missing_close_brace_before_declaration(&error, source)
+            .expect("should detect missing close brace before declaration");
+        insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
     // ------------------------------------------------------------------
@@ -7469,11 +7347,7 @@ protocol Test {
                    'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', \
                    'error', 'record', 'array', 'map'}";
         let enriched = enrich_antlr_error(msg).expect("should match large set");
-        assert!(
-            enriched.message.contains("did you mean `record`?"),
-            "should suggest `record`: {}",
-            enriched.message,
-        );
+        insta::assert_snapshot!(format_enriched(&enriched));
     }
 
     // ------------------------------------------------------------------
@@ -7495,11 +7369,7 @@ protocol Test {
         // should detect the bare `@` pattern.
         let msg = "no viable alternative at input '@recordFoo'";
         let enriched = enrich_antlr_error(msg).expect("should match");
-        assert!(
-            enriched.message.contains("unexpected `@` before `record`"),
-            "should detect bare @ before keyword: {}",
-            enriched.message,
-        );
+        insta::assert_snapshot!(format_enriched(&enriched));
     }
 
     #[test]
@@ -7537,16 +7407,9 @@ protocol Test {
         // error without "mismatched input" or `{';', ','}` notation.
         let idl = "protocol Test {\n  record Foo {\n    string name\n    int age;\n  }\n}";
         let err = parse_idl_for_test(idl).unwrap_err();
-        let rendered = render_diagnostic(&err);
-        assert!(
-            !rendered.contains("mismatched input"),
-            "should not contain ANTLR jargon 'mismatched input': {rendered}"
-        );
-        assert!(
-            !rendered.contains("extraneous input"),
-            "should not contain ANTLR jargon 'extraneous input': {rendered}"
-        );
-        insta::assert_snapshot!(rendered);
+        // The snapshot captures the full diagnostic, which verifies no ANTLR
+        // jargon like "mismatched input" or "extraneous input" leaks through.
+        insta::assert_snapshot!(render_diagnostic(&err));
     }
 
     #[test]
@@ -7633,14 +7496,9 @@ protocol Test {
             label: Some("unexpected `{`".to_string()),
             help: None,
         };
-        let result = detect_missing_name(&error, source);
-        assert!(result.is_some(), "should detect missing name pattern");
-        let refined = result.expect("just checked");
-        assert!(
-            refined.message.contains("expected name after `protocol`"),
-            "message should mention missing name: {}",
-            refined.message,
-        );
+        let refined =
+            detect_missing_name(&error, source).expect("should detect missing name pattern");
+        insta::assert_snapshot!(format_syntax_error(&refined));
     }
 
     // ------------------------------------------------------------------
@@ -7668,13 +7526,8 @@ protocol Test {
             label: Some("unexpected `}`".to_string()),
             help: None,
         };
-        let result = detect_trailing_comma_in_enum(&error, source);
-        assert!(result.is_some(), "should detect trailing comma in enum");
-        let refined = result.expect("just checked");
-        assert!(
-            refined.message.contains("trailing comma"),
-            "message should mention trailing comma: {}",
-            refined.message,
-        );
+        let refined = detect_trailing_comma_in_enum(&error, source)
+            .expect("should detect trailing comma in enum");
+        insta::assert_snapshot!(format_syntax_error(&refined));
     }
 }

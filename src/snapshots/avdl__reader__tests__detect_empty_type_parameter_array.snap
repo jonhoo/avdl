@@ -1,0 +1,7 @@
+---
+source: src/reader.rs
+expression: format_syntax_error(&refined)
+---
+message: line 3:10 `array` type requires a type parameter
+label: missing type inside `<>`
+help: specify the value type, e.g., `array<string>`

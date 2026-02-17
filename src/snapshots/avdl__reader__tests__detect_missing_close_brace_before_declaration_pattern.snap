@@ -1,0 +1,7 @@
+---
+source: src/reader.rs
+expression: format_syntax_error(&refined)
+---
+message: line 5:13 missing closing `}` for record
+label: this record is never closed
+help: add a closing `}` before the next type declaration

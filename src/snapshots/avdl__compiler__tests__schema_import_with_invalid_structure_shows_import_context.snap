@@ -1,0 +1,13 @@
+---
+source: src/compiler.rs
+expression: stable
+---
+  x parse schema from `<tmpdir>/bad-structure.avsc`: invalid schema JSON: 42
+  `-> import schema <tmpdir>/bad-structure.avsc
+   ,-[<tmpdir>/test.avdl:2:3]
+ 1 | protocol Test {
+ 2 |   import schema "bad-structure.avsc";
+   :   ^^^|^^
+   :      `-- import schema <tmpdir>/bad-structure.avsc
+ 3 | }
+   `----

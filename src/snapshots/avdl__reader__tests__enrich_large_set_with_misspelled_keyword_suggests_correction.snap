@@ -1,0 +1,7 @@
+---
+source: src/reader.rs
+expression: format_enriched(&enriched)
+---
+message: unexpected token `recrod` -- did you mean `record`?
+label: did you mean `record`?
+help: expected one of: protocol, namespace, import, idl, schema, enum, fixed, error, record, array, map
