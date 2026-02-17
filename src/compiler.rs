@@ -629,17 +629,7 @@ fn parse_and_resolve(
     // Process declaration items in source order: resolve imports when
     // encountered, register local types when encountered. Any import-derived
     // warnings are appended to `ctx.warnings` by `process_decl_items`.
-    process_decl_items(
-        &decl_items,
-        &mut ctx.registry,
-        &mut ctx.import_ctx,
-        input_dir,
-        &mut ctx.messages,
-        &mut ctx.warnings,
-        &mut ctx.json_import_spans,
-        source,
-        source_name,
-    )?;
+    process_decl_items(&decl_items, ctx, input_dir, source, source_name)?;
 
     // For protocol files, rebuild the types list from the registry (which now
     // includes imported types in declaration order) and prepend imported
@@ -663,35 +653,20 @@ fn parse_and_resolve(
 }
 
 /// Process declaration items (imports and local types) in source order.
-#[allow(clippy::too_many_arguments)]
 fn process_decl_items(
     decl_items: &[DeclItem],
-    registry: &mut SchemaRegistry,
-    import_ctx: &mut ImportContext,
+    ctx: &mut CompileContext,
     current_dir: &Path,
-    messages: &mut HashMap<String, Message>,
-    warnings: &mut Vec<miette::Report>,
-    json_import_spans: &mut Vec<(String, Option<miette::SourceSpan>)>,
     source: &str,
     source_name: &str,
 ) -> miette::Result<()> {
     for item in decl_items {
         match item {
             DeclItem::Import(import) => {
-                resolve_single_import(
-                    import,
-                    registry,
-                    import_ctx,
-                    current_dir,
-                    messages,
-                    warnings,
-                    json_import_spans,
-                    source,
-                    source_name,
-                )?;
+                resolve_single_import(import, ctx, current_dir, source, source_name)?;
             }
             DeclItem::Type(schema, span, field_spans) => {
-                if let Err(msg) = registry.register(schema.clone()) {
+                if let Err(msg) = ctx.registry.register(schema.clone()) {
                     if let Some(span) = span {
                         return Err(ParseDiagnostic {
                             src: miette::NamedSource::new(source_name, source.to_string()),
@@ -711,7 +686,7 @@ fn process_decl_items(
                 // All validation errors are reported at once so users can fix
                 // multiple bad defaults in one edit cycle.
                 let errors = validate_record_field_defaults(schema, |full_name| {
-                    registry.lookup(full_name).cloned()
+                    ctx.registry.lookup(full_name).cloned()
                 });
                 if errors.is_empty() {
                     continue;
@@ -766,19 +741,14 @@ fn process_decl_items(
 
 /// Resolve a single import entry, registering schemas and merging messages
 /// into the current protocol.
-#[allow(clippy::too_many_arguments)]
 fn resolve_single_import(
     import: &crate::reader::ImportEntry,
-    registry: &mut SchemaRegistry,
-    import_ctx: &mut ImportContext,
+    ctx: &mut CompileContext,
     current_dir: &Path,
-    messages: &mut HashMap<String, Message>,
-    warnings: &mut Vec<miette::Report>,
-    json_import_spans: &mut Vec<(String, Option<miette::SourceSpan>)>,
     source: &str,
     source_name: &str,
 ) -> miette::Result<()> {
-    let resolved_path = match import_ctx.resolve_import(&import.path, current_dir) {
+    let resolved_path = match ctx.import_ctx.resolve_import(&import.path, current_dir) {
         Ok(p) => p,
         Err(e) => {
             if let Some(span) = import.span {
@@ -797,7 +767,7 @@ fn resolve_single_import(
     };
 
     // Skip files we've already imported (cycle prevention).
-    if import_ctx.mark_imported(&resolved_path) {
+    if ctx.import_ctx.mark_imported(&resolved_path) {
         return Ok(());
     }
 
@@ -808,7 +778,7 @@ fn resolve_single_import(
 
     match import.kind {
         ImportKind::Protocol => {
-            let imported_messages = import_protocol(&resolved_path, registry).map_err(|e| {
+            let imported_messages = import_protocol(&resolved_path, &mut ctx.registry).map_err(|e| {
                 wrap_import_error(
                     e,
                     import.span,
@@ -818,14 +788,14 @@ fn resolve_single_import(
                     "protocol",
                 )
             })?;
-            messages.extend(imported_messages);
+            ctx.messages.extend(imported_messages);
 
             // Track the import so unresolved references from this .avpr can
             // be attributed to the import statement in error diagnostics.
-            json_import_spans.push((resolved_path.display().to_string(), import.span));
+            ctx.json_import_spans.push((resolved_path.display().to_string(), import.span));
         }
         ImportKind::Schema => {
-            import_schema(&resolved_path, registry).map_err(|e| {
+            import_schema(&resolved_path, &mut ctx.registry).map_err(|e| {
                 wrap_import_error(
                     e,
                     import.span,
@@ -838,7 +808,7 @@ fn resolve_single_import(
 
             // Track the import so unresolved references from this .avsc can
             // be attributed to the import statement in error diagnostics.
-            json_import_spans.push((resolved_path.display().to_string(), import.span));
+            ctx.json_import_spans.push((resolved_path.display().to_string(), import.span));
         }
         ImportKind::Idl => {
             let imported_source = fs::read_to_string(&resolved_path)
@@ -857,26 +827,22 @@ fn resolve_single_import(
                 .and_then(|n| n.to_str())
                 .unwrap_or(import.path.as_str());
             for w in import_warnings {
-                warnings.push(miette::Report::new(w).wrap_err(import_file_name.to_string()));
+                ctx.warnings.push(miette::Report::new(w).wrap_err(import_file_name.to_string()));
             }
 
             // If the imported IDL is a protocol, merge its messages.
             if let IdlFile::Protocol(imported_protocol) = &imported_idl {
-                messages.extend(imported_protocol.messages.clone());
+                ctx.messages.extend(imported_protocol.messages.clone());
             }
 
             // Recursively process declaration items from the imported file.
             // IDL imports use their own source text for span tracking, so
-            // json_import_spans is passed through to capture any nested
+            // `ctx.json_import_spans` is passed through to capture any nested
             // JSON imports within the imported IDL file.
             process_decl_items(
                 &nested_decl_items,
-                registry,
-                import_ctx,
+                ctx,
                 &import_dir,
-                messages,
-                warnings,
-                json_import_spans,
                 &imported_source,
                 &imported_name,
             )
