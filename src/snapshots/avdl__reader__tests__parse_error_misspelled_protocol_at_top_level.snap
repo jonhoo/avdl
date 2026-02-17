@@ -1,0 +1,12 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 1:0 unexpected token `protocl` -- did you mean `protocol`?
+   ,-[<input>:1:1]
+ 1 | protocl Test {
+   : ^^^|^^^
+   :    `-- did you mean `protocol`?
+ 2 |   record Foo {
+   `----
+  help: expected one of: protocol, namespace, import, schema, enum, fixed, error, record, @

@@ -3,11 +3,11 @@ source: tests/error_reporting.rs
 expression: error
 ---
   x parse IDL source
-  `-> line 1:0 unexpected token `protocl`
+  `-> line 1:0 unexpected token `protocl` -- did you mean `protocol`?
    ,-[<input>:1:1]
  1 | protocl P { record R { int x; } }
    : ^^^|^^^
-   :    `-- unexpected `protocl`
+   :    `-- did you mean `protocol`?
    `----
   help: expected one of: protocol, namespace, import, schema, enum, fixed,
         error, record, @

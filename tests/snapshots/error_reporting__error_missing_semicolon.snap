@@ -3,9 +3,9 @@ source: tests/error_reporting.rs
 expression: error
 ---
   x parse IDL source
-  `-> line 1:30 mismatched input '}' expecting {';', ','}
+  `-> line 1:30 unexpected '}' expected ';' or ','
    ,-[<input>:1:31]
  1 | protocol P { record R { int x } }
    :                               |
-   :                               `-- line 1:30 mismatched input '}' expecting {';', ','}
+   :                               `-- line 1:30 unexpected '}' expected ';' or ','
    `----

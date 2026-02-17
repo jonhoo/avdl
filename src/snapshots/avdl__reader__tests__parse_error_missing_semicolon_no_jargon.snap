@@ -1,0 +1,12 @@
+---
+source: src/reader.rs
+expression: rendered
+---
+  x line 4:4 unexpected 'int' expected ';' or ','
+   ,-[<input>:4:5]
+ 3 |     string name
+ 4 |     int age;
+   :     ^|^
+   :      `-- line 4:4 unexpected 'int' expected ';' or ','
+ 5 |   }
+   `----

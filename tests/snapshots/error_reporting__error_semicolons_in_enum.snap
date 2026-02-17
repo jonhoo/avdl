@@ -3,11 +3,11 @@ source: tests/error_reporting.rs
 expression: error
 ---
   x parse IDL source
-  `-> line 1:23 mismatched input ';' expecting {'}', ','}
+  `-> line 1:23 unexpected ';' expected '}' or ','
    ,-[<input>:1:24]
  1 | protocol P { enum E { A; B; C } }
    :                        |
-   :                        `-- line 1:23 mismatched input ';' expecting {'}', ','}
+   :                        `-- line 1:23 unexpected ';' expected '}' or ','
    `----
 
 Error: 
@@ -37,9 +37,9 @@ Error:
         identifier
 
 Error: 
-  x line 1:32 extraneous input '}' expecting end of file
+  x line 1:32 unexpected '}' expected end of file
    ,-[<input>:1:33]
  1 | protocol P { enum E { A; B; C } }
    :                                 |
-   :                                 `-- line 1:32 extraneous input '}' expecting end of file
+   :                                 `-- line 1:32 unexpected '}' expected end of file
    `----

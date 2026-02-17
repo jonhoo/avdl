@@ -1,0 +1,13 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 6:2 trailing comma is not allowed in enum declaration
+   ,-[<input>:5:9]
+ 4 |     GREEN,
+ 5 |     BLUE,
+   :         |
+   :         `-- trailing comma
+ 6 |   }
+   `----
+  help: remove the comma after `BLUE`

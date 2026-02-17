@@ -1,0 +1,13 @@
+---
+source: src/reader.rs
+expression: render_diagnostic(&err)
+---
+  x line 2:9 expected name after `record`, found `{`
+   ,-[<input>:2:10]
+ 1 | protocol Test {
+ 2 |   record {
+   :          |
+   :          `-- expected record name before `{`
+ 3 |     string name;
+   `----
+  help: add a name, e.g., `record MyRecord { ... }`

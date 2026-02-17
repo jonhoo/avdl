@@ -278,6 +278,22 @@ fn enrich_antlr_error(msg: &str) -> Option<EnrichedError> {
     if let Some(input) = extract_no_viable_input(msg)
         && let Some(anno_name) = extract_annotation_name(input)
     {
+        // When the annotation name starts with a keyword (e.g., `recordFoo`
+        // from `@ record Foo`), the user likely placed a bare `@` before a
+        // keyword. The parser greedily consumed the keyword and subsequent
+        // tokens as parts of the annotation name. Produce a more helpful
+        // error explaining that the `@` is out of place.
+        if let Some(kw) = annotation_name_starts_with_keyword(anno_name) {
+            return Some(EnrichedError {
+                message: format!(
+                    "unexpected `@` before `{kw}` -- \
+                     did you mean to add an annotation? \
+                     annotations use `@name(\"value\")` syntax"
+                ),
+                label: Some(format!("unexpected `@` before `{kw}`")),
+                help: None,
+            });
+        }
         return Some(EnrichedError {
             message: format!(
                 "annotation `@{anno_name}` is missing its value -- \
@@ -503,6 +519,22 @@ fn build_unexpected_token_error(
         };
     }
 
+    // When the offending token looks like a misspelled keyword, suggest the
+    // correct spelling. This catches top-level typos like `protocl Test {`
+    // where the "no viable alternative" pattern doesn't fire because there
+    // is no preceding annotation to merge with.
+    if looks_like_bare_identifier(offending) {
+        if let Some(suggestion) = suggest_keyword(offending) {
+            return EnrichedError {
+                message: format!(
+                    "unexpected token `{offending}` -- did you mean `{suggestion}`?"
+                ),
+                label: Some(format!("did you mean `{suggestion}`?")),
+                help,
+            };
+        }
+    }
+
     EnrichedError {
         message: format!("unexpected token `{offending}`"),
         label: Some(format!("unexpected `{offending}`")),
@@ -535,11 +567,14 @@ fn format_expected_help(tokens: &str) -> Option<String> {
 
 /// Sanitizes a raw ANTLR error message for display to users.
 ///
-/// Removes ANTLR-internal tokens that are meaningless to users:
-/// - `'\u001A'` (ASCII SUB character, ANTLR's alternate EOF marker)
-/// - `DocComment` (internal token name for `/** ... */` comments)
+/// Performs several rewrites to remove parser-internal terminology:
 ///
-/// Also replaces `<EOF>` with the more readable `end of file`.
+/// - Removes ANTLR-internal tokens (`'\u001A'`, `DocComment`) from
+///   expected-token sets.
+/// - Replaces `<EOF>` with the more readable `end of file`.
+/// - Rewrites `expecting {';', ','}` set notation to `expected ';' or ','`.
+/// - Replaces "extraneous input" and "mismatched input" with "unexpected".
+/// - Replaces "no viable alternative at input" with "unexpected input".
 ///
 /// This is applied as a fallback when `enrich_antlr_error` does not match
 /// any known pattern, ensuring that even passthrough messages are clean.
@@ -547,14 +582,15 @@ fn sanitize_antlr_message(msg: &str) -> String {
     // Only process messages that contain an `expecting {…}` set.
     let Some(set_start_rel) = msg.find("expecting {") else {
         // No token set to sanitize; just replace bare `<EOF>` mentions
-        // in other positions (e.g., "extraneous input '<EOF>'").
-        return msg.replace("<EOF>", "end of file");
+        // in other positions (e.g., "extraneous input '<EOF>'"), then
+        // rewrite ANTLR jargon terms.
+        return rewrite_antlr_jargon(&msg.replace("<EOF>", "end of file"));
     };
     let prefix_end = set_start_rel + "expecting {".len();
     // Find the closing `}` of the token set, skipping `}` characters inside
     // single-quoted token names like `'}'`.
     let Some(brace_close_rel) = find_closing_brace(&msg[prefix_end..]) else {
-        return msg.replace("<EOF>", "end of file");
+        return rewrite_antlr_jargon(&msg.replace("<EOF>", "end of file"));
     };
     let set_str = &msg[prefix_end..prefix_end + brace_close_rel];
 
@@ -580,23 +616,59 @@ fn sanitize_antlr_message(msg: &str) -> String {
     let before_expecting = &msg[..set_start_rel];
     let after_brace = &msg[prefix_end + brace_close_rel + 1..];
 
-    if cleaned.is_empty() {
+    // Build the message with the cleaned-up expected-token list, then apply
+    // jargon rewriting to the prefix (which may still contain "extraneous
+    // input" or "mismatched input").
+    let result = if cleaned.is_empty() {
         // All tokens were filtered out; drop the `expecting {…}` entirely.
         format!("{}{}", before_expecting.trim_end(), after_brace)
     } else if cleaned.len() == 1 {
-        // Single token: use `expecting <token>` without braces.
+        // Single token: use `expected <token>` without braces.
         format!(
-            "{}expecting {}{}",
+            "{}expected {}{}",
             before_expecting, cleaned[0], after_brace
         )
-    } else {
+    } else if cleaned.len() == 2 {
+        // Two tokens: use natural "expected X or Y" instead of `{X, Y}`.
         format!(
-            "{}expecting {{{}}}{}",
+            "{}expected {} or {}{}",
+            before_expecting, cleaned[0], cleaned[1], after_brace
+        )
+    } else {
+        // Three or more: comma-separated list with "or" before the last.
+        let all_but_last = &cleaned[..cleaned.len() - 1];
+        let last = &cleaned[cleaned.len() - 1];
+        format!(
+            "{}expected {}, or {}{}",
             before_expecting,
-            cleaned.join(", "),
+            all_but_last.join(", "),
+            last,
             after_brace
         )
+    };
+
+    rewrite_antlr_jargon(&result)
+}
+
+/// Rewrites ANTLR error-strategy terms ("extraneous input", "mismatched input",
+/// "no viable alternative at input") to user-friendly language.
+///
+/// These terms are meaningful to parser implementors but confusing to end users.
+/// We normalize them all to "unexpected" phrasing.
+fn rewrite_antlr_jargon(msg: &str) -> String {
+    // "extraneous input 'X' expecting ..." -> "unexpected 'X', expected ..."
+    if let Some(rest) = msg.strip_prefix("extraneous input ") {
+        return format!("unexpected {}", rest.replacen("expecting", "expected", 1));
     }
+    // "mismatched input 'X' expecting ..." -> "unexpected 'X', expected ..."
+    if let Some(rest) = msg.strip_prefix("mismatched input ") {
+        return format!("unexpected {}", rest.replacen("expecting", "expected", 1));
+    }
+    // "no viable alternative at input 'X'" -> "unexpected input 'X'"
+    if msg.starts_with("no viable alternative at input ") {
+        return msg.replace("no viable alternative at input", "unexpected input");
+    }
+    msg.to_string()
 }
 
 /// Splits an ANTLR expected-token set string on commas, respecting
@@ -902,6 +974,31 @@ fn split_trailing_keyword(merged: &str) -> &str {
     merged
 }
 
+/// The keywords that indicate a bare `@` was placed before a keyword like
+/// `record` or `enum`. These are the declaration-introducing keywords that
+/// would never be valid annotation names.
+const DECLARATION_KEYWORDS: &[&str] = &[
+    "record", "enum", "fixed", "error", "protocol", "import", "schema",
+];
+
+/// Checks whether an annotation name starts with a known declaration keyword.
+///
+/// When ANTLR merges `@ record Foo` into `@recordFoo`, the extracted
+/// annotation name is `recordFoo`. This function detects that the name
+/// starts with a keyword, indicating the `@` was misplaced rather than
+/// being an intentional annotation.
+///
+/// Returns the keyword if found, `None` otherwise.
+fn annotation_name_starts_with_keyword(name: &str) -> Option<&'static str> {
+    let lower = name.to_ascii_lowercase();
+    for &kw in DECLARATION_KEYWORDS {
+        if lower.starts_with(kw) {
+            return Some(kw);
+        }
+    }
+    None
+}
+
 /// Extracts the trailing identifier-like token from a "no viable alternative"
 /// merged input string. ANTLR concatenates all consumed tokens into a single
 /// string like `@namespace("test")protocl`. This function returns the last
@@ -953,6 +1050,11 @@ fn extract_trailing_identifier(input: &str) -> Option<&str> {
 /// - **Fixed with non-integer size** (`fixed MD5(abc)`): When `)` is
 ///   unexpected after `fixed Name(`, the error is rewritten to explain that
 ///   the size must be an integer.
+/// - **Missing name** (`protocol {`, `record {`): When a declaration keyword
+///   is followed directly by `{` without an identifier, produces a targeted
+///   "expected name after `keyword`" message.
+/// - **Trailing comma in enum** (`RED, GREEN, BLUE,`): When `}` follows a
+///   comma inside an enum body, says the trailing comma is not allowed.
 /// - **Misspelled keywords** (`recrod` instead of `record`): When a keyword
 ///   typo causes cascading errors, scans the source near the first error for
 ///   identifiers close to keywords and suggests the correction.
@@ -982,6 +1084,25 @@ fn refine_errors_with_source(errors: &[SyntaxError], source: &str) -> Option<Vec
     // with a large expected-token set, but doesn't explain that the size
     // must be an integer.
     if let Some(refined) = detect_fixed_non_integer(first, source) {
+        return Some(vec![refined]);
+    }
+
+    // ---- Pattern: missing name after declaration keyword ----
+    //
+    // When `protocol {` or `record {` is written without an identifier name,
+    // ANTLR sees `{` where it expects a name and produces cascading errors.
+    // We detect this pattern by checking if the token before `{` is a
+    // declaration keyword.
+    if let Some(refined) = detect_missing_name(first, source) {
+        return Some(vec![refined]);
+    }
+
+    // ---- Pattern: trailing comma in enum ----
+    //
+    // When `enum Color { RED, GREEN, BLUE, }` has a trailing comma, ANTLR
+    // expects another enum symbol but finds `}`. We detect `}` preceded by
+    // `,` inside an enum body and produce a targeted message.
+    if let Some(refined) = detect_trailing_comma_in_enum(first, source) {
         return Some(vec![refined]);
     }
 
@@ -1124,6 +1245,136 @@ fn detect_fixed_non_integer(error: &SyntaxError, source: &str) -> Option<SyntaxE
         ),
         label: Some(format!("`{bad_size}` is not an integer")),
         help: None,
+    })
+}
+
+/// Detects missing name after a declaration keyword (`protocol`, `record`,
+/// `enum`, `fixed`, `error`) by checking if the error token is `{` and the
+/// preceding non-whitespace token is a declaration keyword.
+///
+/// For example, `protocol {` (missing protocol name) produces an error at
+/// `{`. We detect this and produce a targeted "expected name after `protocol`"
+/// message.
+fn detect_missing_name(error: &SyntaxError, source: &str) -> Option<SyntaxError> {
+    // The error token should be `{`.
+    let error_text = source.get(error.offset..error.offset + error.length)?;
+    if error_text.trim() != "{" {
+        return None;
+    }
+
+    let before = source[..error.offset].trim_end();
+
+    // Extract the word immediately before `{`.
+    let kw_end = before.len();
+    let kw_start = before
+        .bytes()
+        .rposition(|b| !b.is_ascii_alphanumeric() && b != b'_')
+        .map(|p| p + 1)
+        .unwrap_or(0);
+
+    if kw_start >= kw_end {
+        return None;
+    }
+
+    let keyword = &before[kw_start..kw_end];
+
+    // Only trigger for declaration keywords that require a name.
+    let construct = match keyword {
+        "protocol" => "protocol",
+        "record" => "record",
+        "enum" => "enum",
+        "fixed" => "fixed",
+        "error" => "error record",
+        _ => return None,
+    };
+
+    let line_prefix = extract_line_prefix(&error.message);
+
+    Some(SyntaxError {
+        offset: error.offset,
+        length: error.length,
+        message: format!(
+            "{line_prefix}expected name after `{keyword}`, found `{{`"
+        ),
+        label: Some(format!("expected {construct} name before `{{`")),
+        help: {
+            // Build a capitalized example name for the hint.
+            let capitalized = keyword[..1].to_uppercase() + &keyword[1..];
+            Some(format!(
+                "add a name, e.g., `{keyword} My{capitalized} {{ ... }}`"
+            ))
+        },
+    })
+}
+
+/// Detects a trailing comma in an enum declaration by checking if `}` follows
+/// `,` inside an enum body.
+///
+/// For example, `enum Color { RED, GREEN, BLUE, }` has a trailing comma after
+/// `BLUE`. ANTLR expects another enum symbol after the comma but finds `}`.
+fn detect_trailing_comma_in_enum(error: &SyntaxError, source: &str) -> Option<SyntaxError> {
+    // The error token should be `}`.
+    let error_text = source.get(error.offset..error.offset + error.length)?;
+    if error_text.trim() != "}" {
+        return None;
+    }
+
+    let before = source[..error.offset].trim_end();
+
+    // Check if the previous non-whitespace character is `,`.
+    if !before.ends_with(',') {
+        return None;
+    }
+
+    // Verify we're inside an enum by searching backwards for `enum`.
+    // We look for `enum <Name> {` before the comma.
+    let before_comma = &before[..before.len() - 1];
+    // Check if any `enum` keyword appears earlier in the source, with a `{`
+    // between it and the current position.
+    let has_enum = source[..error.offset]
+        .rmatch_indices("enum")
+        .any(|(pos, _)| {
+            // Make sure `enum` is followed by a name and `{`.
+            let after_enum = &source[pos + 4..error.offset];
+            after_enum.contains('{')
+        });
+
+    if !has_enum {
+        return None;
+    }
+
+    // Find the last enum symbol before the trailing comma.
+    let before_comma_trimmed = before_comma.trim_end();
+    let sym_end = before_comma_trimmed.len();
+    let sym_start = before_comma_trimmed
+        .bytes()
+        .rposition(|b| !b.is_ascii_alphanumeric() && b != b'_')
+        .map(|p| p + 1)
+        .unwrap_or(0);
+    let last_symbol = if sym_start < sym_end {
+        &before_comma_trimmed[sym_start..sym_end]
+    } else {
+        ""
+    };
+
+    // Point the error at the trailing comma.
+    let comma_offset = before.len() - 1;
+    let line_prefix = extract_line_prefix(&error.message);
+
+    let hint = if last_symbol.is_empty() {
+        "remove the trailing comma".to_string()
+    } else {
+        format!("remove the comma after `{last_symbol}`")
+    };
+
+    Some(SyntaxError {
+        offset: comma_offset,
+        length: 1,
+        message: format!(
+            "{line_prefix}trailing comma is not allowed in enum declaration"
+        ),
+        label: Some("trailing comma".to_string()),
+        help: Some(hint),
     })
 }
 
@@ -5721,13 +5972,20 @@ mod tests {
 
     #[test]
     fn enrich_large_mismatched_token() {
-        // Mismatched input with a large expected-token set.
+        // Mismatched input with a large expected-token set. Since `protocl` is
+        // close to `protocol`, the enrichment now suggests the correct keyword.
         let msg = "mismatched input 'protocl' expecting {<EOF>, '\\u001A', \
                    DocComment, 'protocol', 'namespace', 'import', 'schema', \
                    'enum', 'fixed', 'error', 'record', '@'}";
         let enriched = enrich_antlr_error(msg).expect("should match large set");
-        assert_eq!(enriched.message, "unexpected token `protocl`");
-        assert_eq!(enriched.label.as_deref(), Some("unexpected `protocl`"));
+        assert_eq!(
+            enriched.message,
+            "unexpected token `protocl` -- did you mean `protocol`?"
+        );
+        assert_eq!(
+            enriched.label.as_deref(),
+            Some("did you mean `protocol`?")
+        );
     }
 
     #[test]
@@ -5801,7 +6059,7 @@ mod tests {
     fn sanitize_removes_u001a_from_expecting_set() {
         let msg = "extraneous input 'extra' expecting {<EOF>, '\\u001A'}";
         let sanitized = sanitize_antlr_message(msg);
-        assert_eq!(sanitized, "extraneous input 'extra' expecting end of file");
+        assert_eq!(sanitized, "unexpected 'extra' expected end of file");
         assert!(
             !sanitized.contains("\\u001A"),
             "should not contain \\u001A: {sanitized}"
@@ -5814,7 +6072,7 @@ mod tests {
         let sanitized = sanitize_antlr_message(msg);
         assert_eq!(
             sanitized,
-            "mismatched input 'foo' expecting {end of file, ';'}"
+            "unexpected 'foo' expected end of file or ';'"
         );
     }
 
@@ -5824,7 +6082,7 @@ mod tests {
         let sanitized = sanitize_antlr_message(msg);
         assert_eq!(
             sanitized,
-            "extraneous input 'x' expecting {end of file, ';'}"
+            "unexpected 'x' expected end of file or ';'"
         );
     }
 
@@ -5832,21 +6090,22 @@ mod tests {
     fn sanitize_removes_doc_comment_from_expecting_set() {
         let msg = "mismatched input 'x' expecting {DocComment, ';', ','}";
         let sanitized = sanitize_antlr_message(msg);
-        assert_eq!(sanitized, "mismatched input 'x' expecting {';', ','}");
+        assert_eq!(sanitized, "unexpected 'x' expected ';' or ','");
     }
 
     #[test]
     fn sanitize_no_expecting_set_replaces_eof() {
         let msg = "extraneous input '<EOF>' at position 42";
         let sanitized = sanitize_antlr_message(msg);
-        assert_eq!(sanitized, "extraneous input 'end of file' at position 42");
+        assert_eq!(sanitized, "unexpected 'end of file' at position 42");
     }
 
     #[test]
     fn sanitize_passthrough_normal_message() {
+        // Two-token sets now use "expected X or Y" instead of `{X, Y}`.
         let msg = "mismatched input '}' expecting {';', ','}";
         let sanitized = sanitize_antlr_message(msg);
-        assert_eq!(sanitized, msg);
+        assert_eq!(sanitized, "unexpected '}' expected ';' or ','");
     }
 
     #[test]
@@ -5855,7 +6114,7 @@ mod tests {
         // "end of file" (not removed), since it's useful information.
         let msg = "extraneous input 'x' expecting {DocComment, '\\u001A', <EOF>}";
         let sanitized = sanitize_antlr_message(msg);
-        assert_eq!(sanitized, "extraneous input 'x' expecting end of file");
+        assert_eq!(sanitized, "unexpected 'x' expected end of file");
     }
 
     #[test]
@@ -5864,7 +6123,7 @@ mod tests {
         // the expecting clause should be dropped entirely.
         let msg = "extraneous input 'x' expecting {DocComment, '\\u001A'}";
         let sanitized = sanitize_antlr_message(msg);
-        assert_eq!(sanitized, "extraneous input 'x'");
+        assert_eq!(sanitized, "unexpected 'x'");
     }
 
     // ------------------------------------------------------------------
@@ -6591,5 +6850,236 @@ protocol Test {
     #[test]
     fn identify_construct_unknown() {
         assert_eq!(identify_construct("  foobar Baz"), None);
+    }
+
+    // ------------------------------------------------------------------
+    // Issue 75ee6b7a: misspelled `protocol` at top level gets did-you-mean
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_misspelled_protocol_at_top_level() {
+        // `protocl Test {` should suggest `protocol`, not just say
+        // "unexpected token `protocl`" with a long expected-token list.
+        let idl = "protocl Test {\n  record Foo {\n    string name;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn enrich_large_set_with_misspelled_keyword_suggests_correction() {
+        // When the offending token is close to a keyword and the expected-token
+        // set is large, the enrichment should suggest the correct keyword.
+        let msg = "extraneous input 'recrod' expecting {DocComment, 'protocol', \
+                   'namespace', 'import', 'idl', 'schema', 'enum', 'fixed', \
+                   'error', 'record', 'array', 'map'}";
+        let enriched = enrich_antlr_error(msg).expect("should match large set");
+        assert!(
+            enriched.message.contains("did you mean `record`?"),
+            "should suggest `record`: {}",
+            enriched.message,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue 0b8fd047: bare @ merges tokens into annotation name
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_bare_at_sign_before_keyword() {
+        // `@ record Foo {` should not produce an error about `@recordFoo`;
+        // it should say the `@` is unexpected before `record`.
+        let idl = "protocol Test {\n  @ record Foo {\n    string name;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn enrich_annotation_starting_with_keyword() {
+        // When the annotation name starts with a keyword, the enrichment
+        // should detect the bare `@` pattern.
+        let msg = "no viable alternative at input '@recordFoo'";
+        let enriched = enrich_antlr_error(msg).expect("should match");
+        assert!(
+            enriched.message.contains("unexpected `@` before `record`"),
+            "should detect bare @ before keyword: {}",
+            enriched.message,
+        );
+    }
+
+    #[test]
+    fn annotation_name_starts_with_keyword_detects_record() {
+        assert_eq!(
+            annotation_name_starts_with_keyword("recordFoo"),
+            Some("record"),
+        );
+    }
+
+    #[test]
+    fn annotation_name_starts_with_keyword_detects_enum() {
+        assert_eq!(
+            annotation_name_starts_with_keyword("enumColor"),
+            Some("enum"),
+        );
+    }
+
+    #[test]
+    fn annotation_name_starts_with_keyword_not_annotation() {
+        // Normal annotation names should not trigger.
+        assert_eq!(
+            annotation_name_starts_with_keyword("beta"),
+            None,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue a9a51656: ANTLR jargon leaks in error messages
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_missing_semicolon_no_jargon() {
+        // `string name` without a semicolon should produce user-friendly
+        // error without "mismatched input" or `{';', ','}` notation.
+        let idl = "protocol Test {\n  record Foo {\n    string name\n    int age;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        let rendered = render_diagnostic(&err);
+        assert!(
+            !rendered.contains("mismatched input"),
+            "should not contain ANTLR jargon 'mismatched input': {rendered}"
+        );
+        assert!(
+            !rendered.contains("extraneous input"),
+            "should not contain ANTLR jargon 'extraneous input': {rendered}"
+        );
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn rewrite_antlr_jargon_extraneous_input() {
+        let msg = "extraneous input '}' expected ';' or ','";
+        let rewritten = rewrite_antlr_jargon(msg);
+        assert_eq!(rewritten, "unexpected '}' expected ';' or ','");
+    }
+
+    #[test]
+    fn rewrite_antlr_jargon_mismatched_input() {
+        let msg = "mismatched input 'Baz' expected ';' or ','";
+        let rewritten = rewrite_antlr_jargon(msg);
+        assert_eq!(rewritten, "unexpected 'Baz' expected ';' or ','");
+    }
+
+    #[test]
+    fn rewrite_antlr_jargon_no_viable_alternative() {
+        let msg = "no viable alternative at input 'fixedBad(3.5'";
+        let rewritten = rewrite_antlr_jargon(msg);
+        assert_eq!(rewritten, "unexpected input 'fixedBad(3.5'");
+    }
+
+    #[test]
+    fn rewrite_antlr_jargon_passthrough() {
+        let msg = "some other error message";
+        let rewritten = rewrite_antlr_jargon(msg);
+        assert_eq!(rewritten, "some other error message");
+    }
+
+    #[test]
+    fn sanitize_set_notation_two_tokens() {
+        // `{';', ','}` should become `';' or ','`.
+        let msg = "mismatched input 'Baz' expecting {';', ','}";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(sanitized, "unexpected 'Baz' expected ';' or ','");
+    }
+
+    #[test]
+    fn sanitize_set_notation_three_tokens() {
+        // Three-token sets use comma-separated list with "or" before last.
+        let msg = "mismatched input 'x' expecting {';', ',', '}'}";
+        let sanitized = sanitize_antlr_message(msg);
+        assert_eq!(sanitized, "unexpected 'x' expected ';', ',', or '}'");
+    }
+
+    // ------------------------------------------------------------------
+    // Issue d23353e8: missing protocol name produces cascade of errors
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_missing_protocol_name() {
+        // `protocol {` (missing name) should produce a single clear error
+        // saying "expected name after `protocol`".
+        let idl = "protocol {\n  record Foo {\n    string name;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn parse_error_missing_record_name() {
+        // `record {` (missing name) should also get a targeted error.
+        let idl = "protocol Test {\n  record {\n    string name;\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn parse_error_missing_enum_name() {
+        // `enum {` (missing name) should get a targeted error.
+        let idl = "protocol Test {\n  enum {\n    RED, GREEN, BLUE\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn detect_missing_name_protocol() {
+        let source = "protocol {\n  record Foo { string name; }\n}";
+        let brace_pos = source.find('{').expect("has {");
+        let error = SyntaxError {
+            offset: brace_pos,
+            length: 1,
+            message: "line 1:9 unexpected token `{`".to_string(),
+            label: Some("unexpected `{`".to_string()),
+            help: None,
+        };
+        let result = detect_missing_name(&error, source);
+        assert!(result.is_some(), "should detect missing name pattern");
+        let refined = result.expect("just checked");
+        assert!(
+            refined.message.contains("expected name after `protocol`"),
+            "message should mention missing name: {}",
+            refined.message,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Issue dbbae3e1: trailing comma in enum gives unhelpful error
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_error_trailing_comma_in_enum() {
+        // `BLUE,` with trailing comma should say "trailing comma not allowed",
+        // not "unexpected token `}`".
+        let idl = "protocol Test {\n  enum Color {\n    RED,\n    GREEN,\n    BLUE,\n  }\n}";
+        let err = parse_idl_for_test(idl).unwrap_err();
+        insta::assert_snapshot!(render_diagnostic(&err));
+    }
+
+    #[test]
+    fn detect_trailing_comma_in_enum_pattern() {
+        let source = "protocol T {\n  enum Color {\n    RED,\n    GREEN,\n    BLUE,\n  }\n}";
+        let close_brace_pos = source.rfind('}').expect("has }") - 2;
+        // The error is on `}` after the trailing comma.
+        let inner_close = source[..source.len() - 2].rfind('}').expect("has inner }");
+        let error = SyntaxError {
+            offset: inner_close,
+            length: 1,
+            message: "line 6:2 unexpected token `}`".to_string(),
+            label: Some("unexpected `}`".to_string()),
+            help: None,
+        };
+        let result = detect_trailing_comma_in_enum(&error, source);
+        assert!(result.is_some(), "should detect trailing comma in enum");
+        let refined = result.expect("just checked");
+        assert!(
+            refined.message.contains("trailing comma"),
+            "message should mention trailing comma: {}",
+            refined.message,
+        );
     }
 }

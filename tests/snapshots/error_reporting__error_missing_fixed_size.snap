@@ -3,9 +3,9 @@ source: tests/error_reporting.rs
 expression: error
 ---
   x parse IDL source
-  `-> line 1:20 no viable alternative at input 'fixedF;'
+  `-> line 1:20 unexpected input 'fixedF;'
    ,-[<input>:1:21]
  1 | protocol P { fixed F; }
    :                     |
-   :                     `-- line 1:20 no viable alternative at input 'fixedF;'
+   :                     `-- line 1:20 unexpected input 'fixedF;'
    `----
