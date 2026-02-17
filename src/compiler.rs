@@ -932,58 +932,7 @@ fn wrap_import_error(
 // distance to find close matches.
 
 use crate::model::schema::PRIMITIVE_TYPE_NAMES;
-
-/// Compute the Levenshtein edit distance between two strings.
-///
-/// Uses the standard dynamic programming algorithm with a single-row buffer
-/// (O(min(m, n)) space). This is sufficient for type names, which are short.
-fn levenshtein(a: &str, b: &str) -> usize {
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let m = a_chars.len();
-    let n = b_chars.len();
-
-    if m == 0 {
-        return n;
-    }
-    if n == 0 {
-        return m;
-    }
-
-    // `row[j]` holds the edit distance between `a[..i]` and `b[..j]`.
-    let mut row: Vec<usize> = (0..=n).collect();
-
-    for i in 1..=m {
-        let mut prev = row[0];
-        row[0] = i;
-        for j in 1..=n {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] {
-                0
-            } else {
-                1
-            };
-            let val = (row[j] + 1) // deletion
-                .min(row[j - 1] + 1) // insertion
-                .min(prev + cost); // substitution
-            prev = row[j];
-            row[j] = val;
-        }
-    }
-
-    row[n]
-}
-
-/// Maximum edit distance for a suggestion to be considered "close enough."
-///
-/// For short names (length <= 4), we require distance <= 1 to avoid noisy
-/// suggestions. For longer names, we allow distance <= 2.
-fn max_distance(name_len: usize) -> usize {
-    if name_len <= 4 {
-        1
-    } else {
-        2
-    }
-}
+use crate::suggest::{levenshtein, max_edit_distance};
 
 /// Build a "did you mean?" help string for an unresolved type name.
 ///
@@ -1012,7 +961,7 @@ fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<S
     // Check against Avro primitive type names.
     for &prim in PRIMITIVE_TYPE_NAMES {
         let dist = levenshtein(simple, prim);
-        let threshold = max_distance(simple.len().min(prim.len()));
+        let threshold = max_edit_distance(simple.len().min(prim.len()));
         if dist <= threshold {
             if best.as_ref().map_or(true, |(_, d, _)| dist < *d) {
                 best = Some((prim.to_string(), dist, true));
@@ -1026,7 +975,7 @@ fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<S
     for registered_full in registry.names() {
         // Compare unresolved full name against registered full name.
         let dist_full = levenshtein(unresolved, registered_full);
-        let threshold_full = max_distance(unresolved.len().min(registered_full.len()));
+        let threshold_full = max_edit_distance(unresolved.len().min(registered_full.len()));
         if dist_full <= threshold_full {
             if best.as_ref().map_or(true, |(_, d, _)| dist_full < *d) {
                 best = Some((registered_full.to_string(), dist_full, false));
@@ -1040,7 +989,7 @@ fn suggest_similar_name(unresolved: &str, registry: &SchemaRegistry) -> Option<S
             .next()
             .expect("rsplit always yields at least one element");
         let dist_simple = levenshtein(simple, registered_simple);
-        let threshold_simple = max_distance(simple.len().min(registered_simple.len()));
+        let threshold_simple = max_edit_distance(simple.len().min(registered_simple.len()));
         if dist_simple <= threshold_simple {
             // Suggest the full registered name so the user gets the right
             // fully-qualified form.
@@ -1776,49 +1725,6 @@ mod tests {
         assert_eq!(output.schemas.len(), 2, "should extract two schemas");
         assert_eq!(output.schemas[0].name, "Foo");
         assert_eq!(output.schemas[1].name, "Color");
-    }
-
-    // =========================================================================
-    // Levenshtein edit distance
-    // =========================================================================
-
-    #[test]
-    fn levenshtein_identical_strings() {
-        assert_eq!(levenshtein("string", "string"), 0);
-    }
-
-    #[test]
-    fn levenshtein_empty_strings() {
-        assert_eq!(levenshtein("", ""), 0);
-        assert_eq!(levenshtein("abc", ""), 3);
-        assert_eq!(levenshtein("", "xyz"), 3);
-    }
-
-    #[test]
-    fn levenshtein_single_edit() {
-        // Substitution.
-        assert_eq!(levenshtein("string", "strang"), 1);
-        // Insertion.
-        assert_eq!(levenshtein("sting", "string"), 1);
-        // Deletion.
-        assert_eq!(levenshtein("string", "sting"), 1);
-    }
-
-    #[test]
-    fn levenshtein_two_edits() {
-        // "stiring" -> "string" requires only 1 edit (delete the extra 'i'):
-        // s-t-i-r-i-n-g -> s-t-r-i-n-g
-        assert_eq!(levenshtein("stiring", "string"), 1);
-        // "bolean" -> "boolean" requires 1 edit (insert 'o'):
-        assert_eq!(levenshtein("bolean", "boolean"), 1);
-        // "dubble" -> "double" requires 2 edits:
-        assert_eq!(levenshtein("dubble", "double"), 2);
-    }
-
-    #[test]
-    fn levenshtein_case_difference() {
-        assert_eq!(levenshtein("String", "string"), 1);
-        assert_eq!(levenshtein("INT", "int"), 3);
     }
 
     // =========================================================================

@@ -814,39 +814,10 @@ const AVRO_KEYWORDS: &[&str] = &[
 ];
 
 // ==========================================================================
-// Edit Distance for Keyword Typo Detection
+// Keyword Typo Detection
 // ==========================================================================
 
-/// Computes the Levenshtein edit distance between two strings.
-///
-/// Used to detect likely keyword misspellings: when an unrecognized identifier
-/// is within distance 1-2 of a known keyword, we suggest the correct spelling.
-fn levenshtein_distance(a: &str, b: &str) -> usize {
-    let a_len = a.len();
-    let b_len = b.len();
-    if a_len == 0 {
-        return b_len;
-    }
-    if b_len == 0 {
-        return a_len;
-    }
-
-    // Use a single-row DP approach for space efficiency.
-    let mut prev_row: Vec<usize> = (0..=b_len).collect();
-    let mut curr_row = vec![0; b_len + 1];
-
-    for (i, ca) in a.chars().enumerate() {
-        curr_row[0] = i + 1;
-        for (j, cb) in b.chars().enumerate() {
-            let cost = if ca == cb { 0 } else { 1 };
-            curr_row[j + 1] = (prev_row[j] + cost)
-                .min(prev_row[j + 1] + 1)
-                .min(curr_row[j] + 1);
-        }
-        std::mem::swap(&mut prev_row, &mut curr_row);
-    }
-    prev_row[b_len]
-}
+use crate::suggest::{levenshtein, max_edit_distance};
 
 /// Finds the closest Avro keyword to the given identifier, if within edit
 /// distance 2. Returns `None` if no keyword is close enough to be a likely
@@ -860,13 +831,12 @@ fn suggest_keyword(ident: &str) -> Option<&'static str> {
         if kw.len() < 3 {
             continue;
         }
-        let dist = levenshtein_distance(&lower, kw);
+        let dist = levenshtein(&lower, kw);
         if dist == 0 {
             // Exact match means it's already a keyword, not a typo.
             return None;
         }
-        // Allow distance 1 for short keywords, distance 2 for longer ones.
-        let max_dist = if kw.len() <= 4 { 1 } else { 2 };
+        let max_dist = max_edit_distance(kw.len());
         if dist <= max_dist {
             if best.is_none() || dist < best.expect("checked is_some").1 {
                 best = Some((kw, dist));
@@ -6544,28 +6514,8 @@ protocol Test {
     }
 
     // ------------------------------------------------------------------
-    // Levenshtein distance and keyword suggestion
+    // Keyword suggestion
     // ------------------------------------------------------------------
-
-    #[test]
-    fn levenshtein_distance_identical() {
-        assert_eq!(levenshtein_distance("record", "record"), 0);
-    }
-
-    #[test]
-    fn levenshtein_distance_one_swap() {
-        assert_eq!(levenshtein_distance("recrod", "record"), 2);
-    }
-
-    #[test]
-    fn levenshtein_distance_one_deletion() {
-        assert_eq!(levenshtein_distance("protcol", "protocol"), 1);
-    }
-
-    #[test]
-    fn levenshtein_distance_one_insertion() {
-        assert_eq!(levenshtein_distance("protocoll", "protocol"), 1);
-    }
 
     #[test]
     fn suggest_keyword_close_match() {
