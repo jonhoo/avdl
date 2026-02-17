@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suggest `import idl`, `import protocol`, or `import schema` (450d85f)
 - Include the imported file path in undefined type errors originating
   from `.avsc`/`.avpr` imports (2fc4544)
+- Suggest `protocol` when misspelled at the top level, matching the
+  existing did-you-mean behavior inside protocol bodies (3c7afeb)
+- Detect `protocol`/`record`/`enum`/`fixed` followed by `{` and report
+  "expected name" instead of cascading unhelpful errors (3c7afeb)
+- Detect trailing commas in enum declarations and point at the comma
+  with a "trailing comma is not allowed" message (3c7afeb)
+- Detect bare `@` before declaration keywords and explain that the
+  annotation syntax is `@name("value")` (3c7afeb)
 
 ### Changed
 
@@ -35,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Collapse cascading ANTLR errors for empty unions, misspelled keywords,
   non-integer fixed sizes, and unclosed braces into single actionable
   messages (704ff7d)
+- Rewrite ANTLR jargon in error messages: "extraneous input" and
+  "mismatched input" become "unexpected", "no viable alternative"
+  becomes "unexpected input", and token set notation `{';', ','}`
+  becomes natural language "expected ';' or ','" (3c7afeb)
 
 ### Security
 
