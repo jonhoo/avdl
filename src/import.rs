@@ -386,7 +386,7 @@ pub fn import_schema(path: &Path, registry: &mut SchemaRegistry) -> Result<()> {
 fn json_to_schema(json: &Value, default_namespace: Option<&str>) -> Result<AvroSchema> {
     match json {
         // String references: either a primitive name or a named type reference.
-        Value::String(s) => string_to_schema(s, default_namespace),
+        Value::String(s) => Ok(string_to_schema(s, default_namespace)),
 
         // Array = union type.
         Value::Array(types) => {
@@ -408,28 +408,28 @@ fn json_to_schema(json: &Value, default_namespace: Option<&str>) -> Result<AvroS
 }
 
 /// Parse a string as either a primitive type name or a named type reference.
-fn string_to_schema(s: &str, default_namespace: Option<&str>) -> Result<AvroSchema> {
+fn string_to_schema(s: &str, default_namespace: Option<&str>) -> AvroSchema {
     // Try parsing as a primitive type first.
     if let Ok(prim) = s.parse::<PrimitiveType>() {
-        return Ok(prim.to_schema());
+        return prim.to_schema();
     }
 
     // Named type reference. Split into separate name and namespace
     // so the Reference tracks them independently.
     if let Some((ns, name)) = s.rsplit_once('.') {
-        Ok(AvroSchema::Reference {
+        AvroSchema::Reference {
             name: name.to_string(),
             namespace: Some(ns.to_string()),
             properties: HashMap::new(),
             span: None,
-        })
+        }
     } else {
-        Ok(AvroSchema::Reference {
+        AvroSchema::Reference {
             name: s.to_string(),
             namespace: default_namespace.map(|s| s.to_string()),
             properties: HashMap::new(),
             span: None,
-        })
+        }
     }
 }
 

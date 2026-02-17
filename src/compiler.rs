@@ -461,7 +461,7 @@ impl Idl2Schemata {
         }
 
         let compiled = self.inner.compile_file(path)?;
-        Self::extract_impl(compiled)
+        Ok(Self::extract_impl(compiled))
     }
 
     /// Extract named schemas from an IDL source string.
@@ -477,7 +477,7 @@ impl Idl2Schemata {
         name: &str,
     ) -> miette::Result<SchemataOutput> {
         let compiled = self.inner.compile_str(source, name)?;
-        Self::extract_impl(compiled)
+        Ok(Self::extract_impl(compiled))
     }
 
     /// Recursively walk a directory for `.avdl` files and extract schemas from
@@ -501,7 +501,7 @@ impl Idl2Schemata {
 
         for avdl_path in &avdl_paths {
             let compiled = self.inner.compile_file(avdl_path)?;
-            let output = Self::extract_impl(compiled)?;
+            let output = Self::extract_impl(compiled);
             all_schemas.extend(output.schemas);
             all_warnings.extend(output.warnings);
         }
@@ -518,7 +518,7 @@ impl Idl2Schemata {
     /// This is the only logic that differs from `Idl`. Unlike `Idl::convert_impl`,
     /// this accepts `NamedSchemas` (bare declarations without `schema` keyword or
     /// `protocol`), matching Java's `IdlToSchemataTool` behavior.
-    fn extract_impl(compiled: CompileOutput) -> miette::Result<SchemataOutput> {
+    fn extract_impl(compiled: CompileOutput) -> SchemataOutput {
         let CompileOutput {
             registry, warnings, ..
         } = compiled;
@@ -545,7 +545,7 @@ impl Idl2Schemata {
             });
         }
 
-        Ok(SchemataOutput { schemas, warnings })
+        SchemataOutput { schemas, warnings }
     }
 }
 

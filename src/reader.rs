@@ -509,7 +509,7 @@ fn build_unexpected_token_error(
     // literal is expected, the user likely forgot to quote the value (e.g.,
     // an enum default like `Color primary = YELLOW` instead of `= "YELLOW"`).
     if expects_string && looks_like_bare_identifier(offending) {
-        let help = append_quoting_hint(help, offending);
+        let help = Some(append_quoting_hint(help, offending));
         return EnrichedError {
             message: format!("unexpected token `{offending}` -- did you mean `\"{offending}\"`?"),
             label: Some(format!(
@@ -823,15 +823,15 @@ fn looks_like_bare_identifier(token: &str) -> bool {
 ///
 /// Produces a suggestion like: `hint: did you mean "YELLOW"? Enum default
 /// values must be quoted strings.`
-fn append_quoting_hint(help: Option<String>, offending: &str) -> Option<String> {
+fn append_quoting_hint(help: Option<String>, offending: &str) -> String {
     let hint = format!(
         "hint: did you mean \"{offending}\"? \
          Enum default values must be quoted strings"
     );
-    Some(match help {
+    match help {
         Some(h) => format!("{h}\n{hint}"),
         None => hint,
-    })
+    }
 }
 
 /// Extracts the quoted input string from a "no viable alternative at input
