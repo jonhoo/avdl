@@ -151,6 +151,27 @@ pub enum LogicalType {
 }
 
 impl LogicalType {
+    /// Return the Avro logical type name string (e.g., `"date"`, `"time-millis"`,
+    /// `"decimal"`).
+    ///
+    /// This is the reverse mapping of `parse_logical_type`: given a variant, it
+    /// returns the canonical name string used in Avro JSON serialization. Together,
+    /// `name()` and `parse_logical_type` form a single source of truth pair for
+    /// logical type name round-tripping.
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            LogicalType::Date => "date",
+            LogicalType::TimeMillis => "time-millis",
+            LogicalType::TimeMicros => "time-micros",
+            LogicalType::TimestampMillis => "timestamp-millis",
+            LogicalType::TimestampMicros => "timestamp-micros",
+            LogicalType::LocalTimestampMillis => "local-timestamp-millis",
+            LogicalType::LocalTimestampMicros => "local-timestamp-micros",
+            LogicalType::Uuid => "uuid",
+            LogicalType::Decimal { .. } => "decimal",
+        }
+    }
+
     /// Return the primitive base type that this logical type requires.
     ///
     /// This is used by the IDL reader to validate that a `@logicalType`

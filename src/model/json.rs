@@ -429,66 +429,17 @@ pub fn schema_to_json(
             properties,
         } => {
             let mut obj = Map::new();
-            match logical_type {
-                LogicalType::Date => {
-                    obj.insert("type".to_string(), Value::String("int".to_string()));
-                    obj.insert("logicalType".to_string(), Value::String("date".to_string()));
-                }
-                LogicalType::TimeMillis => {
-                    obj.insert("type".to_string(), Value::String("int".to_string()));
-                    obj.insert(
-                        "logicalType".to_string(),
-                        Value::String("time-millis".to_string()),
-                    );
-                }
-                LogicalType::TimeMicros => {
-                    obj.insert("type".to_string(), Value::String("long".to_string()));
-                    obj.insert(
-                        "logicalType".to_string(),
-                        Value::String("time-micros".to_string()),
-                    );
-                }
-                LogicalType::TimestampMillis => {
-                    obj.insert("type".to_string(), Value::String("long".to_string()));
-                    obj.insert(
-                        "logicalType".to_string(),
-                        Value::String("timestamp-millis".to_string()),
-                    );
-                }
-                LogicalType::TimestampMicros => {
-                    obj.insert("type".to_string(), Value::String("long".to_string()));
-                    obj.insert(
-                        "logicalType".to_string(),
-                        Value::String("timestamp-micros".to_string()),
-                    );
-                }
-                LogicalType::LocalTimestampMillis => {
-                    obj.insert("type".to_string(), Value::String("long".to_string()));
-                    obj.insert(
-                        "logicalType".to_string(),
-                        Value::String("local-timestamp-millis".to_string()),
-                    );
-                }
-                LogicalType::LocalTimestampMicros => {
-                    obj.insert("type".to_string(), Value::String("long".to_string()));
-                    obj.insert(
-                        "logicalType".to_string(),
-                        Value::String("local-timestamp-micros".to_string()),
-                    );
-                }
-                LogicalType::Uuid => {
-                    obj.insert("type".to_string(), Value::String("string".to_string()));
-                    obj.insert("logicalType".to_string(), Value::String("uuid".to_string()));
-                }
-                LogicalType::Decimal { precision, scale } => {
-                    obj.insert("type".to_string(), Value::String("bytes".to_string()));
-                    obj.insert(
-                        "logicalType".to_string(),
-                        Value::String("decimal".to_string()),
-                    );
-                    obj.insert("precision".to_string(), Value::Number((*precision).into()));
-                    obj.insert("scale".to_string(), Value::Number((*scale).into()));
-                }
+            obj.insert(
+                "type".to_string(),
+                Value::String(logical_type.expected_base_type().as_str().to_string()),
+            );
+            obj.insert(
+                "logicalType".to_string(),
+                Value::String(logical_type.name().to_string()),
+            );
+            if let LogicalType::Decimal { precision, scale } = logical_type {
+                obj.insert("precision".to_string(), Value::Number((*precision).into()));
+                obj.insert("scale".to_string(), Value::Number((*scale).into()));
             }
             for (k, v) in properties {
                 obj.insert(k.clone(), v.clone());
