@@ -224,7 +224,7 @@ fn run_idl(
             let json_str = serde_json::to_string_pretty(&idl_output.json)
                 .map_err(|e| miette::miette!("serialize JSON: {e}"))?;
 
-            write_output(&output, &json_str)?;
+            write_output(output.as_deref(), &json_str)?;
 
             Ok(())
         }
@@ -296,9 +296,9 @@ fn run_idl2schemata(
 // ==============================================================================
 
 /// Write output to a file or stdout.
-fn write_output(output: &Option<String>, content: &str) -> miette::Result<()> {
+fn write_output(output: Option<&str>, content: &str) -> miette::Result<()> {
     // Treat `None` and `Some("-")` as stdout; everything else is a file path.
-    let file_path = output.as_deref().filter(|s| *s != "-");
+    let file_path = output.filter(|s| *s != "-");
 
     match file_path {
         None => {

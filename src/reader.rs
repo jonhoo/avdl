@@ -2636,7 +2636,7 @@ fn walk_idl_file<'input>(
     if let Some(main_ctx) = ctx.mainSchemaDeclaration()
         && let Some(ft_ctx) = main_ctx.fullType()
     {
-        let schema = walk_full_type(&ft_ctx, token_stream, src, namespace)?;
+        let schema = walk_full_type(&ft_ctx, token_stream, src, namespace.as_deref())?;
         return Ok(IdlFile::Schema(schema));
     }
 
@@ -2677,7 +2677,7 @@ fn walk_protocol<'input>(
 
     // Determine namespace: explicit `@namespace` overrides, otherwise if the
     // identifier contains dots, the part before the last dot is the namespace.
-    *namespace = compute_namespace(&raw_identifier, &props.namespace);
+    *namespace = compute_namespace(&raw_identifier, props.namespace.as_deref());
     let protocol_name = extract_name(&raw_identifier);
 
     if is_invalid_type_name(&protocol_name) {
@@ -2717,7 +2717,7 @@ fn walk_protocol<'input>(
                 walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
             decl_items.push(DeclItem::Type(Box::new(schema), span, field_spans));
         } else if let Ok(msg_ctx) = child.downcast_rc::<MessageDeclarationContextAll<'input>>() {
-            let (msg_name, message) = walk_message(&msg_ctx, token_stream, src, namespace)?;
+            let (msg_name, message) = walk_message(&msg_ctx, token_stream, src, namespace.as_deref())?;
             messages.insert(msg_name, message);
         }
     }
@@ -2747,12 +2747,12 @@ fn walk_named_schema_no_register<'input>(
 ) -> Result<(AvroSchema, HashMap<String, miette::SourceSpan>)> {
     if let Some(fixed_ctx) = ctx.fixedDeclaration() {
         Ok((
-            walk_fixed(&fixed_ctx, token_stream, src, namespace)?,
+            walk_fixed(&fixed_ctx, token_stream, src, namespace.as_deref())?,
             HashMap::new(),
         ))
     } else if let Some(enum_ctx) = ctx.enumDeclaration() {
         Ok((
-            walk_enum(&enum_ctx, token_stream, src, namespace)?,
+            walk_enum(&enum_ctx, token_stream, src, namespace.as_deref())?,
             HashMap::new(),
         ))
     } else if let Some(record_ctx) = ctx.recordDeclaration() {
@@ -2803,7 +2803,7 @@ fn walk_record<'input>(
     // Compute namespace: `@namespace` on the record overrides; otherwise
     // the identifier may contain dots, or we fall back to the enclosing namespace.
     let record_namespace =
-        compute_namespace(&raw_identifier, &props.namespace).or_else(|| namespace.clone());
+        compute_namespace(&raw_identifier, props.namespace.as_deref()).or_else(|| namespace.clone());
     let record_name = extract_name(&raw_identifier);
 
     if is_invalid_type_name(&record_name) {
@@ -2831,7 +2831,7 @@ fn walk_record<'input>(
     let mut seen_field_names: HashSet<String> = HashSet::new();
     for field_ctx in body.fieldDeclaration_all() {
         let mut field_fields =
-            walk_field_declaration(&field_ctx, token_stream, src, namespace, Some(&record_name))?;
+            walk_field_declaration(&field_ctx, token_stream, src, namespace.as_deref(), Some(&record_name))?;
         // Check for duplicates. We zip with the variable declaration contexts
         // so that the diagnostic highlights the duplicate field *name*, not the
         // type keyword that starts the field declaration.
@@ -2906,7 +2906,7 @@ fn walk_field_declaration<'input>(
     ctx: &FieldDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    namespace: &Option<String>,
+    namespace: Option<&str>,
     enclosing_name: Option<&str>,
 ) -> Result<Vec<Field>> {
     // The doc comment on the field declaration acts as a default for variables
@@ -2925,7 +2925,7 @@ fn walk_field_declaration<'input>(
         let field = walk_variable(
             &var_ctx,
             &field_type,
-            &default_doc,
+            default_doc.as_deref(),
             token_stream,
             src,
             namespace,
@@ -2944,15 +2944,15 @@ fn walk_field_declaration<'input>(
 fn walk_variable<'input>(
     ctx: &VariableDeclarationContextAll<'input>,
     field_type: &AvroSchema,
-    default_doc: &Option<String>,
+    default_doc: Option<&str>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    _namespace: &Option<String>,
+    _namespace: Option<&str>,
     enclosing_name: Option<&str>,
 ) -> Result<Field> {
     // Variable-specific doc comment overrides the field-level default.
     let var_doc = extract_doc_from_context(ctx, token_stream, src);
-    let doc = var_doc.or_else(|| default_doc.clone());
+    let doc = var_doc.or_else(|| default_doc.map(|s| s.to_string()));
 
     let name_ctx = ctx
         .identifier()
@@ -2976,7 +2976,7 @@ fn walk_variable<'input>(
 
     // Apply fixOptionalSchema: if the type is a nullable union (from `type?`)
     // and the default is non-null, reorder to put the non-null type first.
-    let final_type = fix_optional_schema(field_type.clone(), &default_value);
+    let final_type = fix_optional_schema(field_type.clone(), default_value.as_ref());
 
     // Java's fixDefaultValue coerces IntNode to LongNode when the field type is
     // `long`. No equivalent is needed here: serde_json::Number uses a single
@@ -3029,7 +3029,7 @@ fn walk_enum<'input>(
     ctx: &EnumDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    enclosing_namespace: &Option<String>,
+    enclosing_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
     let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, ENUM_PROPS)?;
@@ -3041,8 +3041,8 @@ fn walk_enum<'input>(
 
     // If compute_namespace returns None (no explicit @namespace and no dots
     // in the identifier), fall back to the enclosing namespace.
-    let enum_namespace = compute_namespace(&raw_identifier, &props.namespace)
-        .or_else(|| enclosing_namespace.clone());
+    let enum_namespace = compute_namespace(&raw_identifier, props.namespace.as_deref())
+        .or_else(|| enclosing_namespace.map(|s| s.to_string()));
     let enum_name = extract_name(&raw_identifier);
 
     if is_invalid_type_name(&enum_name) {
@@ -3113,7 +3113,7 @@ fn walk_fixed<'input>(
     ctx: &FixedDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    enclosing_namespace: &Option<String>,
+    enclosing_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
     let props = walk_schema_properties(
@@ -3129,8 +3129,8 @@ fn walk_fixed<'input>(
     let raw_identifier = identifier_text(&name_ctx);
 
     // Fall back to enclosing namespace if no explicit namespace is given.
-    let fixed_namespace = compute_namespace(&raw_identifier, &props.namespace)
-        .or_else(|| enclosing_namespace.clone());
+    let fixed_namespace = compute_namespace(&raw_identifier, props.namespace.as_deref())
+        .or_else(|| enclosing_namespace.map(|s| s.to_string()));
     let fixed_name = extract_name(&raw_identifier);
 
     if is_invalid_type_name(&fixed_name) {
@@ -3181,7 +3181,7 @@ fn walk_full_type<'input>(
     ctx: &FullTypeContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    namespace: &Option<String>,
+    namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, BARE_PROPS)?;
 
@@ -3233,7 +3233,7 @@ fn walk_plain_type<'input>(
     ctx: &PlainTypeContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    namespace: &Option<String>,
+    namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     if let Some(array_ctx) = ctx.arrayType() {
         return walk_array_type(&array_ctx, token_stream, src, namespace);
@@ -3256,7 +3256,7 @@ fn walk_nullable_type<'input>(
     ctx: &NullableTypeContextAll<'input>,
     _token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    namespace: &Option<String>,
+    namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let base_type = if let Some(prim_ctx) = ctx.primitiveType() {
         walk_primitive_type(&prim_ctx, src)?
@@ -3276,7 +3276,7 @@ fn walk_nullable_type<'input>(
         } else {
             AvroSchema::Reference {
                 name: type_name.to_string(),
-                namespace: namespace.clone(),
+                namespace: namespace.map(|s| s.to_string()),
                 properties: HashMap::new(),
                 span: ref_span,
             }
@@ -3417,7 +3417,7 @@ fn walk_array_type<'input>(
     ctx: &ArrayTypeContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    namespace: &Option<String>,
+    namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let element_ctx = ctx
         .fullType()
@@ -3434,7 +3434,7 @@ fn walk_map_type<'input>(
     ctx: &MapTypeContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    namespace: &Option<String>,
+    namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let value_ctx = ctx
         .fullType()
@@ -3451,7 +3451,7 @@ fn walk_union_type<'input>(
     ctx: &UnionTypeContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    namespace: &Option<String>,
+    namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let mut types = Vec::new();
     for ft_ctx in ctx.fullType_all() {
@@ -3503,7 +3503,7 @@ fn walk_message<'input>(
     ctx: &MessageDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    namespace: &Option<String>,
+    namespace: Option<&str>,
 ) -> Result<(String, Message)> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
     let props =
@@ -3551,7 +3551,7 @@ fn walk_message<'input>(
         let field = walk_variable(
             &var_ctx,
             &param_type,
-            &param_doc,
+            param_doc.as_deref(),
             token_stream,
             src,
             namespace,
@@ -3601,7 +3601,7 @@ fn walk_message<'input>(
             } else {
                 error_schemas.push(AvroSchema::Reference {
                     name: error_name.to_string(),
-                    namespace: namespace.clone(),
+                    namespace: namespace.map(|s| s.to_string()),
                     properties: HashMap::new(),
                     span: error_span,
                 });
@@ -3636,7 +3636,7 @@ fn walk_result_type<'input>(
     ctx: &ResultTypeContextAll<'input>,
     token_stream: &TS<'input>,
     src: &SourceInfo<'_>,
-    namespace: &Option<String>,
+    namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     // If there's a Void token, return Null.
     if ctx.Void().is_some() {
@@ -4166,14 +4166,14 @@ fn extract_name(identifier: &str) -> String {
 /// 2. Explicit `@namespace("...")` annotation (passed as `explicit_namespace`).
 /// 3. The enclosing namespace (inherited from context -- not passed here,
 ///    the caller should fall back to the enclosing namespace if this returns None).
-fn compute_namespace(identifier: &str, explicit_namespace: &Option<String>) -> Option<String> {
+fn compute_namespace(identifier: &str, explicit_namespace: Option<&str>) -> Option<String> {
     // Java priority: dots in the identifier always take precedence over
     // an explicit `@namespace` annotation. Only when the identifier has
     // no dots do we fall back to `@namespace`.
     let (_name, namespace) = split_full_name(identifier);
     match namespace {
         Some(ns) => Some(ns.to_string()),
-        None => explicit_namespace.clone(),
+        None => explicit_namespace.map(|s| s.to_string()),
     }
 }
 
@@ -4212,7 +4212,7 @@ fn is_non_nullable_union(schema: &AvroSchema) -> bool {
 /// When `type?` creates a union `[null, T]` and the field's default is non-null,
 /// reorder the union to `[T, null]` so that the default value matches the first
 /// branch. This matches the Java `fixOptionalSchema` behavior.
-fn fix_optional_schema(schema: AvroSchema, default_value: &Option<Value>) -> AvroSchema {
+fn fix_optional_schema(schema: AvroSchema, default_value: Option<&Value>) -> AvroSchema {
     match &schema {
         AvroSchema::Union {
             types,

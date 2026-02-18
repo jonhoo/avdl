@@ -54,7 +54,7 @@ pub(crate) fn is_valid_avro_name(name: &str) -> bool {
 /// For namespaces, each dot-separated segment must independently satisfy the
 /// name pattern. Returns `Ok(())` if valid, or an error message describing
 /// which part is invalid.
-fn validate_schema_name(name: &str, namespace: &Option<String>) -> Result<(), String> {
+fn validate_schema_name(name: &str, namespace: Option<&str>) -> Result<(), String> {
     if !is_valid_avro_name(name) {
         return Err(format!(
             "invalid Avro name: `{name}` \
@@ -127,7 +127,7 @@ impl SchemaRegistry {
             } => (name.as_str(), namespace),
             _ => unreachable!("full_name() returned Some for a non-named type"),
         };
-        validate_schema_name(name, namespace)?;
+        validate_schema_name(name, namespace.as_deref())?;
 
         if self.schemas.contains_key(&full_name) {
             return Err(format!("duplicate schema name: {full_name}"));

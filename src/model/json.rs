@@ -192,16 +192,16 @@ fn collect_named_types(
 fn named_type_preamble(
     type_str: &str,
     name: &str,
-    namespace: &Option<String>,
-    doc: &Option<String>,
+    namespace: Option<&str>,
+    doc: Option<&str>,
     known_names: &mut HashSet<String>,
     enclosing_namespace: Option<&str>,
 ) -> Result<Map<String, Value>, Value> {
-    let full_name = make_full_name(name, namespace.as_deref()).into_owned();
+    let full_name = make_full_name(name, namespace).into_owned();
     if known_names.contains(&full_name) {
         return Err(Value::String(schema_ref_name(
             name,
-            namespace.as_deref(),
+            namespace,
             enclosing_namespace,
         )));
     }
@@ -214,14 +214,14 @@ fn named_type_preamble(
     // Special case: when there's no enclosing namespace (standalone .avsc),
     // treat an empty-string namespace the same as None — Java normalizes
     // empty namespace to null, so `writeName()` omits it.
-    if namespace.as_deref() != enclosing_namespace
+    if namespace != enclosing_namespace
         && let Some(ns) = namespace
         && !(ns.is_empty() && enclosing_namespace.is_none())
     {
-        obj.insert("namespace".to_string(), Value::String(ns.clone()));
+        obj.insert("namespace".to_string(), Value::String(ns.to_string()));
     }
     if let Some(doc) = doc {
-        obj.insert("doc".to_string(), Value::String(doc.clone()));
+        obj.insert("doc".to_string(), Value::String(doc.to_string()));
     }
     Ok(obj)
 }
@@ -232,7 +232,7 @@ fn finish_named_type(
     obj: &mut Map<String, Value>,
     properties: &HashMap<String, Value>,
     aliases: &[String],
-    namespace: &Option<String>,
+    namespace: Option<&str>,
 ) {
     // Java emits properties before aliases for named types.
     for (k, v) in properties {
@@ -241,7 +241,7 @@ fn finish_named_type(
     if !aliases.is_empty() {
         let aliases_json: Vec<Value> = aliases
             .iter()
-            .map(|a| Value::String(alias_ref_name(a, namespace.as_deref())))
+            .map(|a| Value::String(alias_ref_name(a, namespace)))
             .collect();
         obj.insert("aliases".to_string(), Value::Array(aliases_json));
     }
@@ -290,11 +290,12 @@ pub fn schema_to_json(
             properties,
         } => {
             let type_str = if *is_error { "error" } else { "record" };
+            let ns = namespace.as_deref();
             let mut obj = match named_type_preamble(
                 type_str,
                 name,
-                namespace,
-                doc,
+                ns,
+                doc.as_deref(),
                 known_names,
                 enclosing_namespace,
             ) {
@@ -307,13 +308,13 @@ pub fn schema_to_json(
                     field_to_json(
                         f,
                         known_names,
-                        namespace.as_deref().or(enclosing_namespace),
+                        ns.or(enclosing_namespace),
                         lookup,
                     )
                 })
                 .collect();
             obj.insert("fields".to_string(), Value::Array(fields_json));
-            finish_named_type(&mut obj, properties, aliases, namespace);
+            finish_named_type(&mut obj, properties, aliases, ns);
             Value::Object(obj)
         }
 
@@ -329,11 +330,12 @@ pub fn schema_to_json(
             aliases,
             properties,
         } => {
+            let ns = namespace.as_deref();
             let mut obj = match named_type_preamble(
                 "enum",
                 name,
-                namespace,
-                doc,
+                ns,
+                doc.as_deref(),
                 known_names,
                 enclosing_namespace,
             ) {
@@ -346,7 +348,7 @@ pub fn schema_to_json(
             if let Some(def) = default {
                 obj.insert("default".to_string(), Value::String(def.clone()));
             }
-            finish_named_type(&mut obj, properties, aliases, namespace);
+            finish_named_type(&mut obj, properties, aliases, ns);
             Value::Object(obj)
         }
 
@@ -361,11 +363,12 @@ pub fn schema_to_json(
             aliases,
             properties,
         } => {
+            let ns = namespace.as_deref();
             let mut obj = match named_type_preamble(
                 "fixed",
                 name,
-                namespace,
-                doc,
+                ns,
+                doc.as_deref(),
                 known_names,
                 enclosing_namespace,
             ) {
@@ -373,7 +376,7 @@ pub fn schema_to_json(
                 Err(bare_name) => return bare_name,
             };
             obj.insert("size".to_string(), Value::Number((*size).into()));
-            finish_named_type(&mut obj, properties, aliases, namespace);
+            finish_named_type(&mut obj, properties, aliases, ns);
             Value::Object(obj)
         }
 
