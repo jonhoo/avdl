@@ -43,6 +43,16 @@ debug = true
 inherits = "release"
 lto = "thin"
 
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+must_use_candidate = "warn"
+return_self_not_must_use = "warn"
+ref_option = "warn"
+unnecessary_wraps = "warn"
+
 [dev-dependencies]
 assert_cmd = "2.1.2"
 insta = "1"
