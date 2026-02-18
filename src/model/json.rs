@@ -304,14 +304,7 @@ pub fn schema_to_json(
             };
             let fields_json: Vec<Value> = fields
                 .iter()
-                .map(|f| {
-                    field_to_json(
-                        f,
-                        known_names,
-                        ns.or(enclosing_namespace),
-                        lookup,
-                    )
-                })
+                .map(|f| field_to_json(f, known_names, ns.or(enclosing_namespace), lookup))
                 .collect();
             obj.insert("fields".to_string(), Value::Array(fields_json));
             finish_named_type(&mut obj, properties, aliases, ns);

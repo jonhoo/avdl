@@ -9,7 +9,10 @@
 // The generated parser defines token constants in lower_Camel_case (e.g.
 // `Idl_Boolean`). We suppress the naming warning for the whole module since
 // these constants appear extensively in match arms.
-#![expect(non_upper_case_globals, reason = "ANTLR-generated token constants use PascalCase")]
+#![expect(
+    non_upper_case_globals,
+    reason = "ANTLR-generated token constants use PascalCase"
+)]
 //
 // The Java reference implementation uses ANTLR's listener pattern with mutable
 // stacks. That approach is awkward in Rust due to lifetime constraints on trait
@@ -2717,7 +2720,8 @@ fn walk_protocol<'input>(
                 walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
             decl_items.push(DeclItem::Type(Box::new(schema), span, field_spans));
         } else if let Ok(msg_ctx) = child.downcast_rc::<MessageDeclarationContextAll<'input>>() {
-            let (msg_name, message) = walk_message(&msg_ctx, token_stream, src, namespace.as_deref())?;
+            let (msg_name, message) =
+                walk_message(&msg_ctx, token_stream, src, namespace.as_deref())?;
             messages.insert(msg_name, message);
         }
     }
@@ -2802,8 +2806,8 @@ fn walk_record<'input>(
 
     // Compute namespace: `@namespace` on the record overrides; otherwise
     // the identifier may contain dots, or we fall back to the enclosing namespace.
-    let record_namespace =
-        compute_namespace(&raw_identifier, props.namespace.as_deref()).or_else(|| namespace.clone());
+    let record_namespace = compute_namespace(&raw_identifier, props.namespace.as_deref())
+        .or_else(|| namespace.clone());
     let record_name = extract_name(&raw_identifier);
 
     if is_invalid_type_name(&record_name) {
@@ -2830,8 +2834,13 @@ fn walk_record<'input>(
     let mut field_spans: HashMap<String, miette::SourceSpan> = HashMap::new();
     let mut seen_field_names: HashSet<String> = HashSet::new();
     for field_ctx in body.fieldDeclaration_all() {
-        let mut field_fields =
-            walk_field_declaration(&field_ctx, token_stream, src, namespace.as_deref(), Some(&record_name))?;
+        let mut field_fields = walk_field_declaration(
+            &field_ctx,
+            token_stream,
+            src,
+            namespace.as_deref(),
+            Some(&record_name),
+        )?;
         // Check for duplicates. We zip with the variable declaration contexts
         // so that the diagnostic highlights the duplicate field *name*, not the
         // type keyword that starts the field declaration.
