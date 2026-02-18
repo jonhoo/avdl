@@ -51,6 +51,7 @@ must_use_candidate = "warn"
 return_self_not_must_use = "warn"
 ref_option = "warn"
 unnecessary_wraps = "warn"
+doc_markdown = "warn"
 
 [dev-dependencies]
 assert_cmd = "2.1.2"

@@ -545,7 +545,7 @@ fn build_unexpected_token_error(
 
 /// Formats the ANTLR expected-token set into a human-readable help string.
 ///
-/// Strips internal tokens that aren't meaningful to users (DocComment,
+/// Strips internal tokens that aren't meaningful to users (`DocComment`,
 /// the SUB character `\u001A`, and `<EOF>`), removes surrounding quotes
 /// from token names, and replaces ANTLR-internal token names with
 /// user-friendly descriptions (e.g., `IdentifierToken` becomes `identifier`).
@@ -2342,9 +2342,9 @@ struct PropertyContext {
     with_order: bool,
     /// Reserved property names for this context. Annotations matching any of
     /// these names produce an error ("Can't set reserved property: {name}").
-    /// The sets are taken from avro-tools 1.12.1 (Schema.SCHEMA_RESERVED,
-    /// Schema.ENUM_RESERVED, Schema.FIELD_RESERVED, Protocol.PROTOCOL_RESERVED,
-    /// Protocol.MESSAGE_RESERVED).
+    /// The sets are taken from avro-tools 1.12.1 (`Schema.SCHEMA_RESERVED`,
+    /// `Schema.ENUM_RESERVED`, `Schema.FIELD_RESERVED`, `Protocol.PROTOCOL_RESERVED`,
+    /// `Protocol.MESSAGE_RESERVED`).
     reserved: &'static [&'static str],
 }
 
@@ -2585,7 +2585,7 @@ fn walk_schema_properties<'input>(
 
 /// Top-level dispatch: protocol mode vs. schema mode.
 ///
-/// Instead of registering types in a SchemaRegistry during parsing, this
+/// Instead of registering types in a `SchemaRegistry` during parsing, this
 /// function collects all imports and local type definitions into `decl_items`
 /// in source order. The caller processes these items sequentially to build a
 /// correctly ordered registry.
@@ -2741,7 +2741,7 @@ fn walk_protocol<'input>(
 /// Dispatch to record, enum, or fixed based on the named schema declaration.
 ///
 /// This function parses the named schema but does NOT register it in a
-/// SchemaRegistry. The caller is responsible for registration, which allows
+/// `SchemaRegistry`. The caller is responsible for registration, which allows
 /// imports and local types to be registered in source order.
 fn walk_named_schema_no_register<'input>(
     ctx: &NamedSchemaDeclarationContextAll<'input>,

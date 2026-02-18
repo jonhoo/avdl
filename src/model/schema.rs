@@ -537,7 +537,7 @@ impl AvroSchema {
     /// Merge additional properties into this schema, returning the updated schema.
     ///
     /// For variants that carry a `properties` field (Record, Enum, Fixed, Array,
-    /// Map, Logical, AnnotatedPrimitive, Reference), the given properties are
+    /// Map, Logical, `AnnotatedPrimitive`, Reference), the given properties are
     /// merged into the existing map. Bare primitives are promoted to
     /// `AnnotatedPrimitive` to carry the properties. Variants without a
     /// properties field (Union) are returned unchanged.

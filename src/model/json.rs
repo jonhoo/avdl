@@ -104,7 +104,7 @@ pub fn protocol_to_json(protocol: &Protocol) -> Value {
     Value::Object(obj)
 }
 
-/// Build a lookup table of full_name -> AvroSchema for all named types,
+/// Build a lookup table of `full_name` -> `AvroSchema` for all named types,
 /// recursively collecting types nested inside records, unions, arrays, etc.
 ///
 /// The `default_namespace` is used for types that have no explicit namespace
