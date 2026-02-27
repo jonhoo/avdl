@@ -2146,6 +2146,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn import_protocol_rejects_unreadable_file() {
         let result = import_protocol(
             Path::new("/nonexistent/path/to/missing.avpr"),
@@ -2170,6 +2171,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore)]
     fn import_schema_rejects_unreadable_file() {
         let result = import_schema(
             Path::new("/nonexistent/path/to/missing.avsc"),
