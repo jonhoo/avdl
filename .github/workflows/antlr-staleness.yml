@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Check for new antlr4rust releases
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
 
