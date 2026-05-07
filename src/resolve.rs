@@ -15,8 +15,8 @@
 // named type.
 
 use indexmap::IndexMap;
-use miette::SourceSpan;
 
+use crate::error::SpanWithSource;
 use crate::model::schema::{AvroSchema, make_full_name};
 
 // ==============================================================================
@@ -185,7 +185,7 @@ impl SchemaRegistry {
     ///
     /// The caller is responsible for deduplication and ordering -- see
     /// `validate_all_references` in `compiler.rs`.
-    pub fn validate_references(&self) -> Vec<(String, Option<SourceSpan>)> {
+    pub fn validate_references(&self) -> Vec<(String, Option<SpanWithSource>)> {
         let mut unresolved = Vec::new();
         for schema in self.schemas.values() {
             collect_unresolved_refs(schema, &self.schemas, &mut unresolved);
@@ -205,7 +205,10 @@ impl SchemaRegistry {
     ///
     /// The caller is responsible for deduplication and ordering -- see
     /// `validate_all_references` in `compiler.rs`.
-    pub fn validate_schema(&self, schema: &AvroSchema) -> Vec<(String, Option<SourceSpan>)> {
+    pub fn validate_schema(
+        &self,
+        schema: &AvroSchema,
+    ) -> Vec<(String, Option<SpanWithSource>)> {
         let mut unresolved = Vec::new();
         collect_unresolved_refs(schema, &self.schemas, &mut unresolved);
         unresolved
@@ -225,7 +228,7 @@ impl SchemaRegistry {
 fn collect_unresolved_refs(
     schema: &AvroSchema,
     known: &IndexMap<String, AvroSchema>,
-    unresolved: &mut Vec<(String, Option<SourceSpan>)>,
+    unresolved: &mut Vec<(String, Option<SpanWithSource>)>,
 ) {
     match schema {
         AvroSchema::Reference {
@@ -236,7 +239,7 @@ fn collect_unresolved_refs(
         } => {
             let full_name = make_full_name(name, namespace.as_deref());
             if !known.contains_key(full_name.as_ref()) {
-                unresolved.push((full_name.into_owned(), *span));
+                unresolved.push((full_name.into_owned(), span.clone()));
             }
         }
         AvroSchema::Record { fields, .. } => {
@@ -274,7 +277,7 @@ mod tests {
 
     /// Extract just the names from unresolved reference tuples, for concise
     /// test assertions.
-    fn names(unresolved: Vec<(String, Option<SourceSpan>)>) -> Vec<String> {
+    fn names(unresolved: Vec<(String, Option<SpanWithSource>)>) -> Vec<String> {
         unresolved.into_iter().map(|(name, _)| name).collect()
     }
 

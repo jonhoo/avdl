@@ -22,11 +22,12 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use miette::Context;
 use serde_json::Value;
 
-use crate::error::ParseDiagnostic;
+use crate::error::{ParseDiagnostic, SpanWithSource};
 use crate::import::{ImportContext, import_protocol, import_schema};
 use crate::model::json::{build_lookup, protocol_to_json, schema_to_json};
 use crate::model::protocol::Message;
@@ -65,9 +66,9 @@ struct CompileOutput {
     warnings: Vec<miette::Report>,
     /// Original source text, retained for error diagnostics in type-specific
     /// serialization logic.
-    source: String,
+    source: Arc<str>,
     /// Name used for the source in diagnostics (e.g., file path or `"<input>"`).
-    source_name: String,
+    source_name: Arc<str>,
 }
 
 impl IdlCompiler {
@@ -163,8 +164,8 @@ impl IdlCompiler {
             idl_file,
             registry,
             warnings,
-            source: source.to_string(),
-            source_name: source_name.to_string(),
+            source: Arc::from(source),
+            source_name: Arc::from(source_name),
         })
     }
 }
@@ -320,8 +321,7 @@ impl Idl {
 
             let span_len = source.len().min(1);
             return Err(ParseDiagnostic {
-                src: miette::NamedSource::new(source_name, source),
-                span: (0, span_len).into(),
+                src: SpanWithSource::new(0, span_len, Arc::clone(&source_name), Arc::clone(&source)),
                 message: "IDL file contains neither a protocol nor a schema declaration"
                     .to_string(),
                 label: Some("this file".to_string()),
@@ -565,7 +565,7 @@ struct CompileContext {
     /// in the IDL source. Used to enrich error messages for unresolved
     /// references from `.avsc`/`.avpr` imports, which lack source spans of
     /// their own.
-    json_import_spans: Vec<(String, Option<miette::SourceSpan>)>,
+    json_import_spans: Vec<(String, Option<SpanWithSource>)>,
 }
 
 impl CompileContext {
@@ -599,7 +599,7 @@ fn parse_and_resolve(
     ctx: &mut CompileContext,
 ) -> miette::Result<(IdlFile, SchemaRegistry)> {
     let (idl_file, decl_items, local_warnings) =
-        parse_idl_named(source, source_name).context("parse IDL source")?;
+        parse_idl_named(Arc::from(source), Arc::from(source_name)).context("parse IDL source")?;
 
     // Immediately convert local warnings into `miette::Report`s and store
     // them in `ctx.warnings`. This must happen before any fallible operation
@@ -631,7 +631,7 @@ fn parse_and_resolve(
     // Process declaration items in source order: resolve imports when
     // encountered, register local types when encountered. Any import-derived
     // warnings are appended to `ctx.warnings` by `process_decl_items`.
-    process_decl_items(&decl_items, ctx, input_dir, source, source_name)?;
+    process_decl_items(&decl_items, ctx, input_dir)?;
 
     // For protocol files, rebuild the types list from the registry (which now
     // includes imported types in declaration order) and prepend imported
@@ -659,20 +659,17 @@ fn process_decl_items(
     decl_items: &[DeclItem],
     ctx: &mut CompileContext,
     current_dir: &Path,
-    source: &str,
-    source_name: &str,
 ) -> miette::Result<()> {
     for item in decl_items {
         match item {
             DeclItem::Import(import) => {
-                resolve_single_import(import, ctx, current_dir, source, source_name)?;
+                resolve_single_import(import, ctx, current_dir)?;
             }
             DeclItem::Type(schema, span, field_spans) => {
                 if let Err(msg) = ctx.registry.register(schema.as_ref().clone()) {
-                    if let Some(span) = span {
+                    if let Some(sws) = span.as_ref() {
                         return Err(ParseDiagnostic {
-                            src: miette::NamedSource::new(source_name, source.to_string()),
-                            span: *span,
+                            src: sws.clone(),
                             message: msg,
                             label: None,
                             help: None,
@@ -703,10 +700,9 @@ fn process_decl_items(
                         let msg = format!(
                             "Invalid default for field `{field_name}` in `{type_name}`: {reason}"
                         );
-                        let effective_span = field_spans.get(&field_name).copied().or(*span);
-                        effective_span.map(|span| ParseDiagnostic {
-                            src: miette::NamedSource::new(source_name, source.to_string()),
-                            span,
+                        let effective_sws = field_spans.get(&field_name).cloned().or_else(|| span.clone());
+                        effective_sws.map(|sws| ParseDiagnostic {
+                            src: sws,
                             message: msg,
                             label: None,
                             help: None,
@@ -721,11 +717,10 @@ fn process_decl_items(
                 // Prefer the per-field span (from the variable declaration)
                 // over the type-level span (from the record keyword), so the
                 // diagnostic highlights the offending field, not the record.
-                let effective_span = field_spans.get(&first_field).copied().or(*span);
-                if let Some(span) = effective_span {
+                let effective_sws = field_spans.get(&first_field).cloned().or_else(|| span.clone());
+                if let Some(sws) = effective_sws {
                     return Err(ParseDiagnostic {
-                        src: miette::NamedSource::new(source_name, source.to_string()),
-                        span,
+                        src: sws,
                         message: first_msg,
                         label: None,
                         help: None,
@@ -747,16 +742,13 @@ fn resolve_single_import(
     import: &crate::reader::ImportEntry,
     ctx: &mut CompileContext,
     current_dir: &Path,
-    source: &str,
-    source_name: &str,
 ) -> miette::Result<()> {
     let resolved_path = match ctx.import_ctx.resolve_import(&import.path, current_dir) {
         Ok(p) => p,
         Err(e) => {
-            if let Some(span) = import.span {
+            if let Some(sws) = import.span.clone() {
                 return Err(ParseDiagnostic {
-                    src: miette::NamedSource::new(source_name, source.to_string()),
-                    span,
+                    src: sws,
                     message: format!("{e}"),
                     label: None,
                     help: None,
@@ -782,47 +774,34 @@ fn resolve_single_import(
         ImportKind::Protocol => {
             let imported_messages =
                 import_protocol(&resolved_path, &mut ctx.registry).map_err(|e| {
-                    wrap_import_error(
-                        e,
-                        import.span,
-                        source,
-                        source_name,
-                        &resolved_path,
-                        "protocol",
-                    )
+                    wrap_import_error(e, import.span.clone(), &resolved_path, "protocol")
                 })?;
             ctx.messages.extend(imported_messages);
 
             // Track the import so unresolved references from this .avpr can
             // be attributed to the import statement in error diagnostics.
             ctx.json_import_spans
-                .push((resolved_path.display().to_string(), import.span));
+                .push((resolved_path.display().to_string(), import.span.clone()));
         }
         ImportKind::Schema => {
             import_schema(&resolved_path, &mut ctx.registry).map_err(|e| {
-                wrap_import_error(
-                    e,
-                    import.span,
-                    source,
-                    source_name,
-                    &resolved_path,
-                    "schema",
-                )
+                wrap_import_error(e, import.span.clone(), &resolved_path, "schema")
             })?;
 
             // Track the import so unresolved references from this .avsc can
             // be attributed to the import statement in error diagnostics.
             ctx.json_import_spans
-                .push((resolved_path.display().to_string(), import.span));
+                .push((resolved_path.display().to_string(), import.span.clone()));
         }
         ImportKind::Idl => {
-            let imported_source = fs::read_to_string(&resolved_path)
+            let imported_source: Arc<str> = fs::read_to_string(&resolved_path)
                 .map_err(|e| miette::miette!("{e}"))
-                .with_context(|| format!("read imported IDL {}", resolved_path.display()))?;
+                .with_context(|| format!("read imported IDL {}", resolved_path.display()))
+                .map(|s| Arc::from(s.as_str()))?;
 
-            let imported_name = resolved_path.display().to_string();
+            let imported_name: Arc<str> = Arc::from(resolved_path.display().to_string());
             let (imported_idl, nested_decl_items, import_warnings) =
-                parse_idl_named(&imported_source, &imported_name)
+                parse_idl_named(Arc::clone(&imported_source), Arc::clone(&imported_name))
                     .with_context(|| format!("parse imported IDL {}", resolved_path.display()))?;
 
             // Propagate warnings from the imported file, wrapping each with the
@@ -845,16 +824,10 @@ fn resolve_single_import(
             // IDL imports use their own source text for span tracking, so
             // `ctx.json_import_spans` is passed through to capture any nested
             // JSON imports within the imported IDL file.
-            process_decl_items(
-                &nested_decl_items,
-                ctx,
-                &import_dir,
-                &imported_source,
-                &imported_name,
-            )
-            .with_context(|| {
-                format!("resolve nested imports from `{}`", resolved_path.display())
-            })?;
+            process_decl_items(&nested_decl_items, ctx, &import_dir)
+                .with_context(|| {
+                    format!("resolve nested imports from `{}`", resolved_path.display())
+                })?;
         }
     }
 
@@ -871,16 +844,13 @@ fn resolve_single_import(
 /// diagnostic -- context layers are shown as plain text.
 fn wrap_import_error(
     error: miette::Report,
-    span: Option<miette::SourceSpan>,
-    source: &str,
-    source_name: &str,
+    span: Option<SpanWithSource>,
     resolved_path: &Path,
     kind: &str,
 ) -> miette::Report {
-    if let Some(span) = span {
+    if let Some(sws) = span {
         let diag = ParseDiagnostic {
-            src: miette::NamedSource::new(source_name, source.to_string()),
-            span,
+            src: sws,
             message: format!("import {} {}", kind, resolved_path.display()),
             label: None,
             help: None,
@@ -1025,7 +995,7 @@ fn validate_all_references(
     registry: &SchemaRegistry,
     source: &str,
     source_name: &str,
-    json_import_spans: &[(String, Option<miette::SourceSpan>)],
+    json_import_spans: &[(String, Option<SpanWithSource>)],
 ) -> miette::Result<()> {
     let mut unresolved = registry.validate_references();
 
@@ -1071,7 +1041,11 @@ fn validate_all_references(
 
     // Sort by source span offset so the first error in the file is reported
     // first. References without a span (from JSON imports) sort to the end.
-    unresolved.sort_by_key(|(_, span)| span.map_or(usize::MAX, |s| s.offset()));
+    unresolved.sort_by_key(|(_, span)| {
+        span.as_ref().map_or(("".to_string(), usize::MAX), |sws| {
+            ((*sws.file_name).to_string(), sws.offset)
+        })
+    });
 
     if unresolved.is_empty() {
         return Ok(());
@@ -1094,7 +1068,7 @@ fn validate_all_references(
         // spans). Use the first available import statement span to point
         // the user at the import line, with a help message naming the
         // imported file(s).
-        let first_import_span = json_import_spans.iter().find_map(|(_, s)| *s);
+        let first_import_sws = json_import_spans.iter().find_map(|(_, s)| s.clone());
 
         let names: Vec<&str> = without_span.iter().map(|(name, _)| name.as_str()).collect();
         let message = format!("Undefined name: {}", names.join(", "));
@@ -1108,10 +1082,9 @@ fn validate_all_references(
             ))
         };
 
-        if let Some(span) = first_import_span {
+        if let Some(sws) = first_import_sws {
             return Err(ParseDiagnostic {
-                src: miette::NamedSource::new(source_name, source.to_string()),
-                span,
+                src: sws,
                 message,
                 label: Some("this import contains undefined type references".to_string()),
                 help,
@@ -1132,16 +1105,20 @@ fn validate_all_references(
     // are attached as related diagnostics so users see all undefined names
     // in one error report.
     let mut span_iter = with_span.into_iter();
-    let (first_name, first_span) = span_iter.next().expect("with_span is non-empty");
-    let first_span = first_span.expect("partitioned into Some");
+    let (first_name, first_sws) = span_iter.next().expect("with_span is non-empty");
+    let first_sws = first_sws.expect("partitioned into Some");
+
+    // Fallback SWS for spanless references: points at the root file with a
+    // zero-length span when no import statement span is available.
+    let fallback_sws =
+        SpanWithSource::new(0, 0, Arc::from(source_name), Arc::from(source));
 
     let mut related: Vec<ParseDiagnostic> = span_iter
         .map(|(name, span)| {
-            let span = span.expect("partitioned into Some");
+            let sws = span.expect("partitioned into Some");
             let help = suggest_similar_name(&name, registry);
             ParseDiagnostic {
-                src: miette::NamedSource::new(source_name, source.to_string()),
-                span,
+                src: sws,
                 message: format!("Undefined name: {name}"),
                 label: None,
                 help,
@@ -1152,19 +1129,18 @@ fn validate_all_references(
 
     // Append spanless references as related diagnostics, using the import
     // statement spans so the user can see which import brought them in.
-    // Fall back to a zero-length span at offset 0 if no import span is
+    // Fall back to `fallback_sws` if no import span is
     // available. Include "did you mean?" suggestions where applicable.
-    let fallback_span: miette::SourceSpan = (0, 0).into();
     for (name, _) in &without_span {
-        let (span, label) = if let Some((path, Some(import_span))) = json_import_spans.first() {
+        let (sws, label) = if let Some((path, Some(import_sws))) = json_import_spans.first() {
             (
-                *import_span,
+                import_sws.clone(),
                 Some(format!(
                     "type `{name}` referenced in imported file `{path}`"
                 )),
             )
         } else {
-            (fallback_span, None)
+            (fallback_sws.clone(), None)
         };
 
         let help = if import_file_names.is_empty() {
@@ -1177,8 +1153,7 @@ fn validate_all_references(
         };
 
         related.push(ParseDiagnostic {
-            src: miette::NamedSource::new(source_name, source.to_string()),
-            span,
+            src: sws,
             message: format!("Undefined name: {name}"),
             label,
             help,
@@ -1188,8 +1163,7 @@ fn validate_all_references(
 
     let first_help = suggest_similar_name(&first_name, registry);
     Err(ParseDiagnostic {
-        src: miette::NamedSource::new(source_name, source.to_string()),
-        span: first_span,
+        src: first_sws,
         message: format!("Undefined name: {first_name}"),
         label: None,
         help: first_help,

@@ -1,9 +1,10 @@
-use miette::SourceSpan;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
+
+use crate::error::SpanWithSource;
 
 /// The eight Avro primitive type names.
 ///
@@ -370,10 +371,10 @@ pub enum AvroSchema {
         name: std::string::String,
         namespace: Option<std::string::String>,
         properties: HashMap<std::string::String, Value>,
-        /// Source location of this reference in the `.avdl` input, used for
-        /// error diagnostics when the reference cannot be resolved. `None` for
-        /// references created from JSON imports (no source location available).
-        span: Option<SourceSpan>,
+        /// Source location and file of this reference in the `.avdl` input,
+        /// used for error diagnostics when the reference cannot be resolved.
+        /// `None` for references created from JSON imports.
+        span: Option<SpanWithSource>,
     },
 }
 

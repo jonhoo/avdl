@@ -23,6 +23,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use std::borrow::Borrow;
 
@@ -39,7 +40,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::doc_comments::extract_doc_comment;
-use crate::error::ParseDiagnostic;
+use crate::error::{ParseDiagnostic, SpanWithSource};
 use crate::generated::idllexer::IdlLexer;
 use crate::generated::idlparser::*;
 use crate::model::protocol::{Message, Protocol};
@@ -62,10 +63,8 @@ use miette::{Context, Result};
 /// the offending token underlined.
 pub(crate) struct Warning {
     pub(crate) message: String,
-    /// The source text and file name, for rich diagnostic rendering.
-    pub(crate) source: Option<miette::NamedSource<String>>,
-    /// Byte range of the token that triggered the warning.
-    pub(crate) span: Option<miette::SourceSpan>,
+    /// Source (file, source-code, offsets) of the problematic token
+    pub(crate) src: Option<SpanWithSource>,
 }
 
 /// Custom `Debug` implementation that shows a compact representation instead of
@@ -77,12 +76,13 @@ impl std::fmt::Debug for Warning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Warning")
             .field("message", &self.message)
-            .field("file", &self.source.as_ref().map(|s| s.name().to_string()))
+            .field("file", &self.src.as_ref().map(|s| &*s.file_name))
             .field(
                 "span",
                 &self
-                    .span
-                    .map(|s| format!("{}..{}", s.offset(), s.offset() + s.len())),
+                    .src
+                    .as_ref()
+                    .map(|s| format!("{}..{}", s.offset, s.offset + s.length)),
             )
             .finish()
     }
@@ -100,7 +100,7 @@ impl Warning {
     fn out_of_place_doc_comment(
         line: isize,
         column: isize,
-        src: &SourceInfo<'_>,
+        src: &SourceInfo,
         token_start: isize,
         token_stop: isize,
     ) -> Self {
@@ -124,8 +124,7 @@ impl Warning {
                 // get_column() is 0-based, so we add 1 to match.
                 column + 1,
             ),
-            source: Some(miette::NamedSource::new(src.name, src.source.to_string())),
-            span: Some(miette::SourceSpan::new(offset.into(), length)),
+            src: Some(src.span(offset, length)),
         }
     }
 
@@ -137,7 +136,7 @@ impl Warning {
     /// warning lets the user know their annotations had no effect.
     fn annotations_dropped_on_union<'a>(
         annotation_keys: &[&str],
-        src: &SourceInfo<'_>,
+        src: &SourceInfo,
         ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'a>,
     ) -> Self {
         let start_token = ctx.start();
@@ -164,8 +163,7 @@ impl Warning {
             message: format!(
                 "Annotations on union types are not supported and will be ignored: {keys_display}"
             ),
-            source: Some(miette::NamedSource::new(src.name, src.source.to_string())),
-            span: Some(miette::SourceSpan::new(byte_offset.into(), length)),
+            src: Some(src.span(byte_offset, length)),
         }
     }
 }
@@ -186,11 +184,11 @@ impl miette::Diagnostic for Warning {
     }
 
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        self.source.as_ref().map(|s| s as &dyn miette::SourceCode)
+        self.src.as_ref().map(|s| s as &dyn miette::SourceCode)
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        let span = self.span?;
+        let sws = self.src.as_ref()?;
         // Derive a short label from the message content rather than hardcoding
         // a single label for all warning types.
         let label = if self.message.contains("out-of-place documentation comment") {
@@ -203,7 +201,7 @@ impl miette::Diagnostic for Warning {
             "here"
         };
         Some(Box::new(std::iter::once(
-            miette::LabeledSpan::new_with_span(Some(label.to_string()), span),
+            miette::LabeledSpan::new_with_span(Some(label.to_string()), sws.source_span()),
         )))
     }
 }
@@ -1800,7 +1798,7 @@ struct CollectingErrorListener {
     /// Original source text for line/column-to-byte-offset conversion.
     /// `None` for parser errors where the offending token always provides
     /// byte offsets directly.
-    source: Option<Rc<str>>,
+    source: Option<Arc<str>>,
 }
 
 impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
@@ -1907,9 +1905,9 @@ pub enum IdlFile {
 pub struct ImportEntry {
     pub kind: ImportKind,
     pub path: String,
-    /// Byte range of the import statement in the originating IDL source,
+    /// Source location of the import statement in the originating IDL source,
     /// enabling source-highlighted diagnostics when import resolution fails.
-    pub span: Option<miette::SourceSpan>,
+    pub span: Option<SpanWithSource>,
 }
 
 /// The kind of import statement.
@@ -1930,20 +1928,20 @@ pub enum DeclItem {
     Import(ImportEntry),
     /// A locally-defined named type (record, enum, or fixed).
     ///
-    /// The optional `SourceSpan` records the byte range of the declaration in
-    /// the originating IDL source, enabling source-highlighted diagnostics when
-    /// registration fails (e.g., duplicate type name).
+    /// The optional `SpanWithSource` records the source location of the
+    /// declaration, enabling source-highlighted diagnostics when registration
+    /// fails (e.g., duplicate type name).
     ///
-    /// The `HashMap<String, SourceSpan>` maps field names to their default
-    /// value's source span for record types. When a field has a default value,
-    /// the span covers the `jsonValue` node; otherwise it falls back to the
-    /// `variableDeclaration` node. This enables per-field diagnostics that
+    /// The `HashMap<String, SpanWithSource>` maps field names to their default
+    /// value's source location for record types. When a field has a default
+    /// value, the span covers the `jsonValue` node; otherwise it falls back to
+    /// the `variableDeclaration` node. This enables per-field diagnostics that
     /// highlight the offending default value when validating Reference-typed
     /// fields in the compiler.
     Type(
         Box<AvroSchema>,
-        Option<miette::SourceSpan>,
-        HashMap<String, miette::SourceSpan>,
+        Option<SpanWithSource>,
+        HashMap<String, SpanWithSource>,
     ),
 }
 
@@ -1964,14 +1962,14 @@ pub fn parse_idl_for_test(input: &str) -> Result<(IdlFile, Vec<DeclItem>, Vec<Wa
         input
     };
 
-    parse_idl_named(input, "<input>")
+    parse_idl_named(Arc::from(input), Arc::from("<input>"))
 }
 
 /// Parse an Avro IDL string, attaching `source_name` to any error diagnostics
 /// so that error messages identify the originating file.
 pub fn parse_idl_named(
-    input: &str,
-    source_name: &str,
+    input: Arc<str>,
+    source_name: Arc<str>,
 ) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
     // The ANTLR grammar's `idlFile` rule includes `('\u001a' .*?)? EOF`
     // to treat the ASCII SUB character (U+001A) as an end-of-file marker,
@@ -1979,11 +1977,12 @@ pub fn parse_idl_named(
     // this correctly, so we strip the SUB character and everything after it
     // before passing the input to the lexer.
     let input = if let Some(pos) = input.find('\u{001a}') {
-        &input[..pos]
+        let stripped = &(*input)[..pos];
+        Arc::from(stripped)
     } else {
         input
     };
-    let input_stream = InputStream::new(input);
+    let input_stream = InputStream::new(&*input);
     let mut lexer = IdlLexer::new(input_stream);
 
     // Replace the lexer's default ConsoleErrorListener with a
@@ -1992,12 +1991,11 @@ pub fn parse_idl_named(
     // warnings instead, matching Java's behavior of not treating lexer
     // errors as fatal. (Java also doesn't install a custom listener on
     // the lexer — it just lets ConsoleErrorListener print to stderr.)
-    let source_rc: Rc<str> = Rc::from(input);
     let lexer_errors: Rc<RefCell<Vec<SyntaxError>>> = Rc::new(RefCell::new(Vec::new()));
     lexer.remove_error_listeners();
     lexer.add_error_listener(Box::new(CollectingErrorListener {
         errors: Rc::clone(&lexer_errors),
-        source: Some(Rc::clone(&source_rc)),
+        source: Some(Arc::clone(&input)),
     }));
 
     let token_stream = CommonTokenStream::new(lexer);
@@ -2034,8 +2032,12 @@ pub fn parse_idl_named(
         .iter()
         .map(|e| Warning {
             message: e.message.clone(),
-            source: Some(miette::NamedSource::new(source_name, input.to_string())),
-            span: Some(miette::SourceSpan::new(e.offset.into(), e.length)),
+            src: Some(SpanWithSource::new(
+                e.offset,
+                e.length,
+                Arc::clone(&source_name),
+                Arc::clone(&input),
+            )),
         })
         .collect();
 
@@ -2073,8 +2075,12 @@ pub fn parse_idl_named(
             };
 
             return Err(ParseDiagnostic {
-                src: miette::NamedSource::new(source_name, input.to_string()),
-                span: miette::SourceSpan::new(unterm.offset.into(), unterm.length),
+                src: SpanWithSource::new(
+                    unterm.offset,
+                    unterm.length,
+                    Arc::clone(&source_name),
+                    Arc::clone(&input),
+                ),
                 message,
                 label: Some("unterminated string literal".to_string()),
                 help: Some(
@@ -2090,15 +2096,19 @@ pub fn parse_idl_named(
         // from the original source text. This handles patterns that cannot
         // be detected from ANTLR error messages alone (e.g., empty unions,
         // misspelled keywords, fixed with non-integer size).
-        let refined = refine_errors_with_source(&collected_errors, input);
+        let refined = refine_errors_with_source(&collected_errors, &*input);
         let errors_to_report = refined.as_deref().unwrap_or(&collected_errors);
 
         let first = &errors_to_report[0];
         let related: Vec<ParseDiagnostic> = errors_to_report[1..]
             .iter()
             .map(|e| ParseDiagnostic {
-                src: miette::NamedSource::new(source_name, input.to_string()),
-                span: miette::SourceSpan::new(e.offset.into(), e.length),
+                src: SpanWithSource::new(
+                    e.offset,
+                    e.length,
+                    Arc::clone(&source_name),
+                    Arc::clone(&input),
+                ),
                 message: e.message.clone(),
                 label: e.label.clone(),
                 help: e.help.clone(),
@@ -2106,8 +2116,12 @@ pub fn parse_idl_named(
             })
             .collect();
         return Err(ParseDiagnostic {
-            src: miette::NamedSource::new(source_name, input.to_string()),
-            span: miette::SourceSpan::new(first.offset.into(), first.length),
+            src: SpanWithSource::new(
+                first.offset,
+                first.length,
+                Arc::clone(&source_name),
+                Arc::clone(&input),
+            ),
             message: first.message.clone(),
             label: first.label.clone(),
             help: first.help.clone(),
@@ -2123,8 +2137,8 @@ pub fn parse_idl_named(
     let token_stream = &parser.input;
 
     let src = SourceInfo {
-        source: input,
-        name: source_name,
+        source: Arc::clone(&input),
+        name: Arc::clone(&source_name),
         consumed_doc_indices: RefCell::new(HashSet::new()),
         warnings: RefCell::new(Vec::new()),
     };
@@ -2177,9 +2191,9 @@ type TS<'input> = CommonTokenStream<'input, IdlLexer<'input, InputStream<&'input
 ///
 /// Also tracks which doc comment token indices have been consumed by
 /// declarations, so that orphaned doc comments can be detected after the walk.
-struct SourceInfo<'a> {
-    source: &'a str,
-    name: &'a str,
+struct SourceInfo {
+    source: Arc<str>,
+    name: Arc<str>,
     /// Token indices of doc comments consumed by `extract_doc_from_context`.
     /// After the full tree walk, any `DocComment` token NOT in this set is
     /// orphaned and should generate a warning.
@@ -2189,6 +2203,17 @@ struct SourceInfo<'a> {
     /// push here rather than threading `&mut Vec<Warning>` through every
     /// call site.
     warnings: RefCell<Vec<Warning>>,
+}
+
+impl SourceInfo {
+    fn span(&self, offset: usize, length: usize) -> SpanWithSource {
+        SpanWithSource::new(
+            offset,
+            length,
+            Arc::clone(&self.name),
+            Arc::clone(&self.source),
+        )
+    }
 }
 
 /// Compute `(offset, length)` from ANTLR's inclusive start/stop byte offsets.
@@ -2215,7 +2240,7 @@ fn span_from_offsets(start: isize, stop: isize) -> (usize, usize) {
 /// `SourceSpan` that miette can render as an underlined region in the error
 /// output.
 fn make_diagnostic<'input>(
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'input>,
     message: impl Into<String>,
 ) -> miette::Report {
@@ -2240,8 +2265,7 @@ fn make_diagnostic<'input>(
 
     let message = message.into();
     ParseDiagnostic {
-        src: miette::NamedSource::new(src.name, src.source.to_string()),
-        span: miette::SourceSpan::new(offset.into(), length),
+        src: src.span(offset, length),
         message,
         label: None,
         help: None,
@@ -2254,7 +2278,7 @@ fn make_diagnostic<'input>(
 /// context node. Useful when the error relates to a specific token field
 /// (e.g. `ctx.size`, `ctx.typeName`) rather than the whole context.
 fn make_diagnostic_from_token(
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     token: &impl Token,
     message: impl Into<String>,
 ) -> miette::Report {
@@ -2262,8 +2286,7 @@ fn make_diagnostic_from_token(
 
     let message = message.into();
     ParseDiagnostic {
-        src: miette::NamedSource::new(src.name, src.source.to_string()),
-        span: miette::SourceSpan::new(offset.into(), length),
+        src: src.span(offset, length),
         message,
         label: None,
         help: None,
@@ -2280,13 +2303,13 @@ fn make_diagnostic_from_token(
 /// source-highlighted diagnostics.
 fn span_from_context<'input>(
     ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'input>,
-) -> Option<miette::SourceSpan> {
+) -> Option<(usize, usize)> {
     let start_token = ctx.start();
     let (offset, length) = span_from_offsets(start_token.get_start(), start_token.get_stop());
 
     // A zero-length span at offset 0 means no valid position was available.
     if length > 0 {
-        Some(miette::SourceSpan::new(offset.into(), length))
+        Some((offset, length))
     } else {
         None
     }
@@ -2472,7 +2495,7 @@ const MESSAGE_PROPS: PropertyContext = PropertyContext {
 fn walk_schema_properties<'input>(
     props: &[Rc<SchemaPropertyContextAll<'input>>],
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     pctx: PropertyContext,
 ) -> Result<SchemaProperties> {
     let mut result = SchemaProperties::new();
@@ -2592,7 +2615,7 @@ fn walk_schema_properties<'input>(
 fn walk_idl_file<'input>(
     ctx: &IdlFileContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: &mut Option<String>,
     decl_items: &mut Vec<DeclItem>,
 ) -> Result<IdlFile> {
@@ -2625,9 +2648,9 @@ fn walk_idl_file<'input>(
             .clone()
             .downcast_rc::<ImportStatementContextAll<'input>>()
         {
-            collect_single_import(&import_ctx, decl_items);
+            collect_single_import(&import_ctx, decl_items, src);
         } else if let Ok(ns_ctx) = child.downcast_rc::<NamedSchemaDeclarationContextAll<'input>>() {
-            let span = span_from_context(&*ns_ctx);
+            let span = span_from_context(&*ns_ctx).map(|(o, l)| src.span(o, l));
             let (schema, field_spans) =
                 walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
             local_schemas.push(schema.clone());
@@ -2661,7 +2684,7 @@ fn walk_idl_file<'input>(
 fn walk_protocol<'input>(
     ctx: &ProtocolDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: &mut Option<String>,
     decl_items: &mut Vec<DeclItem>,
 ) -> Result<Protocol> {
@@ -2710,12 +2733,12 @@ fn walk_protocol<'input>(
             .clone()
             .downcast_rc::<ImportStatementContextAll<'input>>()
         {
-            collect_single_import(&import_ctx, decl_items);
+            collect_single_import(&import_ctx, decl_items, src);
         } else if let Ok(ns_ctx) = child
             .clone()
             .downcast_rc::<NamedSchemaDeclarationContextAll<'input>>()
         {
-            let span = span_from_context(&*ns_ctx);
+            let span = span_from_context(&*ns_ctx).map(|(o, l)| src.span(o, l));
             let (schema, field_spans) =
                 walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
             decl_items.push(DeclItem::Type(Box::new(schema), span, field_spans));
@@ -2746,9 +2769,9 @@ fn walk_protocol<'input>(
 fn walk_named_schema_no_register<'input>(
     ctx: &NamedSchemaDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: &mut Option<String>,
-) -> Result<(AvroSchema, HashMap<String, miette::SourceSpan>)> {
+) -> Result<(AvroSchema, HashMap<String, SpanWithSource>)> {
     if let Some(fixed_ctx) = ctx.fixedDeclaration() {
         Ok((
             walk_fixed(&fixed_ctx, token_stream, src, namespace.as_deref())?,
@@ -2782,9 +2805,9 @@ fn walk_named_schema_no_register<'input>(
 fn walk_record<'input>(
     ctx: &RecordDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: &mut Option<String>,
-) -> Result<(AvroSchema, HashMap<String, miette::SourceSpan>)> {
+) -> Result<(AvroSchema, HashMap<String, SpanWithSource>)> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
     let props = walk_schema_properties(
         &ctx.schemaProperty_all(),
@@ -2831,7 +2854,7 @@ fn walk_record<'input>(
         .ok_or_else(|| make_diagnostic(src, ctx, "missing record body"))?;
 
     let mut fields = Vec::new();
-    let mut field_spans: HashMap<String, miette::SourceSpan> = HashMap::new();
+    let mut field_spans: HashMap<String, SpanWithSource> = HashMap::new();
     let mut seen_field_names: HashSet<String> = HashSet::new();
     for field_ctx in body.fieldDeclaration_all() {
         let mut field_fields = walk_field_declaration(
@@ -2878,8 +2901,8 @@ fn walk_record<'input>(
                 .jsonValue()
                 .and_then(|jv| span_from_context(&*jv))
                 .or_else(|| span_from_context(&**var_ctx));
-            if let Some(span) = default_span {
-                field_spans.insert(field.name.clone(), span);
+            if let Some((offset, length)) = default_span {
+                field_spans.insert(field.name.clone(), src.span(offset, length));
             }
         }
         fields.append(&mut field_fields);
@@ -2914,7 +2937,7 @@ fn walk_record<'input>(
 fn walk_field_declaration<'input>(
     ctx: &FieldDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: Option<&str>,
     enclosing_name: Option<&str>,
 ) -> Result<Vec<Field>> {
@@ -2955,7 +2978,7 @@ fn walk_variable<'input>(
     field_type: &AvroSchema,
     default_doc: Option<&str>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     _namespace: Option<&str>,
     enclosing_name: Option<&str>,
 ) -> Result<Field> {
@@ -3037,7 +3060,7 @@ fn walk_variable<'input>(
 fn walk_enum<'input>(
     ctx: &EnumDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     enclosing_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
@@ -3121,7 +3144,7 @@ fn walk_enum<'input>(
 fn walk_fixed<'input>(
     ctx: &FixedDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     enclosing_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
@@ -3189,7 +3212,7 @@ fn walk_fixed<'input>(
 fn walk_full_type<'input>(
     ctx: &FullTypeContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, BARE_PROPS)?;
@@ -3241,7 +3264,7 @@ fn walk_full_type<'input>(
 fn walk_plain_type<'input>(
     ctx: &PlainTypeContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     if let Some(array_ctx) = ctx.arrayType() {
@@ -3264,7 +3287,7 @@ fn walk_plain_type<'input>(
 fn walk_nullable_type<'input>(
     ctx: &NullableTypeContextAll<'input>,
     _token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let base_type = if let Some(prim_ctx) = ctx.primitiveType() {
@@ -3274,7 +3297,7 @@ fn walk_nullable_type<'input>(
         // so the Reference carries them separately, enabling correct namespace
         // shortening during JSON serialization.
         let type_name = identifier_text(&ref_ctx);
-        let ref_span = span_from_context(&*ref_ctx);
+        let ref_span = span_from_context(&*ref_ctx).map(|(o, l)| src.span(o, l));
         if let Some((ns, name)) = type_name.rsplit_once('.') {
             AvroSchema::Reference {
                 name: name.to_string(),
@@ -3317,7 +3340,7 @@ fn walk_nullable_type<'input>(
 /// Walk a primitive type keyword and return the corresponding `AvroSchema`.
 fn walk_primitive_type<'input>(
     ctx: &PrimitiveTypeContextAll<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
 ) -> Result<AvroSchema> {
     let type_tok = ctx
         .typeName
@@ -3425,7 +3448,7 @@ fn walk_primitive_type<'input>(
 fn walk_array_type<'input>(
     ctx: &ArrayTypeContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let element_ctx = ctx
@@ -3442,7 +3465,7 @@ fn walk_array_type<'input>(
 fn walk_map_type<'input>(
     ctx: &MapTypeContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let value_ctx = ctx
@@ -3459,7 +3482,7 @@ fn walk_map_type<'input>(
 fn walk_union_type<'input>(
     ctx: &UnionTypeContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let mut types = Vec::new();
@@ -3511,7 +3534,7 @@ fn walk_union_type<'input>(
 fn walk_message<'input>(
     ctx: &MessageDeclarationContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<(String, Message)> {
     let doc = extract_doc_from_context(ctx, token_stream, src);
@@ -3599,7 +3622,7 @@ fn walk_message<'input>(
         let mut error_schemas = Vec::new();
         for error_id_ctx in &ctx.errors {
             let error_name = identifier_text(error_id_ctx);
-            let error_span = span_from_context(&**error_id_ctx);
+            let error_span = span_from_context(&**error_id_ctx).map(|(o, l)| src.span(o, l));
             if let Some((ns, name)) = error_name.rsplit_once('.') {
                 error_schemas.push(AvroSchema::Reference {
                     name: name.to_string(),
@@ -3644,7 +3667,7 @@ fn walk_message<'input>(
 fn walk_result_type<'input>(
     ctx: &ResultTypeContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     // If there's a Void token, return Null.
@@ -3666,7 +3689,7 @@ fn walk_result_type<'input>(
 fn walk_json_value<'input>(
     ctx: &JsonValueContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
 ) -> Result<Value> {
     if let Some(obj_ctx) = ctx.jsonObject() {
         return walk_json_object(&obj_ctx, token_stream, src);
@@ -3682,7 +3705,7 @@ fn walk_json_value<'input>(
 
 fn walk_json_literal<'input>(
     ctx: &JsonLiteralContextAll<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
 ) -> Result<Value> {
     let tok = ctx
         .literal
@@ -3720,7 +3743,7 @@ fn walk_json_literal<'input>(
 fn walk_json_object<'input>(
     ctx: &JsonObjectContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
 ) -> Result<Value> {
     let mut map = serde_json::Map::new();
     for pair_ctx in ctx.jsonPair_all() {
@@ -3743,7 +3766,7 @@ fn walk_json_object<'input>(
 fn walk_json_array<'input>(
     ctx: &JsonArrayContextAll<'input>,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
 ) -> Result<Value> {
     let mut elements = Vec::new();
     for val_ctx in ctx.jsonValue_all() {
@@ -4430,7 +4453,7 @@ fn json_value_as_u32(v: &Value) -> Option<u32> {
 fn extract_doc_from_context<'input, T>(
     ctx: &T,
     token_stream: &TS<'input>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
 ) -> Option<String>
 where
     T: antlr4rust::parser_rule_context::ParserRuleContext<'input>,
@@ -4455,7 +4478,7 @@ where
 fn collect_orphaned_doc_comment_warnings<'input, S>(
     token_stream: &S,
     consumed_indices: &HashSet<isize>,
-    src: &SourceInfo<'_>,
+    src: &SourceInfo,
 ) -> Vec<Warning>
 where
     S: TokenStream<'input>,
@@ -4487,6 +4510,7 @@ where
 fn collect_single_import<'input>(
     import_ctx: &ImportStatementContextAll<'input>,
     decl_items: &mut Vec<DeclItem>,
+    src: &SourceInfo,
 ) {
     let kind_tok = import_ctx.importType.as_ref();
     let location_tok = import_ctx.location.as_ref();
@@ -4502,7 +4526,7 @@ fn collect_single_import<'input>(
         decl_items.push(DeclItem::Import(ImportEntry {
             kind: import_kind,
             path: get_string_from_literal(loc.get_text()),
-            span: span_from_context(import_ctx),
+            span: span_from_context(import_ctx).map(|(o, l)| src.span(o, l)),
         }));
     }
 }
