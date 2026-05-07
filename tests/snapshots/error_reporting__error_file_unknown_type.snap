@@ -1,0 +1,12 @@
+---
+source: tests/error_reporting.rs
+expression: error
+---
+  x Undefined name: unknown.type
+   ,-[[ROOT]/tests/testdata/unknown_type.avdl:3:5]
+ 2 |   record Foo {
+ 3 |     unknown.type field;
+   :     ^^^^^^|^^^^^
+   :           `-- Undefined name: unknown.type
+ 4 |   }
+   `----
