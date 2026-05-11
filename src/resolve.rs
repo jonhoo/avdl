@@ -205,10 +205,7 @@ impl SchemaRegistry {
     ///
     /// The caller is responsible for deduplication and ordering -- see
     /// `validate_all_references` in `compiler.rs`.
-    pub fn validate_schema(
-        &self,
-        schema: &AvroSchema,
-    ) -> Vec<(String, Option<SpanWithSource>)> {
+    pub fn validate_schema(&self, schema: &AvroSchema) -> Vec<(String, Option<SpanWithSource>)> {
         let mut unresolved = Vec::new();
         collect_unresolved_refs(schema, &self.schemas, &mut unresolved);
         unresolved

@@ -23,7 +23,6 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use std::borrow::Borrow;
 
@@ -76,7 +75,7 @@ impl std::fmt::Debug for Warning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Warning")
             .field("message", &self.message)
-            .field("file", &self.src.as_ref().map(|s| &*s.file_name))
+            .field("file", &self.src.as_ref().map(|s| s.file_name))
             .field(
                 "span",
                 &self
@@ -1798,7 +1797,7 @@ struct CollectingErrorListener {
     /// Original source text for line/column-to-byte-offset conversion.
     /// `None` for parser errors where the offending token always provides
     /// byte offsets directly.
-    source: Option<Arc<str>>,
+    source: Option<&'static str>,
 }
 
 impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
@@ -1830,7 +1829,7 @@ impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
             .unwrap_or_else(|| {
                 // Lexer errors have no offending token. Fall back to computing
                 // the byte offset from (line, column) using the source text.
-                if let Some(ref src) = self.source {
+                if let Some(src) = self.source {
                     let offset = line_col_to_byte_offset(src, line, column);
                     (offset, 1)
                 } else {
@@ -1953,23 +1952,23 @@ pub enum DeclItem {
 /// Tests that need to verify CRLF-specific behavior should call
 /// [`parse_idl_named`] directly.
 #[cfg(test)]
-pub fn parse_idl_for_test(input: &str) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
+pub fn parse_idl_for_test(input: &'static str) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
     let normalized;
     let input = if input.contains("\r\n") {
         normalized = input.replace("\r\n", "\n");
-        normalized.as_str()
+        normalized.leak()
     } else {
         input
     };
 
-    parse_idl_named(Arc::from(input), Arc::from("<input>"))
+    parse_idl_named(input, "<input>")
 }
 
 /// Parse an Avro IDL string, attaching `source_name` to any error diagnostics
 /// so that error messages identify the originating file.
 pub fn parse_idl_named(
-    input: Arc<str>,
-    source_name: Arc<str>,
+    input: &'static str,
+    source_name: &'static str,
 ) -> Result<(IdlFile, Vec<DeclItem>, Vec<Warning>)> {
     // The ANTLR grammar's `idlFile` rule includes `('\u001a' .*?)? EOF`
     // to treat the ASCII SUB character (U+001A) as an end-of-file marker,
@@ -1977,12 +1976,11 @@ pub fn parse_idl_named(
     // this correctly, so we strip the SUB character and everything after it
     // before passing the input to the lexer.
     let input = if let Some(pos) = input.find('\u{001a}') {
-        let stripped = &(*input)[..pos];
-        Arc::from(stripped)
+        &input[..pos]
     } else {
         input
     };
-    let input_stream = InputStream::new(&*input);
+    let input_stream = InputStream::new(input);
     let mut lexer = IdlLexer::new(input_stream);
 
     // Replace the lexer's default ConsoleErrorListener with a
@@ -1995,7 +1993,7 @@ pub fn parse_idl_named(
     lexer.remove_error_listeners();
     lexer.add_error_listener(Box::new(CollectingErrorListener {
         errors: Rc::clone(&lexer_errors),
-        source: Some(Arc::clone(&input)),
+        source: Some(input),
     }));
 
     let token_stream = CommonTokenStream::new(lexer);
@@ -2032,12 +2030,7 @@ pub fn parse_idl_named(
         .iter()
         .map(|e| Warning {
             message: e.message.clone(),
-            src: Some(SpanWithSource::new(
-                e.offset,
-                e.length,
-                Arc::clone(&source_name),
-                Arc::clone(&input),
-            )),
+            src: Some(SpanWithSource::new(e.offset, e.length, source_name, input)),
         })
         .collect();
 
@@ -2075,12 +2068,7 @@ pub fn parse_idl_named(
             };
 
             return Err(ParseDiagnostic {
-                src: SpanWithSource::new(
-                    unterm.offset,
-                    unterm.length,
-                    Arc::clone(&source_name),
-                    Arc::clone(&input),
-                ),
+                src: SpanWithSource::new(unterm.offset, unterm.length, source_name, input),
                 message,
                 label: Some("unterminated string literal".to_string()),
                 help: Some(
@@ -2096,19 +2084,14 @@ pub fn parse_idl_named(
         // from the original source text. This handles patterns that cannot
         // be detected from ANTLR error messages alone (e.g., empty unions,
         // misspelled keywords, fixed with non-integer size).
-        let refined = refine_errors_with_source(&collected_errors, &*input);
+        let refined = refine_errors_with_source(&collected_errors, input);
         let errors_to_report = refined.as_deref().unwrap_or(&collected_errors);
 
         let first = &errors_to_report[0];
         let related: Vec<ParseDiagnostic> = errors_to_report[1..]
             .iter()
             .map(|e| ParseDiagnostic {
-                src: SpanWithSource::new(
-                    e.offset,
-                    e.length,
-                    Arc::clone(&source_name),
-                    Arc::clone(&input),
-                ),
+                src: SpanWithSource::new(e.offset, e.length, source_name, input),
                 message: e.message.clone(),
                 label: e.label.clone(),
                 help: e.help.clone(),
@@ -2116,12 +2099,7 @@ pub fn parse_idl_named(
             })
             .collect();
         return Err(ParseDiagnostic {
-            src: SpanWithSource::new(
-                first.offset,
-                first.length,
-                Arc::clone(&source_name),
-                Arc::clone(&input),
-            ),
+            src: SpanWithSource::new(first.offset, first.length, source_name, input),
             message: first.message.clone(),
             label: first.label.clone(),
             help: first.help.clone(),
@@ -2137,8 +2115,8 @@ pub fn parse_idl_named(
     let token_stream = &parser.input;
 
     let src = SourceInfo {
-        source: Arc::clone(&input),
-        name: Arc::clone(&source_name),
+        source: input,
+        name: source_name,
         consumed_doc_indices: RefCell::new(HashSet::new()),
         warnings: RefCell::new(Vec::new()),
     };
@@ -2192,8 +2170,8 @@ type TS<'input> = CommonTokenStream<'input, IdlLexer<'input, InputStream<&'input
 /// Also tracks which doc comment token indices have been consumed by
 /// declarations, so that orphaned doc comments can be detected after the walk.
 struct SourceInfo {
-    source: Arc<str>,
-    name: Arc<str>,
+    source: &'static str,
+    name: &'static str,
     /// Token indices of doc comments consumed by `extract_doc_from_context`.
     /// After the full tree walk, any `DocComment` token NOT in this set is
     /// orphaned and should generate a warning.
@@ -2207,12 +2185,7 @@ struct SourceInfo {
 
 impl SourceInfo {
     fn span(&self, offset: usize, length: usize) -> SpanWithSource {
-        SpanWithSource::new(
-            offset,
-            length,
-            Arc::clone(&self.name),
-            Arc::clone(&self.source),
-        )
+        SpanWithSource::new(offset, length, self.name, self.source)
     }
 }
 
@@ -5384,7 +5357,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     /// Helper: parse an IDL protocol with a single record, return its first field's schema.
-    fn parse_first_field_schema(idl: &str) -> AvroSchema {
+    fn parse_first_field_schema(idl: &'static str) -> AvroSchema {
         let (_idl_file, decl_items, _warnings) =
             parse_idl_for_test(idl).expect("IDL should parse successfully");
         // Find the record among declaration items.
@@ -5642,7 +5615,7 @@ mod tests {
 
     /// Helper: parse an IDL protocol and return the first named type schema
     /// (record, enum, or fixed).
-    fn parse_first_named_type(idl: &str) -> AvroSchema {
+    fn parse_first_named_type(idl: &'static str) -> AvroSchema {
         let (_idl_file, decl_items, _warnings) =
             parse_idl_for_test(idl).expect("IDL should parse successfully");
         for item in &decl_items {

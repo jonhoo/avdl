@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use miette::{Diagnostic, LabeledSpan, MietteError, MietteSpanContents, SourceCode, SourceSpan};
 
 /// A source span paired with the file it points into.
@@ -13,13 +11,18 @@ pub struct SpanWithSource {
     pub offset: usize,
     pub length: usize,
     /// Absolute path of the file that contains this span.
-    pub file_name: Arc<str>,
+    pub file_name: &'static str,
     /// Full source text of that file.
-    pub content: Arc<str>,
+    pub content: &'static str,
 }
 
 impl SpanWithSource {
-    pub fn new(offset: usize, length: usize, file_name: Arc<str>, content: Arc<str>) -> Self {
+    pub fn new(
+        offset: usize,
+        length: usize,
+        file_name: &'static str,
+        content: &'static str,
+    ) -> Self {
         SpanWithSource {
             offset,
             length,
@@ -40,7 +43,12 @@ impl SourceCode for SpanWithSource {
         context_lines_before: usize,
         context_lines_after: usize,
     ) -> Result<Box<dyn miette::SpanContents<'a> + 'a>, MietteError> {
-        let inner = SourceCode::read_span(&self.content, span, context_lines_before, context_lines_after)?;
+        let inner = SourceCode::read_span(
+            &self.content,
+            span,
+            context_lines_before,
+            context_lines_after,
+        )?;
         Ok(Box::new(MietteSpanContents::new_named(
             self.file_name.to_string(),
             inner.data(),

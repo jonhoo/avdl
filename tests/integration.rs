@@ -602,7 +602,7 @@ fn test_extra_schema_syntax() {
 // ==============================================================================
 
 /// Helper: parse an inline `.avdl` string via the builder and return JSON.
-fn parse_inline_to_json(avdl_input: &str) -> Value {
+fn parse_inline_to_json(avdl_input: &'static str) -> Value {
     let output = Idl::new()
         .convert_str(avdl_input)
         .unwrap_or_else(|e| panic!("failed to parse inline avdl: {e}"));

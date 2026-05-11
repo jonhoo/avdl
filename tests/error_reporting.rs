@@ -29,7 +29,7 @@ use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
 /// output for errors without source location info.
 ///
 /// Returns `None` if compilation succeeds.
-fn compile_error(input: &str) -> Option<String> {
+fn compile_error(input: &'static str) -> Option<String> {
     compile_error_with_width(input, 80)
 }
 
@@ -38,7 +38,7 @@ fn compile_error(input: &str) -> Option<String> {
 /// Useful when error messages embed absolute paths that would be split across
 /// lines at the default 80-column width, making post-processing (e.g., CWD
 /// redaction) unreliable.
-fn compile_error_with_width(input: &str, width: usize) -> Option<String> {
+fn compile_error_with_width(input: &'static str, width: usize) -> Option<String> {
     match Idl::new().convert_str(input) {
         Ok(_) => None,
         Err(e) => {
@@ -84,7 +84,7 @@ fn compile_file_error(path: &std::path::Path) -> Option<String> {
 /// compilation.
 ///
 /// Panics if compilation fails, since warning tests require a successful parse.
-fn compile_warnings(input: &str) -> Vec<miette::Report> {
+fn compile_warnings(input: &'static str) -> Vec<miette::Report> {
     let output = Idl::new()
         .convert_str(input)
         .expect("warning test input should compile successfully");
