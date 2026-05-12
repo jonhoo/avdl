@@ -1,4 +1,64 @@
-use miette::{Diagnostic, LabeledSpan, NamedSource, SourceSpan};
+use miette::{Diagnostic, LabeledSpan, MietteError, MietteSpanContents, SourceCode, SourceSpan};
+
+/// A source span paired with the file it points into.
+///
+/// Stored in `ParseDiagnostic`, `Warning`, and `AvroSchema::Reference` so that
+/// every diagnostic — including those from imported files — can render the
+/// correct source excerpt and filename.
+///
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct SpanWithSource {
+    pub offset: usize,
+    pub length: usize,
+    /// Absolute path of the file that contains this span.
+    pub name: &'static str,
+    /// Full source text of that file.
+    pub content: &'static str,
+}
+
+impl SpanWithSource {
+    pub fn new(
+        offset: usize,
+        length: usize,
+        file_name: &'static str,
+        content: &'static str,
+    ) -> Self {
+        SpanWithSource {
+            offset,
+            length,
+            name: file_name,
+            content,
+        }
+    }
+
+    pub(crate) fn source_span(&self) -> SourceSpan {
+        SourceSpan::new(self.offset.into(), self.length)
+    }
+}
+
+impl SourceCode for SpanWithSource {
+    fn read_span<'a>(
+        &'a self,
+        span: &SourceSpan,
+        context_lines_before: usize,
+        context_lines_after: usize,
+    ) -> Result<Box<dyn miette::SpanContents<'a> + 'a>, MietteError> {
+        let inner = SourceCode::read_span(
+            &self.content,
+            span,
+            context_lines_before,
+            context_lines_after,
+        )?;
+        Ok(Box::new(MietteSpanContents::new_named(
+            self.name.to_string(),
+            inner.data(),
+            *inner.span(),
+            inner.line(),
+            inner.column(),
+            inner.line_count(),
+        )))
+    }
+}
 
 /// A parse error with source location information for rich diagnostics.
 ///
@@ -12,8 +72,7 @@ use miette::{Diagnostic, LabeledSpan, NamedSource, SourceSpan};
 /// source-underline label.
 #[derive(Debug)]
 pub struct ParseDiagnostic {
-    pub src: NamedSource<String>,
-    pub span: SourceSpan,
+    pub span: SpanWithSource,
     pub message: String,
     /// Shorter label for the source-underline annotation. When `None`, falls
     /// back to `message`.
@@ -53,8 +112,8 @@ pub(crate) fn render_diagnostic(report: &miette::Report) -> String {
 }
 
 impl miette::Diagnostic for ParseDiagnostic {
-    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        Some(&self.src)
+    fn source_code(&self) -> Option<&dyn SourceCode> {
+        Some(&self.span)
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
@@ -67,7 +126,7 @@ impl miette::Diagnostic for ParseDiagnostic {
         let label_text = self.label.clone().unwrap_or_else(|| self.message.clone());
         Some(Box::new(std::iter::once(LabeledSpan::new_with_span(
             Some(label_text),
-            self.span,
+            self.span.source_span(),
         ))))
     }
 

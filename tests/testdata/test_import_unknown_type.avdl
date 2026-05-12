@@ -1,0 +1,8 @@
+@namespace("test")
+protocol ImportError {
+  import idl "unknown_type.avdl";
+
+  record MyRecord {
+    string value;
+  }
+}

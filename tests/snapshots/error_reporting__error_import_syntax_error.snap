@@ -1,0 +1,13 @@
+---
+source: tests/error_reporting.rs
+expression: error
+---
+  x parse imported IDL [ROOT]/tests/testdata/syntax_error.avdl
+  `-> line 6:2 unexpected '}' expected ';' or ','
+   ,-[[ROOT]/tests/testdata/syntax_error.avdl:6:3]
+ 5 |     string name
+ 6 |   }
+   :   |
+   :   `-- line 6:2 unexpected '}' expected ';' or ','
+ 7 | }
+   `----

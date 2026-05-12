@@ -29,7 +29,7 @@ use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
 /// output for errors without source location info.
 ///
 /// Returns `None` if compilation succeeds.
-fn compile_error(input: &str) -> Option<String> {
+fn compile_error(input: &'static str) -> Option<String> {
     compile_error_with_width(input, 80)
 }
 
@@ -38,7 +38,7 @@ fn compile_error(input: &str) -> Option<String> {
 /// Useful when error messages embed absolute paths that would be split across
 /// lines at the default 80-column width, making post-processing (e.g., CWD
 /// redaction) unreliable.
-fn compile_error_with_width(input: &str, width: usize) -> Option<String> {
+fn compile_error_with_width(input: &'static str, width: usize) -> Option<String> {
     match Idl::new().convert_str(input) {
         Ok(_) => None,
         Err(e) => {
@@ -84,7 +84,7 @@ fn compile_file_error(path: &std::path::Path) -> Option<String> {
 /// compilation.
 ///
 /// Panics if compilation fails, since warning tests require a successful parse.
-fn compile_warnings(input: &str) -> Vec<miette::Report> {
+fn compile_warnings(input: &'static str) -> Vec<miette::Report> {
     let output = Idl::new()
         .convert_str(input)
         .expect("warning test input should compile successfully");
@@ -318,6 +318,49 @@ fn test_error_import_bad_avpr_json() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let error = error.replace(manifest_dir, "[ROOT]");
     insta::assert_snapshot!(error);
+}
+
+/// Referencing an unkown type should produce an error that
+/// includes the source span of the `unknown.type` in the calling `.avdl`
+/// file.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_error_file_unknown_type() {
+    let avdl_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/testdata/test_import_unknown_type.avdl");
+    let error = compile_file_error(&avdl_path).expect("should produce an error for unknown type");
+
+    // Redact the absolute path prefix so the snapshot is portable.
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let error = error.replace(manifest_dir, "[ROOT]");
+    insta::assert_snapshot!(error);
+
+    assert!(
+        error.contains("unknown_type.avdl"),
+        "error should mention the imported file containing the syntax error"
+    );
+}
+
+/// Importing a `.avdl` file with a syntax error should produce an error that
+/// includes the source span of the syntax error in the imported file, and
+/// mentions both the calling file and the imported file.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_error_import_syntax_error() {
+    let avdl_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/testdata/test_import_syntax_error.avdl");
+    let error = compile_file_error(&avdl_path)
+        .expect("should produce an error for syntax error in imported file");
+
+    // Redact the absolute path prefix so the snapshot is portable.
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let error = error.replace(manifest_dir, "[ROOT]");
+    insta::assert_snapshot!(error);
+
+    assert!(
+        error.contains("syntax_error.avdl"),
+        "error should mention the imported file containing the syntax error"
+    );
 }
 
 // ==============================================================================

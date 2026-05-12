@@ -1,0 +1,6 @@
+protocol Test {
+  record Foo {
+    unknown.type field;
+  }
+}
+

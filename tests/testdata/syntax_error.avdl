@@ -1,0 +1,7 @@
+@namespace("test.error")
+protocol SyntaxError {
+  // Missing semicolon after field declaration
+  record BadRecord {
+    string name
+  }
+}

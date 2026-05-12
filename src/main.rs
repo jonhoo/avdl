@@ -206,8 +206,9 @@ fn run_idl(
             io::stdin()
                 .read_to_string(&mut source)
                 .map_err(|e| miette::miette!("{e}: read IDL from stdin"))?;
-            let source_name = input.as_deref().unwrap_or("<stdin>");
-            builder.convert_str_named(&source, source_name)
+            let source_name = input.map(|s| &*String::leak(s)).unwrap_or("<stdin>");
+            let source = source.leak();
+            builder.convert_str_named(source, source_name)
         }
     };
 

@@ -1,0 +1,8 @@
+@namespace("test")
+protocol ImportError {
+  import idl "syntax_error.avdl";
+
+  record MyRecord {
+    string value;
+  }
+}
