@@ -11,7 +11,7 @@ pub struct SpanWithSource {
     pub offset: usize,
     pub length: usize,
     /// Absolute path of the file that contains this span.
-    pub file_name: &'static str,
+    pub name: &'static str,
     /// Full source text of that file.
     pub content: &'static str,
 }
@@ -26,7 +26,7 @@ impl SpanWithSource {
         SpanWithSource {
             offset,
             length,
-            file_name,
+            name: file_name,
             content,
         }
     }
@@ -50,7 +50,7 @@ impl SourceCode for SpanWithSource {
             context_lines_after,
         )?;
         Ok(Box::new(MietteSpanContents::new_named(
-            self.file_name.to_string(),
+            self.name.to_string(),
             inner.data(),
             *inner.span(),
             inner.line(),

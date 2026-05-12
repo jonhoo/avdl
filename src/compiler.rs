@@ -1048,7 +1048,7 @@ fn validate_all_references(
     // first. References without a span (from JSON imports) sort to the end.
     unresolved.sort_by_key(|(_, span)| {
         span.as_ref()
-            .map_or(("", usize::MAX), |s| (s.file_name, s.offset))
+            .map_or(("", usize::MAX), |s| (s.name, s.offset))
     });
 
     if unresolved.is_empty() {

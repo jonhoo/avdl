@@ -75,7 +75,7 @@ impl std::fmt::Debug for Warning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Warning")
             .field("message", &self.message)
-            .field("file", &self.span.as_ref().map(|s| s.file_name))
+            .field("file", &self.span.as_ref().map(|s| s.name))
             .field(
                 "span",
                 &self
