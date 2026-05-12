@@ -1,23 +1,74 @@
 ---
 source: tests/error_reporting.rs
+assertion_line: 303
 expression: render_diagnostics(&warnings)
 ---
-  ! Line 7, char 17: Ignoring out-of-place documentation comment.
+  ! Line 4, char 9: Ignoring out-of-place documentation comment.
   | Did you mean to use a multiline comment ( /* ... */ ) instead?
-   ,-[<input>:7:17]
- 6 |                 string name;
- 7 |                 /** orphan 2 */
-   :                 ^^^^^^^|^^^^^^^
-   :                        `-- out-of-place doc comment
- 8 |             }
+   ,-[<input>:4:9]
+ 3 |         @namespace("test")
+ 4 |         /** ORPHAN between namespace and protocol */
+   :         ^^^^^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^^^^^
+   :                               `-- out-of-place doc comment
+ 5 |         protocol P {
    `----
 
-  ! Line 9, char 13: Ignoring out-of-place documentation comment.
+  ! Line 14, char 17: Ignoring out-of-place documentation comment.
   | Did you mean to use a multiline comment ( /* ... */ ) instead?
-    ,-[<input>:9:13]
-  8 |             }
-  9 |             /** orphan 3 */
-    :             ^^^^^^^|^^^^^^^
-    :                    `-- out-of-place doc comment
- 10 |         }
+    ,-[<input>:14:17]
+ 13 |                 boolean active;
+ 14 |                 /** ORPHAN trailing in record body */
+    :                 ^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^^
+    :                                   `-- out-of-place doc comment
+ 15 |             }
+    `----
+
+  ! Line 21, char 17: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[<input>:21:17]
+ 20 |                 string message;
+ 21 |                 /** ORPHAN trailing in error body */
+    :                 ^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^
+    :                                   `-- out-of-place doc comment
+ 22 |             }
+    `----
+
+  ! Line 29, char 17: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[<input>:29:17]
+ 28 |             enum Status {
+ 29 |                 /** ORPHAN enum symbol doc (!) */
+    :                 ^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^
+    :                                 `-- out-of-place doc comment
+ 30 |                 PENDING,
+    `----
+
+  ! Line 32, char 17: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[<input>:32:17]
+ 31 |                 DONE
+ 32 |                 /** ORPHAN trailing in enum body */
+    :                 ^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^
+    :                                  `-- out-of-place doc comment
+ 33 |             }
+    `----
+
+  ! Line 38, char 13: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[<input>:38:13]
+ 37 | 
+ 38 |             /** ORPHAN trailing in protocol body */
+    :             ^^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^^^
+    :                                `-- out-of-place doc comment
+ 39 |         }
+    `----
+
+  ! Line 40, char 9: Ignoring out-of-place documentation comment.
+  | Did you mean to use a multiline comment ( /* ... */ ) instead?
+    ,-[<input>:40:9]
+ 39 |         }
+ 40 |         /** ORPHAN after protocol closing brace */
+    :         ^^^^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^^^^
+    :                              `-- out-of-place doc comment
+ 41 |     
     `----
