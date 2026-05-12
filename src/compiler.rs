@@ -330,7 +330,7 @@ impl Idl {
 
             let span_len = source.len().min(1);
             return Err(ParseDiagnostic {
-                src: SpanWithSource::new(0, span_len, source_name, source),
+                span: SpanWithSource::new(0, span_len, source_name, source),
                 message: "IDL file contains neither a protocol nor a schema declaration"
                     .to_string(),
                 label: Some("this file".to_string()),
@@ -676,9 +676,9 @@ fn process_decl_items(
             }
             DeclItem::Type(schema, span, field_spans) => {
                 if let Err(msg) = ctx.registry.register(schema.as_ref().clone()) {
-                    if let Some(sws) = span.as_ref() {
+                    if let Some(span) = span.as_ref() {
                         return Err(ParseDiagnostic {
-                            src: sws.clone(),
+                            span: *span,
                             message: msg,
                             label: None,
                             help: None,
@@ -709,12 +709,9 @@ fn process_decl_items(
                         let msg = format!(
                             "Invalid default for field `{field_name}` in `{type_name}`: {reason}"
                         );
-                        let effective_sws = field_spans
-                            .get(&field_name)
-                            .cloned()
-                            .or_else(|| span.clone());
-                        effective_sws.map(|sws| ParseDiagnostic {
-                            src: sws,
+                        let effective_span = field_spans.get(&field_name).copied().or(*span);
+                        effective_span.map(|span| ParseDiagnostic {
+                            span,
                             message: msg,
                             label: None,
                             help: None,
@@ -729,13 +726,10 @@ fn process_decl_items(
                 // Prefer the per-field span (from the variable declaration)
                 // over the type-level span (from the record keyword), so the
                 // diagnostic highlights the offending field, not the record.
-                let effective_sws = field_spans
-                    .get(&first_field)
-                    .cloned()
-                    .or_else(|| span.clone());
-                if let Some(sws) = effective_sws {
+                let effective_span = field_spans.get(&first_field).copied().or(*span);
+                if let Some(span) = effective_span {
                     return Err(ParseDiagnostic {
-                        src: sws,
+                        span,
                         message: first_msg,
                         label: None,
                         help: None,
@@ -761,9 +755,9 @@ fn resolve_single_import(
     let resolved_path = match ctx.import_ctx.resolve_import(&import.path, current_dir) {
         Ok(p) => p,
         Err(e) => {
-            if let Some(sws) = import.span.clone() {
+            if let Some(span) = import.span {
                 return Err(ParseDiagnostic {
-                    src: sws,
+                    span,
                     message: format!("{e}"),
                     label: None,
                     help: None,
@@ -787,25 +781,23 @@ fn resolve_single_import(
 
     match import.kind {
         ImportKind::Protocol => {
-            let imported_messages =
-                import_protocol(&resolved_path, &mut ctx.registry).map_err(|e| {
-                    wrap_import_error(e, import.span.clone(), &resolved_path, "protocol")
-                })?;
+            let imported_messages = import_protocol(&resolved_path, &mut ctx.registry)
+                .map_err(|e| wrap_import_error(e, import.span, &resolved_path, "protocol"))?;
             ctx.messages.extend(imported_messages);
 
             // Track the import so unresolved references from this .avpr can
             // be attributed to the import statement in error diagnostics.
             ctx.json_import_spans
-                .push((resolved_path.display().to_string(), import.span.clone()));
+                .push((resolved_path.display().to_string(), import.span));
         }
         ImportKind::Schema => {
             import_schema(&resolved_path, &mut ctx.registry)
-                .map_err(|e| wrap_import_error(e, import.span.clone(), &resolved_path, "schema"))?;
+                .map_err(|e| wrap_import_error(e, import.span, &resolved_path, "schema"))?;
 
             // Track the import so unresolved references from this .avsc can
             // be attributed to the import statement in error diagnostics.
             ctx.json_import_spans
-                .push((resolved_path.display().to_string(), import.span.clone()));
+                .push((resolved_path.display().to_string(), import.span));
         }
         ImportKind::Idl => {
             let imported_source = fs::read_to_string(&resolved_path)
@@ -861,9 +853,9 @@ fn wrap_import_error(
     resolved_path: &Path,
     kind: &str,
 ) -> miette::Report {
-    if let Some(sws) = span {
+    if let Some(span) = span {
         let diag = ParseDiagnostic {
-            src: sws,
+            span,
             message: format!("import {} {}", kind, resolved_path.display()),
             label: None,
             help: None,
@@ -1056,7 +1048,7 @@ fn validate_all_references(
     // first. References without a span (from JSON imports) sort to the end.
     unresolved.sort_by_key(|(_, span)| {
         span.as_ref()
-            .map_or(("", usize::MAX), |sws| (sws.file_name, sws.offset))
+            .map_or(("", usize::MAX), |s| (s.file_name, s.offset))
     });
 
     if unresolved.is_empty() {
@@ -1080,7 +1072,7 @@ fn validate_all_references(
         // spans). Use the first available import statement span to point
         // the user at the import line, with a help message naming the
         // imported file(s).
-        let first_import_sws = json_import_spans.iter().find_map(|(_, s)| s.clone());
+        let first_import_span = json_import_spans.iter().find_map(|(_, s)| *s);
 
         let names: Vec<&str> = without_span.iter().map(|(name, _)| name.as_str()).collect();
         let message = format!("Undefined name: {}", names.join(", "));
@@ -1094,9 +1086,9 @@ fn validate_all_references(
             ))
         };
 
-        if let Some(sws) = first_import_sws {
+        if let Some(span) = first_import_span {
             return Err(ParseDiagnostic {
-                src: sws,
+                span,
                 message,
                 label: Some("this import contains undefined type references".to_string()),
                 help,
@@ -1117,15 +1109,15 @@ fn validate_all_references(
     // are attached as related diagnostics so users see all undefined names
     // in one error report.
     let mut span_iter = with_span.into_iter();
-    let (first_name, first_sws) = span_iter.next().expect("with_span is non-empty");
-    let first_sws = first_sws.expect("partitioned into Some");
+    let (first_name, first_span) = span_iter.next().expect("with_span is non-empty");
+    let first_span = first_span.expect("partitioned into Some");
 
     let mut related: Vec<ParseDiagnostic> = span_iter
         .map(|(name, span)| {
-            let sws = span.expect("partitioned into Some");
+            let span = span.expect("partitioned into Some");
             let help = suggest_similar_name(&name, registry);
             ParseDiagnostic {
-                src: sws,
+                span,
                 message: format!("Undefined name: {name}"),
                 label: None,
                 help,
@@ -1138,17 +1130,17 @@ fn validate_all_references(
     // statement spans so the user can see which import brought them in.
     // Fall back to a zero-length span at offset 0 if no import span is
     // available. Include "did you mean?" suggestions where applicable.
-    let fallback_sws = SpanWithSource::new(0, 0, source_name, source);
+    let fallback_span = SpanWithSource::new(0, 0, source_name, source);
     for (name, _) in &without_span {
-        let (sws, label) = if let Some((path, Some(import_sws))) = json_import_spans.first() {
+        let (span, label) = if let Some((path, Some(import_span))) = json_import_spans.first() {
             (
-                import_sws.clone(),
+                *import_span,
                 Some(format!(
                     "type `{name}` referenced in imported file `{path}`"
                 )),
             )
         } else {
-            (fallback_sws.clone(), None)
+            (fallback_span, None)
         };
 
         let help = if import_file_names.is_empty() {
@@ -1161,7 +1153,7 @@ fn validate_all_references(
         };
 
         related.push(ParseDiagnostic {
-            src: sws,
+            span,
             message: format!("Undefined name: {name}"),
             label,
             help,
@@ -1171,7 +1163,7 @@ fn validate_all_references(
 
     let first_help = suggest_similar_name(&first_name, registry);
     Err(ParseDiagnostic {
-        src: first_sws,
+        span: first_span,
         message: format!("Undefined name: {first_name}"),
         label: None,
         help: first_help,

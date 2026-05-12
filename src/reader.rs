@@ -63,7 +63,7 @@ use miette::{Context, Result};
 pub(crate) struct Warning {
     pub(crate) message: String,
     /// Source (file, source-code, offsets) of the problematic token
-    pub(crate) src: Option<SpanWithSource>,
+    pub(crate) span: Option<SpanWithSource>,
 }
 
 /// Custom `Debug` implementation that shows a compact representation instead of
@@ -75,11 +75,11 @@ impl std::fmt::Debug for Warning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Warning")
             .field("message", &self.message)
-            .field("file", &self.src.as_ref().map(|s| s.file_name))
+            .field("file", &self.span.as_ref().map(|s| s.file_name))
             .field(
                 "span",
                 &self
-                    .src
+                    .span
                     .as_ref()
                     .map(|s| format!("{}..{}", s.offset, s.offset + s.length)),
             )
@@ -123,7 +123,7 @@ impl Warning {
                 // get_column() is 0-based, so we add 1 to match.
                 column + 1,
             ),
-            src: Some(src.span(offset, length)),
+            span: Some(src.span(offset, length)),
         }
     }
 
@@ -162,7 +162,7 @@ impl Warning {
             message: format!(
                 "Annotations on union types are not supported and will be ignored: {keys_display}"
             ),
-            src: Some(src.span(byte_offset, length)),
+            span: Some(src.span(byte_offset, length)),
         }
     }
 }
@@ -183,11 +183,11 @@ impl miette::Diagnostic for Warning {
     }
 
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
-        self.src.as_ref().map(|s| s as &dyn miette::SourceCode)
+        self.span.as_ref().map(|s| s as &dyn miette::SourceCode)
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
-        let sws = self.src.as_ref()?;
+        let span = self.span.as_ref()?;
         // Derive a short label from the message content rather than hardcoding
         // a single label for all warning types.
         let label = if self.message.contains("out-of-place documentation comment") {
@@ -200,7 +200,7 @@ impl miette::Diagnostic for Warning {
             "here"
         };
         Some(Box::new(std::iter::once(
-            miette::LabeledSpan::new_with_span(Some(label.to_string()), sws.source_span()),
+            miette::LabeledSpan::new_with_span(Some(label.to_string()), span.source_span()),
         )))
     }
 }
@@ -2030,7 +2030,7 @@ pub fn parse_idl_named(
         .iter()
         .map(|e| Warning {
             message: e.message.clone(),
-            src: Some(SpanWithSource::new(e.offset, e.length, source_name, input)),
+            span: Some(SpanWithSource::new(e.offset, e.length, source_name, input)),
         })
         .collect();
 
@@ -2068,7 +2068,7 @@ pub fn parse_idl_named(
             };
 
             return Err(ParseDiagnostic {
-                src: SpanWithSource::new(unterm.offset, unterm.length, source_name, input),
+                span: SpanWithSource::new(unterm.offset, unterm.length, source_name, input),
                 message,
                 label: Some("unterminated string literal".to_string()),
                 help: Some(
@@ -2091,7 +2091,7 @@ pub fn parse_idl_named(
         let related: Vec<ParseDiagnostic> = errors_to_report[1..]
             .iter()
             .map(|e| ParseDiagnostic {
-                src: SpanWithSource::new(e.offset, e.length, source_name, input),
+                span: SpanWithSource::new(e.offset, e.length, source_name, input),
                 message: e.message.clone(),
                 label: e.label.clone(),
                 help: e.help.clone(),
@@ -2099,7 +2099,7 @@ pub fn parse_idl_named(
             })
             .collect();
         return Err(ParseDiagnostic {
-            src: SpanWithSource::new(first.offset, first.length, source_name, input),
+            span: SpanWithSource::new(first.offset, first.length, source_name, input),
             message: first.message.clone(),
             label: first.label.clone(),
             help: first.help.clone(),
@@ -2238,7 +2238,7 @@ fn make_diagnostic<'input>(
 
     let message = message.into();
     ParseDiagnostic {
-        src: src.span(offset, length),
+        span: src.span(offset, length),
         message,
         label: None,
         help: None,
@@ -2259,7 +2259,7 @@ fn make_diagnostic_from_token(
 
     let message = message.into();
     ParseDiagnostic {
-        src: src.span(offset, length),
+        span: src.span(offset, length),
         message,
         label: None,
         help: None,
@@ -2268,7 +2268,7 @@ fn make_diagnostic_from_token(
     .into()
 }
 
-/// Extract a `SourceSpan` from a parse tree context's start token.
+/// Extract the span (offset and length) from a parse tree context's start token.
 ///
 /// Returns `None` if the token has no valid position (e.g., synthetic tokens).
 /// Used to attach spans to `DeclItem::Type` and `DeclItem::Import` entries so

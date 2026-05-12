@@ -236,7 +236,7 @@ fn collect_unresolved_refs(
         } => {
             let full_name = make_full_name(name, namespace.as_deref());
             if !known.contains_key(full_name.as_ref()) {
-                unresolved.push((full_name.into_owned(), span.clone()));
+                unresolved.push((full_name.into_owned(), *span));
             }
         }
         AvroSchema::Record { fields, .. } => {

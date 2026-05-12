@@ -6,7 +6,7 @@ use miette::{Diagnostic, LabeledSpan, MietteError, MietteSpanContents, SourceCod
 /// every diagnostic — including those from imported files — can render the
 /// correct source excerpt and filename.
 ///
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct SpanWithSource {
     pub offset: usize,
     pub length: usize,
@@ -72,7 +72,7 @@ impl SourceCode for SpanWithSource {
 /// source-underline label.
 #[derive(Debug)]
 pub struct ParseDiagnostic {
-    pub src: SpanWithSource,
+    pub span: SpanWithSource,
     pub message: String,
     /// Shorter label for the source-underline annotation. When `None`, falls
     /// back to `message`.
@@ -113,7 +113,7 @@ pub(crate) fn render_diagnostic(report: &miette::Report) -> String {
 
 impl miette::Diagnostic for ParseDiagnostic {
     fn source_code(&self) -> Option<&dyn SourceCode> {
-        Some(&self.src)
+        Some(&self.span)
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
@@ -126,7 +126,7 @@ impl miette::Diagnostic for ParseDiagnostic {
         let label_text = self.label.clone().unwrap_or_else(|| self.message.clone());
         Some(Box::new(std::iter::once(LabeledSpan::new_with_span(
             Some(label_text),
-            self.src.source_span(),
+            self.span.source_span(),
         ))))
     }
 
