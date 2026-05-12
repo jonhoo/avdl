@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.1.9] - 2026-05-12
+
+### Fixed
+
+- Reference correct source file and name in diagnostics in imported avdl
+  files (a0c9932)
+
 ## [0.1.8] - 2026-04-05
 
 ### Changed
@@ -242,7 +249,8 @@ that created the initial crate. Rust port of Apache Avro's
   one-way message return types, fixed-size bounds, decimal
   precision/scale (3ffc409)
 
-[Unreleased]: https://github.com/jonhoo/avdl/compare/v0.1.8+1.12.1...HEAD
+[Unreleased]: https://github.com/jonhoo/avdl/compare/v0.1.9+1.12.1...HEAD
+[0.1.9]: https://github.com/jonhoo/avdl/compare/v0.1.8+1.12.1...v0.1.9+1.12.1
 [0.1.8]: https://github.com/jonhoo/avdl/compare/v0.1.7+1.12.1...v0.1.8+1.12.1
 [0.1.7]: https://github.com/jonhoo/avdl/compare/v0.1.6+1.12.1...v0.1.7+1.12.1
 [0.1.6]: https://github.com/jonhoo/avdl/compare/v0.1.5+1.12.1...v0.1.6+1.12.1
