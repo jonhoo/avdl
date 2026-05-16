@@ -245,21 +245,74 @@ fn test_warning_out_of_place_doc_comment() {
 }
 
 /// Multiple out-of-place doc comments should each generate a separate warning.
+///
+/// Covers every grammar node that accepts a `(doc=DocComment)?` clause:
+/// - `protocolDeclaration`, `recordDeclaration` (record + error), `fixedDeclaration`,
+///   `enumDeclaration`, `enumSymbol`, `fieldDeclaration`, `variableDeclaration`,
+///   `messageDeclaration`, `formalParameter`.
+///
+/// USED comments are placed in the correct syntactic position and consumed by the
+/// walker.  ORPHAN comments are either (a) in trailing positions that no grammar
+/// rule consumes, or (b) on `enumSymbol` nodes, which the walker never reads docs
+/// for because Avro schema JSON has no per-symbol doc field :( .
 #[test]
 fn test_warning_multiple_out_of_place_doc_comments() {
     let input = r#"
+        /** USED protocol doc */
         @namespace("test")
+        /** ORPHAN between namespace and protocol */
         protocol P {
-            /** orphan 1 */
+            /** USED record doc */
             record R {
+                /** USED field-decl doc */
                 string name;
-                /** orphan 2 */
+
+                int /** USED in-field-decl doc */ age;
+
+                boolean active;
+                /** ORPHAN trailing in record body */
             }
-            /** orphan 3 */
+
+            /** USED error doc */
+            error RpcError {
+                /** USED error field doc */
+                string message;
+                /** ORPHAN trailing in error body */
+            }
+
+            /** USED fixed doc */
+            fixed MD5(16);
+
+            /** USED enum doc */
+            enum Status {
+                /** ORPHAN enum symbol doc (!) */
+                PENDING,
+                DONE
+                /** ORPHAN trailing in enum body */
+            }
+
+            /** USED message doc */
+            void ping(/** USED param doc */ R arg) throws RpcError;
+
+            /** ORPHAN trailing in protocol body */
         }
+        /** ORPHAN after protocol closing brace */
     "#;
+
     let warnings = compile_warnings(input);
     insta::assert_snapshot!(render_diagnostics(&warnings));
+    assert_eq!(warnings.len(), 7);
+    warnings.iter().for_each(|w| {
+        let rendered = format!("{w:?}");
+        assert!(
+            rendered.contains("ORPHAN"),
+            "should only warn about 'ORPHAN' comments, {rendered}"
+        );
+        assert!(
+            !rendered.contains("USED"),
+            "should not warn about 'USED' comments, {rendered}"
+        );
+    });
 }
 
 // ==============================================================================
