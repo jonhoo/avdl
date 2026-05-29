@@ -1,0 +1,12 @@
+---
+source: src/reader.rs
+expression: "render_diagnostic(&miette::Report::new(warning))"
+---
+  ! Alias "my-alias" is not a valid Avro name. While any string is accepted to allow schema evolution to correct illegal names in old schemata, aliases should ideally be valid names.
+   ,-[<input>:3:17]
+ 2 |             protocol P {
+ 3 |                 @aliases(["my-alias"])
+   :                 ^^^^^^^^^^^|^^^^^^^^^^
+   :                            `-- non-standard alias name
+ 4 |                 record Foo { string name; }
+   `----
