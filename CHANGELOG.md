@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.1.10] - 2026-07-05
+
+### Changed
+
+- Allow invalid names in aliases (7d8bef6)
+
 ## [0.1.9] - 2026-05-12
 
 ### Fixed
