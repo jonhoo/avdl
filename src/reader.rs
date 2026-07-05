@@ -165,6 +165,46 @@ impl Warning {
             span: Some(src.span(byte_offset, length)),
         }
     }
+
+    /// Create a warning for an alias that is not a valid Avro name.
+    ///
+    /// The Avro specification says: "Aliases should be valid names, but this is
+    /// not required: any string is accepted as an alias." We accept the alias
+    /// but warn the user that it doesn't follow the standard naming rules.
+    fn non_standard_alias_name<'a>(
+        alias: &str,
+        src: &SourceInfo,
+        ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'a>,
+    ) -> Self {
+        let start_token = ctx.start();
+        let stop_token = ctx.stop();
+        let offset = start_token.get_start();
+        let stop = {
+            let candidate = stop_token.get_stop();
+            if candidate >= offset {
+                candidate
+            } else {
+                start_token.get_stop()
+            }
+        };
+        let (byte_offset, length): (usize, usize) = if offset >= 0 && stop >= offset {
+            (offset as usize, (stop - offset + 1) as usize)
+        } else if offset >= 0 {
+            (offset as usize, 1)
+        } else {
+            (0, 0)
+        };
+
+        Warning {
+            message: format!(
+                "Alias \"{alias}\" is not a valid Avro name. \
+                 While any string is accepted to allow schema evolution to \
+                 correct illegal names in old schemata, aliases should \
+                 ideally be valid names."
+            ),
+            span: Some(src.span(byte_offset, length)),
+        }
+    }
 }
 
 impl std::fmt::Display for Warning {
@@ -196,6 +236,8 @@ impl miette::Diagnostic for Warning {
             "unrecognized token"
         } else if self.message.contains("Annotations on union types") {
             "annotations ignored here"
+        } else if self.message.contains("is not a valid Avro name") {
+            "non-standard alias name"
         } else {
             "here"
         };
@@ -2506,16 +2548,20 @@ fn walk_schema_properties<'input>(
                 let mut aliases = Vec::new();
                 for elem in arr {
                     if let Value::String(s) = elem {
-                        // Validate each alias name segment (aliases can be
-                        // fully-qualified like "com.example.OldName").
+                        // Aliases should be valid names, but any string is accepted
+                        // to allow for schema evolution (correcting illegal names).
+                        // We emit a warning for non-standard names.
+                        let mut is_standard = true;
                         for segment in s.split('.') {
                             if !is_valid_avro_name(segment) {
-                                return Err(make_diagnostic(
-                                    src,
-                                    &**prop,
-                                    format!("invalid alias name: {s}"),
-                                ));
+                                is_standard = false;
+                                break;
                             }
+                        }
+                        if !is_standard {
+                            src.warnings
+                                .borrow_mut()
+                                .push(Warning::non_standard_alias_name(s, src, &**prop));
                         }
                         aliases.push(s.clone());
                     } else {
@@ -5947,27 +5993,33 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn alias_with_leading_digit_is_rejected() {
+    fn alias_with_leading_digit_produces_warning() {
         let idl = r#"
             protocol P {
                 @aliases(["123bad"])
                 record Foo { string name; }
             }
         "#;
-        let err = parse_idl_for_test(idl).unwrap_err();
-        insta::assert_snapshot!(render_diagnostic(&err));
+        let (_, _, mut warnings) = parse_idl_for_test(idl).unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("is not a valid Avro name"));
+        let warning = warnings.remove(0);
+        insta::assert_snapshot!(render_diagnostic(&miette::Report::new(warning)));
     }
 
     #[test]
-    fn alias_with_dash_is_rejected() {
+    fn alias_with_dash_produces_warning() {
         let idl = r#"
             protocol P {
                 @aliases(["my-alias"])
                 record Foo { string name; }
             }
         "#;
-        let result = parse_idl_for_test(idl);
-        assert!(result.is_err(), "dashed alias name should be rejected");
+        let (_, _, mut warnings) = parse_idl_for_test(idl).unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("is not a valid Avro name"));
+        let warning = warnings.remove(0);
+        insta::assert_snapshot!(render_diagnostic(&miette::Report::new(warning)));
     }
 
     #[test]
