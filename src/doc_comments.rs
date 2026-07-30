@@ -1,14 +1,10 @@
-use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-use antlr4rust::char_stream::InputData;
-use antlr4rust::token::Token;
-use antlr4rust::token_factory::TokenFactory;
-use antlr4rust::token_stream::TokenStream;
+use antlr4_runtime::{TokenId, TokenStore};
 use regex::Regex;
 
-use crate::generated::idlparser::{Idl_DocComment, Idl_EmptyComment, Idl_WS};
+use crate::generated::idl_parser::{DOC_COMMENT, EMPTY_COMMENT, WS};
 
 /// Extract the doc comment associated with a parse tree node, given the
 /// token index of the node's start token.
@@ -20,42 +16,37 @@ use crate::generated::idlparser::{Idl_DocComment, Idl_EmptyComment, Idl_WS};
 /// token is recorded so callers can later detect orphaned (unconsumed) doc
 /// comments and generate warnings.
 ///
-/// antlr4rust's `CommonTokenStream` does not expose `getHiddenTokensToLeft()`
-/// the way Java ANTLR does [yet](https://github.com/antlr4rust/antlr4/pull/39), but `get(index)`
-/// is public and lets us access any token by index, including hidden-channel tokens.
-pub fn extract_doc_comment<'input, TS>(
-    token_stream: &TS,
-    token_index: isize,
-    consumed_indices: Option<&mut HashSet<isize>>,
-) -> Option<String>
-where
-    TS: TokenStream<'input>,
-{
-    if token_index <= 0 {
-        return None;
-    }
-
-    let mut i = token_index - 1;
+/// The runtime buffers every token — including hidden-channel `DocComment`
+/// tokens — so `TokenStore::view`/`token_type` can access any token by index.
+/// The grammar routes `WS`/`EmptyComment` to `-> skip`, so those tokens never
+/// reach the store; the skip branch below is retained to mirror Java's scan
+/// (and to stay correct should the grammar move that trivia to a channel).
+pub fn extract_doc_comment(
+    tokens: &TokenStore,
+    token_index: usize,
+    consumed_indices: Option<&mut HashSet<usize>>,
+) -> Option<String> {
+    let mut i = token_index;
     let mut doc_token_text: Option<String> = None;
-    let mut doc_token_index: Option<isize> = None;
+    let mut doc_token_index: Option<usize> = None;
 
-    while i >= 0 {
-        let tok_wrapper = token_stream.get(i);
-        let token: &<TS::TF as TokenFactory<'input>>::Inner = tok_wrapper.borrow();
-        let token_type = token.get_token_type();
+    while i > 0 {
+        i -= 1;
+        let Ok(id) = TokenId::try_from(i) else { break };
+        let Some(token_type) = tokens.token_type(id) else {
+            break;
+        };
 
-        if token_type == Idl_DocComment {
-            doc_token_text = Some(token.get_text().to_display());
+        if token_type == DOC_COMMENT {
+            doc_token_text = tokens.text(id).map(str::to_owned);
             doc_token_index = Some(i);
             break;
-        } else if token_type == Idl_WS || token_type == Idl_EmptyComment {
+        } else if token_type == WS || token_type == EMPTY_COMMENT {
             // Skip whitespace and empty comments, continue scanning.
-            i -= 1;
             continue;
-        } else {
-            // Hit a non-hidden, non-doc token -- no doc comment for this node.
-            break;
         }
+        // Hit a non-hidden, non-doc token -- no doc comment for this node.
+        break;
     }
 
     let text = doc_token_text?;

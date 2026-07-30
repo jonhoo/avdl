@@ -4,3 +4,7 @@ TODOs.md
 tmp/
 SESSION.md
 .claude/settings.local.json
+# antlr4-rust-gen writes this manifest next to the generated parser; it lists
+# untranslated semantic predicate/action coordinates (none for this grammar)
+# and is a regeneration byproduct, not a build input.
+/src/generated/semantics.json

@@ -26,7 +26,7 @@ include = [
 ]
 
 [dependencies]
-antlr4rust = "0.5.2"
+antlr4_runtime = { package = "antlr-rust-runtime", version = "0.23.0" }
 indexmap = "2"
 json_comments = "0.2.2"
 lexopt = "0.3.2"
