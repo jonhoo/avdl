@@ -22,9 +22,25 @@ const OUTPUT_DIR: &str = "avro/lang/java/idl/src/test/idl/output";
 const CLASSPATH_DIR: &str = "avro/lang/java/idl/src/test/idl/putOnClassPath";
 
 /// Helper to construct a `Command` for the `avdl` binary built by this crate.
+///
+/// Diagnostics are rendered by miette, whose colour decision comes from
+/// `supports-color`. That crate consults `FORCE_COLOR` and `CLICOLOR_FORCE`
+/// *before* testing whether the stream is a TTY, so a developer shell (or CI
+/// runner) exporting either of them makes the binary emit ANSI escapes even
+/// through a pipe — and the snapshots below assert plain text. Pin the decision
+/// instead of inheriting it: clear every force/hint variable and set
+/// `NO_COLOR`, so stderr is colourless regardless of the ambient environment.
+///
+/// `NO_COLOR` alone would not be enough, because `FORCE_COLOR` is checked first
+/// and would win.
 #[expect(deprecated, reason = "cargo_bin() warns about custom build-dir")]
 fn avdl_cmd() -> Command {
-    Command::cargo_bin("avdl").expect("avdl binary should be built by cargo")
+    let mut cmd = Command::cargo_bin("avdl").expect("avdl binary should be built by cargo");
+    for forcing in ["FORCE_COLOR", "CLICOLOR_FORCE", "CLICOLOR", "COLORTERM"] {
+        cmd.env_remove(forcing);
+    }
+    cmd.env("NO_COLOR", "1");
+    cmd
 }
 
 /// Load the golden `.avpr` output file and parse it as JSON for semantic

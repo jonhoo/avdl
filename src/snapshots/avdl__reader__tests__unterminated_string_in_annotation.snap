@@ -5,8 +5,9 @@ expression: rendered
   x line 1:11 unterminated string literal
    ,-[<input>:1:12]
  1 | @namespace("org.test)
-   :            |
-   :            `-- unterminated string literal
+   :            ^^^^^|^^^^^
+   :                 `-- unterminated string literal
  2 | protocol Test {
+ 3 |   record Foo { string name; }
    `----
   help: string literals must be closed with a `"` on the same line

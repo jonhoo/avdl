@@ -6,14 +6,6 @@
 // Avro IDL source, lexes and parses it via ANTLR, then walks the resulting
 // parse tree recursively to build our domain model (Protocol, AvroSchema, etc.).
 //
-// The generated parser defines token constants in lower_Camel_case (e.g.
-// `Idl_Boolean`). We suppress the naming warning for the whole module since
-// these constants appear extensively in match arms.
-#![expect(
-    non_upper_case_globals,
-    reason = "ANTLR-generated token constants use PascalCase"
-)]
-//
 // The Java reference implementation uses ANTLR's listener pattern with mutable
 // stacks. That approach is awkward in Rust due to lifetime constraints on trait
 // objects, so instead we set `build_parse_tree = true` and walk the tree with
@@ -22,26 +14,19 @@
 
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
-use std::borrow::Borrow;
-
-use antlr4rust::common_token_stream::CommonTokenStream;
-use antlr4rust::error_listener::ErrorListener;
-use antlr4rust::parser::Parser;
-use antlr4rust::recognizer::Recognizer;
-use antlr4rust::token::Token;
-use antlr4rust::token_factory::TokenFactory;
-use antlr4rust::token_stream::TokenStream;
-use antlr4rust::tree::{ParseTree, Tree};
-use antlr4rust::{InputStream, TidExt};
+use antlr4_runtime::{
+    AsRuleNode, CommonTokenStream, ErrorListener, InputStream, Recognizer, SyntaxErrorEvent,
+    Token as _, TokenId, TokenStore, TokenView,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::doc_comments::extract_doc_comment;
 use crate::error::{ParseDiagnostic, SpanWithSource};
-use crate::generated::idllexer::IdlLexer;
-use crate::generated::idlparser::*;
+use crate::generated::idl_lexer::IdlLexer;
+use crate::generated::idl_parser::*;
 use crate::model::protocol::{Message, Protocol};
 use crate::model::schema::{
     AvroSchema, Field, FieldOrder, LogicalType, PRIMITIVE_TYPE_NAMES, parse_logical_type,
@@ -93,35 +78,17 @@ impl Warning {
     /// The format matches Java's `IdlReader.getDocComment()`:
     ///   "Line %d, char %d: Ignoring out-of-place documentation comment.\n
     ///    Did you mean to use a multiline comment ( /* ... */ ) instead?"
-    ///
-    /// `token_start` and `token_stop` are the inclusive byte offsets from
-    /// `Token::get_start()` / `Token::get_stop()`.
-    fn out_of_place_doc_comment(
-        line: isize,
-        column: isize,
-        src: &SourceInfo,
-        token_start: isize,
-        token_stop: isize,
-    ) -> Self {
-        let (offset, length) = if token_start >= 0 && token_stop >= token_start {
-            (
-                token_start as usize,
-                (token_stop - token_start + 1) as usize,
-            )
-        } else if token_start >= 0 {
-            (token_start as usize, 1)
-        } else {
-            (0, 0)
-        };
+    fn out_of_place_doc_comment(token: TokenView<'_>, src: &SourceInfo) -> Self {
+        let (offset, length) = token_byte_span(token);
 
         Warning {
             message: format!(
                 "Line {}, char {}: Ignoring out-of-place documentation comment.\n\
                  Did you mean to use a multiline comment ( /* ... */ ) instead?",
-                line,
-                // Java uses getCharPositionInLine() + 1 (1-based); ANTLR's
-                // get_column() is 0-based, so we add 1 to match.
-                column + 1,
+                token.line(),
+                // Java uses getCharPositionInLine() + 1 (1-based); the runtime's
+                // column() is 0-based, so we add 1 to match.
+                token.column() + 1,
             ),
             span: Some(src.span(offset, length)),
         }
@@ -136,26 +103,9 @@ impl Warning {
     fn annotations_dropped_on_union<'a>(
         annotation_keys: &[&str],
         src: &SourceInfo,
-        ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'a>,
+        ctx: &impl AsRuleNode<'a>,
     ) -> Self {
-        let start_token = ctx.start();
-        let stop_token = ctx.stop();
-        let offset = start_token.get_start();
-        let stop = {
-            let candidate = stop_token.get_stop();
-            if candidate >= offset {
-                candidate
-            } else {
-                start_token.get_stop()
-            }
-        };
-        let (byte_offset, length): (usize, usize) = if offset >= 0 && stop >= offset {
-            (offset as usize, (stop - offset + 1) as usize)
-        } else if offset >= 0 {
-            (offset as usize, 1)
-        } else {
-            (0, 0)
-        };
+        let (byte_offset, length) = context_byte_span(ctx);
 
         let keys_display = annotation_keys.join(", ");
         Warning {
@@ -174,26 +124,9 @@ impl Warning {
     fn non_standard_alias_name<'a>(
         alias: &str,
         src: &SourceInfo,
-        ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'a>,
+        ctx: &impl AsRuleNode<'a>,
     ) -> Self {
-        let start_token = ctx.start();
-        let stop_token = ctx.stop();
-        let offset = start_token.get_start();
-        let stop = {
-            let candidate = stop_token.get_stop();
-            if candidate >= offset {
-                candidate
-            } else {
-                start_token.get_stop()
-            }
-        };
-        let (byte_offset, length): (usize, usize) = if offset >= 0 && stop >= offset {
-            (offset as usize, (stop - offset + 1) as usize)
-        } else if offset >= 0 {
-            (offset as usize, 1)
-        } else {
-            (0, 0)
-        };
+        let (byte_offset, length) = context_byte_span(ctx);
 
         Warning {
             message: format!(
@@ -205,6 +138,54 @@ impl Warning {
             span: Some(src.span(byte_offset, length)),
         }
     }
+}
+
+// ==============================================================================
+// Byte-span helpers
+// ==============================================================================
+//
+// The runtime reports token positions as UTF-8 byte offsets: `start_byte()` is
+// inclusive and `stop_byte()` is exclusive, so a token's byte length is simply
+// `stop_byte - start_byte`. (The old antlr4rust runtime reported inclusive
+// character indices, so spans there were computed as `stop - start + 1`.) These
+// helpers centralize the offset/length computation used for every miette
+// diagnostic and warning span.
+
+/// `(offset, length)` covering a single token, in UTF-8 bytes.
+///
+/// The runtime returns `None` from the byte accessors for streams with no exact
+/// UTF-8 mapping (e.g. a custom `CharStream`). Every token here comes from a
+/// UTF-8 `InputStream`, so treat that as a zero-width span at the origin rather
+/// than propagating `Option` through every diagnostic site.
+fn token_byte_span(token: TokenView<'_>) -> (usize, usize) {
+    let Some(start) = token.start_byte() else {
+        return (0, 0);
+    };
+    let stop = token.stop_byte().unwrap_or(start);
+    (start, stop.saturating_sub(start))
+}
+
+/// `(offset, length)` covering a whole rule context, from its start token's
+/// first byte to its stop token's last byte.
+///
+/// Falls back to the start token's own span when the stop token ends before the
+/// start (recovered/synthetic contexts), and to `(0, 0)` when the context has no
+/// start token at all.
+fn context_byte_span<'a>(ctx: &impl AsRuleNode<'a>) -> (usize, usize) {
+    let rule = ctx.as_rule_node();
+    let Some(start) = rule.start() else {
+        return (0, 0);
+    };
+    let Some(offset) = start.start_byte() else {
+        return (0, 0);
+    };
+    let stop = rule
+        .stop()
+        .and_then(|token| token.stop_byte())
+        .filter(|&stop| stop >= offset)
+        .or_else(|| start.stop_byte())
+        .unwrap_or(offset);
+    (offset, stop.saturating_sub(offset))
 }
 
 impl std::fmt::Display for Warning {
@@ -594,7 +575,7 @@ fn format_expected_help(tokens: &str) -> Option<String> {
         .split(',')
         .map(|t| t.trim())
         .filter(|t| !t.is_empty())
-        .filter(|t| *t != "DocComment" && *t != "'\\u001A'" && *t != "<EOF>")
+        .filter(|t| *t != "DocComment" && !is_sub_marker_token(t) && *t != "<EOF>")
         .map(|t| t.trim_matches('\''))
         .map(humanize_token_name)
         .filter(|t| seen.insert(*t))
@@ -603,6 +584,16 @@ fn format_expected_help(tokens: &str) -> Option<String> {
         return None;
     }
     Some(format!("expected one of: {}", cleaned.join(", ")))
+}
+
+/// Returns whether an expected-token-set entry is the ANTLR-internal SUB
+/// marker the grammar uses as an EOF sentinel.
+///
+/// The runtime renders this token as `''` (lowercase hex), while some
+/// tooling renders `''` (uppercase); match either so the marker never
+/// leaks into user-facing expected-token lists.
+fn is_sub_marker_token(token: &str) -> bool {
+    token.eq_ignore_ascii_case("'\\u001a'")
 }
 
 /// Sanitizes a raw ANTLR error message for display to users.
@@ -642,7 +633,7 @@ fn sanitize_antlr_message(msg: &str) -> String {
     let mut seen = HashSet::new();
     let cleaned: Vec<String> = raw_tokens
         .into_iter()
-        .filter(|t| *t != "DocComment" && *t != "'\\u001A'")
+        .filter(|t| *t != "DocComment" && !is_sub_marker_token(t))
         .map(|t| {
             if t == "<EOF>" {
                 "end of file".to_string()
@@ -1810,17 +1801,77 @@ fn extract_line_prefix(msg: &str) -> &str {
     ""
 }
 
+/// Recover the byte length of the offending token when the runtime reports a
+/// diagnostic without an offending [`TokenView`].
+///
+/// The raw ANTLR message quotes the offending token — `mismatched input 'int'
+/// expecting …`, `no viable alternative at input 'protocl'`, `extraneous input
+/// '"foo.avdl"' …`. We extract that quoted text and, when the source at
+/// `offset` starts with it, return its byte length so the diagnostic underline
+/// spans the whole token instead of a single caret. Returns `None` when no
+/// quoted token can be matched (callers fall back to a length of 1).
+fn offending_token_len(msg: &str, source: &str, offset: usize) -> Option<usize> {
+    // Lexer errors (`token recognition error at: '<rest-of-input>'`) quote the
+    // unconsumed input from the failure point to end-of-line/file, which is not
+    // a single token — keep the historical single-caret span (length 1) for
+    // them by declining to measure here.
+    if msg.contains("token recognition error") {
+        return None;
+    }
+
+    let tail = source.get(offset..)?;
+    if tail.is_empty() {
+        return None;
+    }
+
+    // The offending token is the first single-quoted run in the message. ANTLR
+    // never quotes anything before it (the prefixes are all bare words like
+    // "mismatched input"), so the first `'…'` is the token. When the raw source
+    // text matches it verbatim, trust that width.
+    if let Some(open) = msg.find('\'') {
+        let rest = &msg[open + 1..];
+        if let Some(close) = rest.find('\'') {
+            let token = &rest[..close];
+            if !token.is_empty() && token != "<EOF>" && tail.starts_with(token) {
+                return Some(token.len());
+            }
+        }
+    }
+
+    // Otherwise fall back to measuring the token that actually starts at
+    // `offset` in the source. `no viable alternative` errors quote a *merged*
+    // run of tokens (e.g. `import"foo.avdl"`) that does not match the source at
+    // the reported column, so measure the leading source token instead: a
+    // double-quoted string literal, an identifier/keyword word (which may be
+    // prefixed by `@`), or a single punctuation character.
+    let first = tail.chars().next()?;
+    if first == '"' {
+        // A string literal: include the closing quote when present.
+        let inner = &tail[1..];
+        return match inner.find('"') {
+            Some(end) => Some(end + 2),
+            None => Some(tail.len()),
+        };
+    }
+    let word: usize = tail
+        .char_indices()
+        .take_while(|&(i, c)| c.is_alphanumeric() || c == '_' || (i == 0 && c == '@'))
+        .map(|(_, c)| c.len_utf8())
+        .sum();
+    Some(word.max(first.len_utf8()))
+}
+
 /// Convert 1-based `line` and 0-based `column` (as reported by ANTLR) to a
 /// byte offset into `source`. Returns 0 if the coordinates are out of range.
-fn line_col_to_byte_offset(source: &str, line: isize, column: isize) -> usize {
-    if line <= 0 || column < 0 {
+fn line_col_to_byte_offset(source: &str, line: usize, column: usize) -> usize {
+    if line == 0 {
         return 0;
     }
-    let target_line = (line - 1) as usize; // convert to 0-based
+    let target_line = line - 1; // convert to 0-based
     let mut offset = 0;
     for (i, src_line) in source.split('\n').enumerate() {
         if i == target_line {
-            return offset + (column as usize).min(src_line.len());
+            return offset + column.min(src_line.len());
         }
         offset += src_line.len() + 1; // +1 for the newline character
     }
@@ -1829,81 +1880,93 @@ fn line_col_to_byte_offset(source: &str, line: isize, column: isize) -> usize {
 
 /// An ANTLR error listener that collects syntax errors into a shared `Vec`
 /// instead of printing them to stderr. This lets us detect parse errors after
-/// `parser.idlFile()` returns and fail with a proper error.
+/// `parser.idl_file()` returns and fail with a proper error.
 ///
 /// The optional `source` field holds the original input text, enabling the
 /// listener to compute byte offsets from ANTLR's (line, column) when no
 /// offending token is available (lexer errors).
+///
+/// The runtime requires error listeners to be `Send + 'static`, so the shared
+/// error buffer is an `Arc<Mutex<..>>` (the old runtime used `Rc<RefCell<..>>`
+/// with a `&self` listener).
 struct CollectingErrorListener {
-    errors: Rc<RefCell<Vec<SyntaxError>>>,
-    /// Original source text for line/column-to-byte-offset conversion.
-    /// `None` for parser errors where the offending token always provides
-    /// byte offsets directly.
-    source: Option<&'static str>,
+    errors: Arc<Mutex<Vec<SyntaxError>>>,
 }
 
-impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for CollectingErrorListener {
-    fn syntax_error(
-        &self,
-        _recognizer: &T,
-        offending_symbol: Option<&<T::TF as TokenFactory<'a>>::Inner>,
-        line: isize,
-        column: isize,
-        msg: &str,
-        _error: Option<&antlr4rust::errors::ANTLRError>,
-    ) {
-        // Extract byte offsets from the offending token when available. These
-        // give us a precise source span for miette to underline. When the token
-        // is absent (e.g., lexer errors), we compute the offset from the
-        // line/column parameters using the stored source text.
-        let (offset, length) = offending_symbol
-            .map(|tok| {
-                let start = tok.get_start();
-                let stop = tok.get_stop();
-                if start >= 0 && stop >= start {
-                    (start as usize, (stop - start + 1) as usize)
-                } else if start >= 0 {
-                    (start as usize, 1)
-                } else {
-                    (0, 0)
-                }
-            })
-            .unwrap_or_else(|| {
-                // Lexer errors have no offending token. Fall back to computing
-                // the byte offset from (line, column) using the source text.
-                if let Some(src) = self.source {
-                    let offset = line_col_to_byte_offset(src, line, column);
-                    (offset, 1)
-                } else {
-                    (0, 0)
-                }
-            });
-
-        // Try to enrich the raw ANTLR message with a more user-friendly
-        // explanation. Fall back to the original if no pattern matches.
-        let enriched = enrich_antlr_error(msg);
-
-        let (display_msg, label, help) = match enriched {
-            Some(e) => (e.message, e.label, e.help),
-            // No enrichment pattern matched; sanitize the raw ANTLR message
-            // to remove internal tokens like `'\u001A'` and replace `<EOF>`
-            // with "end of file", then humanize internal token names like
-            // `IdentifierToken` to plain-language equivalents.
-            None => (
-                humanize_antlr_message(&sanitize_antlr_message(msg)),
-                None,
-                None,
-            ),
-        };
-
-        self.errors.borrow_mut().push(SyntaxError {
-            offset,
-            length,
-            message: format!("line {line}:{column} {display_msg}"),
-            label,
-            help,
+impl<R: Recognizer + ?Sized> ErrorListener<R> for CollectingErrorListener {
+    fn syntax_error(&mut self, _recognizer: &R, event: &SyntaxErrorEvent<'_>) {
+        // The runtime resolves a half-open UTF-8 byte span for every
+        // diagnostic, including lexer errors that carry no offending token, so
+        // miette's underline needs no line/column arithmetic here.
+        let (offset, length) = event.span.as_ref().map_or((0, 0), |span| {
+            (span.start, span.end.saturating_sub(span.start))
         });
+
+        self.errors
+            .lock()
+            .expect("error listener mutex poisoned")
+            .push(build_syntax_error(
+                offset,
+                length,
+                event.line,
+                event.column,
+                event.message,
+            ));
     }
+}
+
+/// Build a [`SyntaxError`] from a raw ANTLR diagnostic, applying the same
+/// message enrichment used for every parser/lexer error.
+///
+/// Shared by [`CollectingErrorListener::syntax_error`] and
+/// [`synthesize_syntax_error`] so the listener path and the entry-rule `Err`
+/// fallback path produce identical diagnostics.
+fn build_syntax_error(
+    offset: usize,
+    length: usize,
+    line: usize,
+    column: usize,
+    msg: &str,
+) -> SyntaxError {
+    // Try to enrich the raw ANTLR message with a more user-friendly
+    // explanation. Fall back to the original if no pattern matches.
+    let enriched = enrich_antlr_error(msg);
+
+    let (display_msg, label, help) = match enriched {
+        Some(e) => (e.message, e.label, e.help),
+        // No enrichment pattern matched; sanitize the raw ANTLR message
+        // to remove internal tokens like `'\u001A'` and replace `<EOF>`
+        // with "end of file", then humanize internal token names like
+        // `IdentifierToken` to plain-language equivalents.
+        None => (
+            humanize_antlr_message(&sanitize_antlr_message(msg)),
+            None,
+            None,
+        ),
+    };
+
+    SyntaxError {
+        offset,
+        length,
+        message: format!("line {line}:{column} {display_msg}"),
+        label,
+        help,
+    }
+}
+
+/// Synthesize a [`SyntaxError`] from the `AntlrError::ParserError` the entry
+/// rule returns when it fails on the first unrecovered error without notifying
+/// the installed listener. The byte offset is derived from the reported
+/// `(line, column)` since no offending token is handed back on this path.
+fn synthesize_syntax_error(
+    source: &'static str,
+    line: usize,
+    column: usize,
+    message: &str,
+) -> SyntaxError {
+    let offset = line_col_to_byte_offset(source, line, column);
+    let length = offending_token_len(message, source, offset).unwrap_or(1);
+    build_syntax_error(offset, length, line, column, message)
 }
 
 /// Logical type aliases that are also invalid as user-defined type names.
@@ -2022,8 +2085,7 @@ pub fn parse_idl_named(
     } else {
         input
     };
-    let input_stream = InputStream::new(input);
-    let mut lexer = IdlLexer::new(input_stream);
+    let mut lexer = IdlLexer::new(InputStream::new(input));
 
     // Replace the lexer's default ConsoleErrorListener with a
     // CollectingErrorListener so that token-recognition errors (e.g.,
@@ -2031,44 +2093,86 @@ pub fn parse_idl_named(
     // warnings instead, matching Java's behavior of not treating lexer
     // errors as fatal. (Java also doesn't install a custom listener on
     // the lexer — it just lets ConsoleErrorListener print to stderr.)
-    let lexer_errors: Rc<RefCell<Vec<SyntaxError>>> = Rc::new(RefCell::new(Vec::new()));
+    //
+    // The runtime buffers every token eagerly when the CommonTokenStream is
+    // built, capturing lexer diagnostics; during parsing they are dispatched to
+    // the lexer's own error listeners (installed here) as tokens are requested.
+    // The runtime requires listeners to be `Send + 'static`, so the shared
+    // buffer is `Arc<Mutex<..>>` rather than the old `Rc<RefCell<..>>`.
+    let lexer_errors: Arc<Mutex<Vec<SyntaxError>>> = Arc::new(Mutex::new(Vec::new()));
     lexer.remove_error_listeners();
-    lexer.add_error_listener(Box::new(CollectingErrorListener {
-        errors: Rc::clone(&lexer_errors),
-        source: Some(input),
-    }));
+    lexer.add_error_listener(CollectingErrorListener {
+        errors: Arc::clone(&lexer_errors),
+    });
 
     let token_stream = CommonTokenStream::new(lexer);
     let mut parser = IdlParser::new(token_stream);
-
-    // Build a parse tree so we can walk it recursively. The `build_parse_trees`
-    // field is on `BaseParser`, accessible through `Deref`.
-    parser.build_parse_trees = true;
 
     // Replace the default ConsoleErrorListener with a CollectingErrorListener
     // that records syntax errors. Java's IdlReader does the same thing -- it
     // removes the default listener and installs one that throws on any error.
     // We collect instead of throwing because ANTLR's error recovery may still
     // produce a usable parse tree, but we'll fail after parsing completes.
-    let syntax_errors: Rc<RefCell<Vec<SyntaxError>>> = Rc::new(RefCell::new(Vec::new()));
+    let syntax_errors: Arc<Mutex<Vec<SyntaxError>>> = Arc::new(Mutex::new(Vec::new()));
     parser.remove_error_listeners();
-    // Parser errors always have an offending token with byte offsets, so no
-    // source text is needed for line/column fallback.
-    parser.add_error_listener(Box::new(CollectingErrorListener {
-        errors: Rc::clone(&syntax_errors),
-        source: None,
-    }));
+    // Unlike the old antlr4rust runtime, the runtime dispatches some parser
+    // diagnostics with no offending token (`offending == None`) — e.g. a
+    // "mismatched input" reported during recovery. Give the listener the source
+    // text so it can still compute a byte offset from the reported line/column
+    // in that case, matching the old behavior of always producing a span.
+    parser.add_error_listener(CollectingErrorListener {
+        errors: Arc::clone(&syntax_errors),
+    });
 
-    let tree = parser
-        .idlFile()
-        .map_err(|e| miette::miette!("ANTLR parse error: {e:?}"))
-        .wrap_err_with(|| format!("parse `{source_name}`"))?;
+    // The runtime's default error strategy reports each syntax error to the
+    // installed listeners and then returns `Err` from the entry rule on the
+    // first unrecovered error (unlike the old antlr4rust runtime, which
+    // returned `Ok(tree)` after recovery). We therefore keep the `Result`
+    // rather than propagating it immediately: the `CollectingErrorListener` has
+    // already captured the rich per-error diagnostics, and the block below
+    // turns them into a `ParseDiagnostic`. The raw `AntlrError` is only surfaced
+    // as a fallback when no listener error was collected.
+    let parse_result = parser.idl_file();
+
+    // `into_parsed_file` (below) consumes the parser, so snapshot the shared
+    // diagnostic buffers now — the listeners filled them during parsing.
+    let lexer_errors = std::mem::take(&mut *lexer_errors.lock().expect("lexer mutex poisoned"));
+    let mut syntax_errors =
+        std::mem::take(&mut *syntax_errors.lock().expect("parser mutex poisoned"));
+
+    // The runtime dispatches a recognition error to the installed listeners
+    // only on committed recovery; when the entry rule fails on the very first
+    // unrecovered error it returns `Err(ParserError { line, column, message })`
+    // without notifying the listener (see the DX notes for this port). To keep
+    // a single reporting path, synthesize a `SyntaxError` from that returned
+    // error when the listener captured nothing, then let the shared enrichment
+    // below turn it into a rich diagnostic.
+    if syntax_errors.is_empty()
+        && let Err(antlr4_runtime::AntlrError::ParserError {
+            line,
+            column,
+            message,
+            offending,
+        }) = &parse_result
+    {
+        // The error carries its offending token; resolve it for an exact byte
+        // span instead of the line/column + message heuristic.
+        let span = offending
+            .and_then(|token| parser.token_store().view(token))
+            .map(token_byte_span);
+        syntax_errors.push(match span {
+            Some((offset, length)) => {
+                build_syntax_error(offset, length.max(1), *line, *column, message)
+            }
+            None => synthesize_syntax_error(input, *line, *column, message),
+        });
+    }
 
     // Convert any lexer errors into warnings. Lexer errors (e.g., unrecognized
     // characters) don't necessarily prevent a valid parse — the lexer skips the
     // offending character and continues. Java also treats these as non-fatal
     // (prints to stderr via the default ConsoleErrorListener).
-    let lexer_warnings: Vec<Warning> = RefCell::borrow(&lexer_errors)
+    let lexer_warnings: Vec<Warning> = lexer_errors
         .iter()
         .map(|e| Warning {
             message: e.message.clone(),
@@ -2091,10 +2195,9 @@ pub fn parse_idl_named(
     // primary diagnostic and subsequent errors are attached as related
     // diagnostics. This lets users fix all syntax problems in one edit cycle
     // instead of the frustrating fix-one-rerun pattern.
-    let collected_errors = RefCell::borrow(&syntax_errors);
+    let collected_errors = &syntax_errors;
     if !collected_errors.is_empty() {
-        let borrowed_lexer_errors = RefCell::borrow(&lexer_errors);
-        if let Some(unterm) = find_unterminated_string_error(&borrowed_lexer_errors) {
+        if let Some(unterm) = find_unterminated_string_error(&lexer_errors) {
             // Extract the `line N:M` prefix from the original error message
             // so we can produce a clean message like `line 4:18 unterminated
             // string literal` instead of forwarding the raw ANTLR text.
@@ -2120,14 +2223,13 @@ pub fn parse_idl_named(
             }
             .into());
         }
-        drop(borrowed_lexer_errors);
 
         // Source-aware post-processing: refine error messages using context
         // from the original source text. This handles patterns that cannot
         // be detected from ANTLR error messages alone (e.g., empty unions,
         // misspelled keywords, fixed with non-integer size).
-        let refined = refine_errors_with_source(&collected_errors, input);
-        let errors_to_report = refined.as_deref().unwrap_or(&collected_errors);
+        let refined = refine_errors_with_source(collected_errors, input);
+        let errors_to_report = refined.as_deref().unwrap_or(collected_errors);
 
         let first = &errors_to_report[0];
         let related: Vec<ParseDiagnostic> = errors_to_report[1..]
@@ -2149,12 +2251,26 @@ pub fn parse_idl_named(
         }
         .into());
     }
-    drop(collected_errors);
 
-    // The parser's `input` field (on `BaseParser`, accessible through `Deref`)
-    // holds the token stream. We need it for doc comment extraction (scanning
-    // backwards from a token index through hidden-channel tokens).
-    let token_stream = &parser.input;
+    // No listener error was collected. Any `Err` from the entry rule here is a
+    // failure the listeners did not describe (e.g. an internal runtime error),
+    // so surface it directly. On success, `root` is the entry-rule tree.
+    let root = parse_result
+        .map_err(|e| miette::miette!("ANTLR parse error: {e:?}"))
+        .wrap_err_with(|| format!("parse `{source_name}`"))?;
+
+    // Package the parsed tree + token store. `into_parsed_file` consumes the
+    // parser; every buffered token (including hidden-channel DocComment tokens)
+    // is retained in the returned store, which doc-comment extraction scans.
+    let parsed = parser.into_parsed_file(root);
+    let tokens = parsed.tokens();
+
+    // The root node is the `idlFile` rule; recover its typed context view.
+    let root_ctx = parsed
+        .tree()
+        .as_rule()
+        .and_then(|rule| rule.downcast_ref::<IdlFileContext>())
+        .ok_or_else(|| miette::miette!("parse `{source_name}`: root is not an idlFile"))?;
 
     let src = SourceInfo {
         source: input,
@@ -2166,7 +2282,7 @@ pub fn parse_idl_named(
     let mut namespace: Option<String> = None;
     let mut decl_items = Vec::new();
 
-    let idl_file = walk_idl_file(&tree, token_stream, &src, &mut namespace, &mut decl_items)
+    let idl_file = walk_idl_file(&root_ctx, tokens, &src, &mut namespace, &mut decl_items)
         .wrap_err_with(|| format!("parse `{source_name}`"))?;
 
     // ==============================================================================
@@ -2181,11 +2297,8 @@ pub fn parse_idl_named(
     // a warning for each DocComment token in the gap between the previous call's
     // position and the current call's position that isn't the actual doc comment
     // for the current node.
-    let warnings = collect_orphaned_doc_comment_warnings(
-        token_stream,
-        &src.consumed_doc_indices.borrow(),
-        &src,
-    );
+    let warnings =
+        collect_orphaned_doc_comment_warnings(tokens, &src.consumed_doc_indices.borrow(), &src);
 
     let mut all_warnings = lexer_warnings;
     all_warnings.extend(warnings);
@@ -2193,14 +2306,6 @@ pub fn parse_idl_named(
 
     Ok((idl_file, decl_items, all_warnings))
 }
-
-// ==========================================================================
-// Token Stream Type Alias
-// ==========================================================================
-
-/// Concrete token stream type produced by our lexer. Every walk function
-/// threads this through so it can extract doc comments from hidden tokens.
-type TS<'input> = CommonTokenStream<'input, IdlLexer<'input, InputStream<&'input str>>>;
 
 // ==========================================================================
 // Source Location Diagnostic Helpers
@@ -2217,7 +2322,7 @@ struct SourceInfo {
     /// Token indices of doc comments consumed by `extract_doc_from_context`.
     /// After the full tree walk, any `DocComment` token NOT in this set is
     /// orphaned and should generate a warning.
-    consumed_doc_indices: RefCell<HashSet<isize>>,
+    consumed_doc_indices: RefCell<HashSet<usize>>,
     /// Warnings collected during the tree walk. Functions that detect
     /// non-fatal issues (e.g., annotations silently dropped on union types)
     /// push here rather than threading `&mut Vec<Warning>` through every
@@ -2231,52 +2336,19 @@ impl SourceInfo {
     }
 }
 
-/// Compute `(offset, length)` from ANTLR's inclusive start/stop byte offsets.
-///
-/// ANTLR tokens report byte positions where both `start` and `stop` are
-/// inclusive, so the length of the spanned region is `stop - start + 1`.
-/// Returns a span covering at least one character when possible, or `(0, 0)`
-/// when no valid position is available.
-fn span_from_offsets(start: isize, stop: isize) -> (usize, usize) {
-    if start >= 0 && stop >= start {
-        (start as usize, (stop - start + 1) as usize)
-    } else if start >= 0 {
-        (start as usize, 1)
-    } else {
-        (0, 0)
-    }
-}
-
 /// Construct a `miette::Report` wrapping a `ParseDiagnostic` with source
-/// location extracted from an ANTLR parse tree context's start token.
+/// location extracted from a parse tree context.
 ///
-/// The start token gives us a byte offset into the original source text. We
-/// use the token's `get_start()` and `get_stop()` to compute a byte-level
-/// `SourceSpan` that miette can render as an underlined region in the error
-/// output.
-fn make_diagnostic<'input>(
+/// The context's start/stop tokens give byte offsets into the original source
+/// text; [`context_byte_span`] turns them into a byte-level `SourceSpan` that
+/// miette renders as an underlined region (spanning the full context, e.g. the
+/// entire `@name(value)` annotation rather than just the leading `@`).
+fn make_diagnostic<'a>(
     src: &SourceInfo,
-    ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'input>,
+    ctx: &impl AsRuleNode<'a>,
     message: impl Into<String>,
 ) -> miette::Report {
-    let start_token = ctx.start();
-    let stop_token = ctx.stop();
-    let offset = start_token.get_start();
-
-    // Use the stop token's end byte to span the entire context (e.g. the full
-    // `@name(value)` annotation rather than just the leading `@`). Fall back
-    // to the start token's own stop byte if the stop token has no valid
-    // position.
-    let stop = {
-        let candidate = stop_token.get_stop();
-        if candidate >= offset {
-            candidate
-        } else {
-            start_token.get_stop()
-        }
-    };
-
-    let (offset, length) = span_from_offsets(offset, stop);
+    let (offset, length) = context_byte_span(ctx);
 
     let message = message.into();
     ParseDiagnostic {
@@ -2289,15 +2361,15 @@ fn make_diagnostic<'input>(
     .into()
 }
 
-/// Like `make_diagnostic` but takes a raw `Token` reference instead of a
-/// context node. Useful when the error relates to a specific token field
-/// (e.g. `ctx.size`, `ctx.typeName`) rather than the whole context.
+/// Like `make_diagnostic` but takes a token view instead of a context node.
+/// Useful when the error relates to a specific token (e.g. `size`, `typeName`)
+/// rather than the whole context.
 fn make_diagnostic_from_token(
     src: &SourceInfo,
-    token: &impl Token,
+    token: TokenView<'_>,
     message: impl Into<String>,
 ) -> miette::Report {
-    let (offset, length) = span_from_offsets(token.get_start(), token.get_stop());
+    let (offset, length) = token_byte_span(token);
 
     let message = message.into();
     ParseDiagnostic {
@@ -2316,11 +2388,9 @@ fn make_diagnostic_from_token(
 /// Used to attach spans to `DeclItem::Type` and `DeclItem::Import` entries so
 /// that downstream errors (duplicate type name, import failure) can produce
 /// source-highlighted diagnostics.
-fn span_from_context<'input>(
-    ctx: &impl antlr4rust::parser_rule_context::ParserRuleContext<'input>,
-) -> Option<(usize, usize)> {
-    let start_token = ctx.start();
-    let (offset, length) = span_from_offsets(start_token.get_start(), start_token.get_stop());
+fn span_from_context<'a>(ctx: &impl AsRuleNode<'a>) -> Option<(usize, usize)> {
+    let start = ctx.as_rule_node().start()?;
+    let (offset, length) = token_byte_span(start);
 
     // A zero-length span at offset 0 means no valid position was available.
     if length > 0 {
@@ -2507,9 +2577,9 @@ const MESSAGE_PROPS: PropertyContext = PropertyContext {
 /// `SchemaProperties` struct. Which annotations are intercepted as special
 /// fields (`namespace`, `aliases`, `order`) depends on the `pctx` flags,
 /// matching Java's context-sensitive `SchemaProperties` behavior.
-fn walk_schema_properties<'input>(
-    props: &[Rc<SchemaPropertyContextAll<'input>>],
-    token_stream: &TS<'input>,
+fn walk_schema_properties<'a>(
+    props: impl Iterator<Item = SchemaPropertyContext<'a>>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     pctx: PropertyContext,
 ) -> Result<SchemaProperties> {
@@ -2518,13 +2588,13 @@ fn walk_schema_properties<'input>(
     for prop in props {
         let name_ctx = prop
             .identifier()
-            .ok_or_else(|| make_diagnostic(src, &**prop, "missing property name"))?;
+            .map_err(|_| make_diagnostic(src, &prop, "missing property name"))?;
         let name = identifier_text(&name_ctx);
 
         let value_ctx = prop
-            .jsonValue()
-            .ok_or_else(|| make_diagnostic(src, &**prop, "missing property value"))?;
-        let value = walk_json_value(&value_ctx, token_stream, src)
+            .json_value()
+            .map_err(|_| make_diagnostic(src, &prop, "missing property value"))?;
+        let value = walk_json_value(&value_ctx, tokens, src)
             .wrap_err_with(|| format!("parse value for schema property `{name}`"))?;
 
         // Intercept well-known annotations only when the context flags allow it.
@@ -2539,7 +2609,7 @@ fn walk_schema_properties<'input>(
             } else {
                 return Err(make_diagnostic(
                     src,
-                    &**prop,
+                    &prop,
                     "@namespace must contain a string value",
                 ));
             }
@@ -2561,13 +2631,13 @@ fn walk_schema_properties<'input>(
                         if !is_standard {
                             src.warnings
                                 .borrow_mut()
-                                .push(Warning::non_standard_alias_name(s, src, &**prop));
+                                .push(Warning::non_standard_alias_name(s, src, &prop));
                         }
                         aliases.push(s.clone());
                     } else {
                         return Err(make_diagnostic(
                             src,
-                            &**prop,
+                            &prop,
                             "@aliases must contain an array of strings",
                         ));
                     }
@@ -2576,7 +2646,7 @@ fn walk_schema_properties<'input>(
             } else {
                 return Err(make_diagnostic(
                     src,
-                    &**prop,
+                    &prop,
                     "@aliases must contain an array of strings",
                 ));
             }
@@ -2589,7 +2659,7 @@ fn walk_schema_properties<'input>(
                     _ => {
                         return Err(make_diagnostic(
                             src,
-                            &**prop,
+                            &prop,
                             format!("@order must be ASCENDING, DESCENDING, or IGNORE, got: {s}"),
                         ));
                     }
@@ -2597,7 +2667,7 @@ fn walk_schema_properties<'input>(
             } else {
                 return Err(make_diagnostic(
                     src,
-                    &**prop,
+                    &prop,
                     "@order must contain a string value",
                 ));
             }
@@ -2610,7 +2680,7 @@ fn walk_schema_properties<'input>(
             if pctx.reserved.contains(&name.as_str()) {
                 return Err(make_diagnostic(
                     src,
-                    &**prop,
+                    &prop,
                     format!("Can't set reserved property: {name}"),
                 ));
             }
@@ -2632,22 +2702,22 @@ fn walk_schema_properties<'input>(
 /// in source order. The caller processes these items sequentially to build a
 /// correctly ordered registry.
 fn walk_idl_file<'input>(
-    ctx: &IdlFileContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &IdlFileContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: &mut Option<String>,
     decl_items: &mut Vec<DeclItem>,
 ) -> Result<IdlFile> {
     // Protocol mode: the IDL contains `protocol Name { ... }`.
-    if let Some(protocol_ctx) = ctx.protocolDeclaration() {
-        let protocol = walk_protocol(&protocol_ctx, token_stream, src, namespace, decl_items)?;
+    if let Some(protocol_ctx) = ctx.protocol_declaration() {
+        let protocol = walk_protocol(&protocol_ctx, tokens, src, namespace, decl_items)?;
         return Ok(IdlFile::Protocol(protocol));
     }
 
     // Schema mode: optional `namespace`, optional `schema` declaration, plus
     // named type declarations.
-    if let Some(ns_ctx) = ctx.namespaceDeclaration()
-        && let Some(id_ctx) = ns_ctx.identifier()
+    if let Some(ns_ctx) = ctx.namespace_declaration()
+        && let Ok(id_ctx) = ns_ctx.identifier()
     {
         let id = identifier_text(&id_ctx);
         // In schema mode, `namespace foo.bar;` sets the enclosing namespace
@@ -2660,28 +2730,29 @@ fn walk_idl_file<'input>(
     // Walk the body children in source order, interleaving imports and named
     // schema declarations. The grammar rule is:
     //   (imports+=importStatement | namedSchemas+=namedSchemaDeclaration)*
-    // We iterate all children to preserve the original declaration order.
+    // We iterate the rule node's children (mixed types in source order) and
+    // downcast each to the typed context it corresponds to.
     let mut local_schemas = Vec::new();
-    for child in ctx.get_children() {
-        if let Ok(import_ctx) = child
-            .clone()
-            .downcast_rc::<ImportStatementContextAll<'input>>()
-        {
+    for child in ctx.rule_node().children() {
+        let Some(rule) = child.as_rule() else {
+            continue;
+        };
+        if let Some(import_ctx) = rule.downcast_ref::<ImportStatementContext>() {
             collect_single_import(&import_ctx, decl_items, src);
-        } else if let Ok(ns_ctx) = child.downcast_rc::<NamedSchemaDeclarationContextAll<'input>>() {
-            let span = span_from_context(&*ns_ctx).map(|(o, l)| src.span(o, l));
+        } else if let Some(ns_ctx) = rule.downcast_ref::<NamedSchemaDeclarationContext>() {
+            let span = span_from_context(&ns_ctx).map(|(o, l)| src.span(o, l));
             let (schema, field_spans) =
-                walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
+                walk_named_schema_no_register(&ns_ctx, tokens, src, namespace)?;
             local_schemas.push(schema.clone());
             decl_items.push(DeclItem::Type(Box::new(schema), span, field_spans));
         }
     }
 
     // The main schema declaration uses `schema <fullType>;`.
-    if let Some(main_ctx) = ctx.mainSchemaDeclaration()
-        && let Some(ft_ctx) = main_ctx.fullType()
+    if let Some(main_ctx) = ctx.main_schema_declaration()
+        && let Ok(ft_ctx) = main_ctx.full_type()
     {
-        let schema = walk_full_type(&ft_ctx, token_stream, src, namespace.as_deref())?;
+        let schema = walk_full_type(&ft_ctx, tokens, src, namespace.as_deref())?;
         return Ok(IdlFile::Schema(schema));
     }
 
@@ -2701,23 +2772,23 @@ fn walk_idl_file<'input>(
 /// and `DeclItem::Type` entries to `decl_items`. Messages are collected
 /// directly into the protocol since they don't affect type ordering.
 fn walk_protocol<'input>(
-    ctx: &ProtocolDeclarationContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &ProtocolDeclarationContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: &mut Option<String>,
     decl_items: &mut Vec<DeclItem>,
 ) -> Result<Protocol> {
     // Extract doc comment by scanning hidden tokens before the context's start token.
-    let doc = extract_doc_from_context(ctx, token_stream, src);
+    let doc = extract_doc_from_context(ctx, tokens, src);
 
     // Process `@namespace(...)` and other schema properties on the protocol.
     let props =
-        walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, PROTOCOL_PROPS)?;
+        walk_schema_properties(ctx.schema_property_children(), tokens, src, PROTOCOL_PROPS)?;
 
     // Get the protocol name from the identifier.
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing protocol name"))?;
+        .map_err(|_| make_diagnostic(src, ctx, "missing protocol name"))?;
     let raw_identifier = identifier_text(&name_ctx);
 
     // Determine namespace: explicit `@namespace` overrides, otherwise if the
@@ -2728,7 +2799,7 @@ fn walk_protocol<'input>(
     if is_invalid_type_name(&protocol_name) {
         return Err(make_diagnostic(
             src,
-            &*name_ctx,
+            &name_ctx,
             format!("Illegal name: {protocol_name}"),
         ));
     }
@@ -2738,32 +2809,28 @@ fn walk_protocol<'input>(
 
     // Walk the protocol body.
     let body = ctx
-        .protocolDeclarationBody()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing protocol body"))?;
+        .protocol_declaration_body()
+        .map_err(|_| make_diagnostic(src, ctx, "missing protocol body"))?;
 
     // Walk the protocol body children in source order. The ANTLR grammar
     // interleaves imports, named schema declarations, and message declarations:
     //   protocolDeclarationBody: '{' (import | namedSchema | message)* '}'
-    // We iterate all children and dispatch based on type, preserving the
-    // original declaration order for imports and types.
+    // We iterate the rule node's children and dispatch based on type,
+    // preserving the original declaration order for imports and types.
     let mut messages = HashMap::new();
-    for child in body.get_children() {
-        if let Ok(import_ctx) = child
-            .clone()
-            .downcast_rc::<ImportStatementContextAll<'input>>()
-        {
+    for child in body.rule_node().children() {
+        let Some(rule) = child.as_rule() else {
+            continue;
+        };
+        if let Some(import_ctx) = rule.downcast_ref::<ImportStatementContext>() {
             collect_single_import(&import_ctx, decl_items, src);
-        } else if let Ok(ns_ctx) = child
-            .clone()
-            .downcast_rc::<NamedSchemaDeclarationContextAll<'input>>()
-        {
-            let span = span_from_context(&*ns_ctx).map(|(o, l)| src.span(o, l));
+        } else if let Some(ns_ctx) = rule.downcast_ref::<NamedSchemaDeclarationContext>() {
+            let span = span_from_context(&ns_ctx).map(|(o, l)| src.span(o, l));
             let (schema, field_spans) =
-                walk_named_schema_no_register(&ns_ctx, token_stream, src, namespace)?;
+                walk_named_schema_no_register(&ns_ctx, tokens, src, namespace)?;
             decl_items.push(DeclItem::Type(Box::new(schema), span, field_spans));
-        } else if let Ok(msg_ctx) = child.downcast_rc::<MessageDeclarationContextAll<'input>>() {
-            let (msg_name, message) =
-                walk_message(&msg_ctx, token_stream, src, namespace.as_deref())?;
+        } else if let Some(msg_ctx) = rule.downcast_ref::<MessageDeclarationContext>() {
+            let (msg_name, message) = walk_message(&msg_ctx, tokens, src, namespace.as_deref())?;
             messages.insert(msg_name, message);
         }
     }
@@ -2786,23 +2853,23 @@ fn walk_protocol<'input>(
 /// `SchemaRegistry`. The caller is responsible for registration, which allows
 /// imports and local types to be registered in source order.
 fn walk_named_schema_no_register<'input>(
-    ctx: &NamedSchemaDeclarationContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &NamedSchemaDeclarationContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: &mut Option<String>,
 ) -> Result<(AvroSchema, HashMap<String, SpanWithSource>)> {
-    if let Some(fixed_ctx) = ctx.fixedDeclaration() {
+    if let Some(fixed_ctx) = ctx.fixed_declaration() {
         Ok((
-            walk_fixed(&fixed_ctx, token_stream, src, namespace.as_deref())?,
+            walk_fixed(&fixed_ctx, tokens, src, namespace.as_deref())?,
             HashMap::new(),
         ))
-    } else if let Some(enum_ctx) = ctx.enumDeclaration() {
+    } else if let Some(enum_ctx) = ctx.enum_declaration() {
         Ok((
-            walk_enum(&enum_ctx, token_stream, src, namespace.as_deref())?,
+            walk_enum(&enum_ctx, tokens, src, namespace.as_deref())?,
             HashMap::new(),
         ))
-    } else if let Some(record_ctx) = ctx.recordDeclaration() {
-        walk_record(&record_ctx, token_stream, src, namespace)
+    } else if let Some(record_ctx) = ctx.record_declaration() {
+        walk_record(&record_ctx, tokens, src, namespace)
     } else {
         Err(make_diagnostic(
             src,
@@ -2822,29 +2889,28 @@ fn walk_named_schema_no_register<'input>(
 // is ever extended to allow nested named schema declarations inside records,
 // a `registry: &mut SchemaRegistry` parameter would need to be added back.
 fn walk_record<'input>(
-    ctx: &RecordDeclarationContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &RecordDeclarationContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: &mut Option<String>,
 ) -> Result<(AvroSchema, HashMap<String, SpanWithSource>)> {
-    let doc = extract_doc_from_context(ctx, token_stream, src);
+    let doc = extract_doc_from_context(ctx, tokens, src);
     let props = walk_schema_properties(
-        &ctx.schemaProperty_all(),
-        token_stream,
+        ctx.schema_property_children(),
+        tokens,
         src,
         NAMED_TYPE_PROPS,
     )?;
 
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing record name"))?;
+        .map_err(|_| make_diagnostic(src, ctx, "missing record name"))?;
     let raw_identifier = identifier_text(&name_ctx);
 
-    // Determine if this is a record or an error type.
-    let is_error = ctx
-        .recordType
-        .as_ref()
-        .is_some_and(|tok| tok.get_token_type() == Idl_Error);
+    // Determine if this is a record or an error type. The `recordType` label
+    // matches either `record` or `error`; the generated `error_token()`
+    // accessor is `Some` exactly when the `error` keyword was matched.
+    let is_error = ctx.error_token().is_some();
 
     // Compute namespace: `@namespace` on the record overrides; otherwise
     // the identifier may contain dots, or we fall back to the enclosing namespace.
@@ -2855,7 +2921,7 @@ fn walk_record<'input>(
     if is_invalid_type_name(&record_name) {
         return Err(make_diagnostic(
             src,
-            &*name_ctx,
+            &name_ctx,
             format!("Illegal name: {record_name}"),
         ));
     }
@@ -2869,16 +2935,16 @@ fn walk_record<'input>(
 
     // Walk the record body to get fields.
     let body = ctx
-        .recordBody()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing record body"))?;
+        .record_body()
+        .map_err(|_| make_diagnostic(src, ctx, "missing record body"))?;
 
     let mut fields = Vec::new();
     let mut field_spans: HashMap<String, SpanWithSource> = HashMap::new();
     let mut seen_field_names: HashSet<String> = HashSet::new();
-    for field_ctx in body.fieldDeclaration_all() {
+    for field_ctx in body.field_declaration_children() {
         let mut field_fields = walk_field_declaration(
             &field_ctx,
-            token_stream,
+            tokens,
             src,
             namespace.as_deref(),
             Some(&record_name),
@@ -2886,15 +2952,14 @@ fn walk_record<'input>(
         // Check for duplicates. We zip with the variable declaration contexts
         // so that the diagnostic highlights the duplicate field *name*, not the
         // type keyword that starts the field declaration.
-        let var_ctxs = field_ctx.variableDeclaration_all();
+        let var_ctxs: Vec<_> = field_ctx.variable_declaration_children().collect();
         for (field, var_ctx) in field_fields.iter().zip(var_ctxs.iter()) {
             if !seen_field_names.insert(field.name.clone()) {
                 *namespace = saved_namespace;
-                let name_ctx = var_ctx.identifier();
-                let diag = if let Some(name_ctx) = name_ctx {
+                let diag = if let Ok(name_ctx) = var_ctx.identifier() {
                     make_diagnostic(
                         src,
-                        &*name_ctx,
+                        &name_ctx,
                         format!(
                             "duplicate field '{}' in record '{}'",
                             field.name, record_name
@@ -2903,7 +2968,7 @@ fn walk_record<'input>(
                 } else {
                     make_diagnostic(
                         src,
-                        &*field_ctx,
+                        &field_ctx,
                         format!(
                             "duplicate field '{}' in record '{}'",
                             field.name, record_name
@@ -2917,9 +2982,9 @@ fn walk_record<'input>(
             // registration. Prefer the jsonValue span (the `= <value>` part)
             // so diagnostics highlight the offending value, not the field name.
             let default_span = var_ctx
-                .jsonValue()
-                .and_then(|jv| span_from_context(&*jv))
-                .or_else(|| span_from_context(&**var_ctx));
+                .json_value()
+                .and_then(|jv| span_from_context(&jv))
+                .or_else(|| span_from_context(var_ctx));
             if let Some((offset, length)) = default_span {
                 field_spans.insert(field.name.clone(), src.span(offset, length));
             }
@@ -2954,30 +3019,30 @@ fn walk_record<'input>(
 /// `enclosing_name` is the name of the enclosing record (if any), included in
 /// default-validation error messages for context.
 fn walk_field_declaration<'input>(
-    ctx: &FieldDeclarationContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &FieldDeclarationContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: Option<&str>,
     enclosing_name: Option<&str>,
 ) -> Result<Vec<Field>> {
     // The doc comment on the field declaration acts as a default for variables
     // that don't have their own doc comment.
-    let default_doc = extract_doc_from_context(ctx, token_stream, src);
+    let default_doc = extract_doc_from_context(ctx, tokens, src);
 
     // Walk the field type.
     let full_type_ctx = ctx
-        .fullType()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing field type"))?;
-    let field_type = walk_full_type(&full_type_ctx, token_stream, src, namespace)?;
+        .full_type()
+        .map_err(|_| make_diagnostic(src, ctx, "missing field type"))?;
+    let field_type = walk_full_type(&full_type_ctx, tokens, src, namespace)?;
 
     // Walk each variable declaration.
     let mut fields = Vec::new();
-    for var_ctx in ctx.variableDeclaration_all() {
+    for var_ctx in ctx.variable_declaration_children() {
         let field = walk_variable(
             &var_ctx,
             &field_type,
             default_doc.as_deref(),
-            token_stream,
+            tokens,
             src,
             namespace,
             enclosing_name,
@@ -2993,32 +3058,32 @@ fn walk_field_declaration<'input>(
 /// `enclosing_name` is the name of the enclosing record (if any), included in
 /// default-validation error messages for context (e.g. "in `MyRecord`").
 fn walk_variable<'input>(
-    ctx: &VariableDeclarationContextAll<'input>,
+    ctx: &VariableDeclarationContext<'input>,
     field_type: &AvroSchema,
     default_doc: Option<&str>,
-    token_stream: &TS<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     _namespace: Option<&str>,
     enclosing_name: Option<&str>,
 ) -> Result<Field> {
     // Variable-specific doc comment overrides the field-level default.
-    let var_doc = extract_doc_from_context(ctx, token_stream, src);
+    let var_doc = extract_doc_from_context(ctx, tokens, src);
     let doc = var_doc.or_else(|| default_doc.map(|s| s.to_string()));
 
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing variable name"))?;
+        .map_err(|_| make_diagnostic(src, ctx, "missing variable name"))?;
     let field_name = identifier_text(&name_ctx);
 
     // Walk the variable-level schema properties (e.g. @order, @aliases on a
     // specific variable rather than on the field type).
     let props =
-        walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, VARIABLE_PROPS)?;
+        walk_schema_properties(ctx.schema_property_children(), tokens, src, VARIABLE_PROPS)?;
 
     // Parse the default value if present.
-    let default_value = if let Some(json_ctx) = ctx.jsonValue() {
+    let default_value = if let Some(json_ctx) = ctx.json_value() {
         Some(
-            walk_json_value(&json_ctx, token_stream, src)
+            walk_json_value(&json_ctx, tokens, src)
                 .wrap_err_with(|| format!("parse default value for field `{field_name}`"))?,
         )
     } else {
@@ -3047,10 +3112,10 @@ fn walk_variable<'input>(
         };
         // Point the diagnostic at the default value expression, not the
         // entire variable declaration (which includes the field name).
-        return Err(match ctx.jsonValue() {
+        return Err(match ctx.json_value() {
             Some(ref jv) => make_diagnostic(
                 src,
-                &**jv,
+                jv,
                 format!("Invalid default for field `{field_name}`{in_clause}: {reason}"),
             ),
             None => make_diagnostic(
@@ -3077,17 +3142,17 @@ fn walk_variable<'input>(
 // ==========================================================================
 
 fn walk_enum<'input>(
-    ctx: &EnumDeclarationContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &EnumDeclarationContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     enclosing_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
-    let doc = extract_doc_from_context(ctx, token_stream, src);
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, ENUM_PROPS)?;
+    let doc = extract_doc_from_context(ctx, tokens, src);
+    let props = walk_schema_properties(ctx.schema_property_children(), tokens, src, ENUM_PROPS)?;
 
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing enum name"))?;
+        .map_err(|_| make_diagnostic(src, ctx, "missing enum name"))?;
     let raw_identifier = identifier_text(&name_ctx);
 
     // If compute_namespace returns None (no explicit @namespace and no dots
@@ -3099,7 +3164,7 @@ fn walk_enum<'input>(
     if is_invalid_type_name(&enum_name) {
         return Err(make_diagnostic(
             src,
-            &*name_ctx,
+            &name_ctx,
             format!("Illegal name: {enum_name}"),
         ));
     }
@@ -3107,13 +3172,13 @@ fn walk_enum<'input>(
     // Collect enum symbols, rejecting duplicates.
     let mut symbols = Vec::new();
     let mut seen_symbols: HashSet<String> = HashSet::new();
-    for sym_ctx in ctx.enumSymbol_all() {
-        if let Some(sym_name_ctx) = sym_ctx.identifier() {
+    for sym_ctx in ctx.enum_symbol_children() {
+        if let Ok(sym_name_ctx) = sym_ctx.identifier() {
             let sym_name = identifier_text(&sym_name_ctx);
             if !seen_symbols.insert(sym_name.clone()) {
                 return Err(make_diagnostic(
                     src,
-                    &*sym_ctx,
+                    &sym_ctx,
                     format!("duplicate enum symbol: {sym_name}"),
                 ));
             }
@@ -3124,13 +3189,13 @@ fn walk_enum<'input>(
     // Get the default symbol if present (via `= symbolName;` after the closing brace).
     // Validate that it exists in the symbol list (Java's `EnumSchema` constructor
     // rejects unknown defaults with `SchemaParseException`).
-    let default_symbol = if let Some(default_ctx) = ctx.enumDefault() {
-        if let Some(id_ctx) = default_ctx.identifier() {
+    let default_symbol = if let Some(default_ctx) = ctx.enum_default() {
+        if let Ok(id_ctx) = default_ctx.identifier() {
             let sym = identifier_text(&id_ctx);
             if !symbols.contains(&sym) {
                 return Err(make_diagnostic(
                     src,
-                    &*id_ctx,
+                    &id_ctx,
                     format!(
                         "The Enum Default: {} is not in the enum symbol set: {:?}",
                         sym, symbols
@@ -3161,22 +3226,22 @@ fn walk_enum<'input>(
 // ==========================================================================
 
 fn walk_fixed<'input>(
-    ctx: &FixedDeclarationContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &FixedDeclarationContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     enclosing_namespace: Option<&str>,
 ) -> Result<AvroSchema> {
-    let doc = extract_doc_from_context(ctx, token_stream, src);
+    let doc = extract_doc_from_context(ctx, tokens, src);
     let props = walk_schema_properties(
-        &ctx.schemaProperty_all(),
-        token_stream,
+        ctx.schema_property_children(),
+        tokens,
         src,
         NAMED_TYPE_PROPS,
     )?;
 
     let name_ctx = ctx
         .identifier()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing fixed name"))?;
+        .map_err(|_| make_diagnostic(src, ctx, "missing fixed name"))?;
     let raw_identifier = identifier_text(&name_ctx);
 
     // Fall back to enclosing namespace if no explicit namespace is given.
@@ -3187,20 +3252,20 @@ fn walk_fixed<'input>(
     if is_invalid_type_name(&fixed_name) {
         return Err(make_diagnostic(
             src,
-            &*name_ctx,
+            &name_ctx,
             format!("Illegal name: {fixed_name}"),
         ));
     }
 
-    // Parse the size from the IntegerLiteral token.
+    // Parse the size from the IntegerLiteral token (the `size` label).
     let size_tok = ctx
-        .size
-        .as_ref()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing fixed size"))?;
-    let size = parse_integer_as_u32(size_tok.get_text()).map_err(|e| {
+        .size()
+        .map_err(|_| make_diagnostic(src, ctx, "missing fixed size"))?
+        .symbol();
+    let size = parse_integer_as_u32(size_tok.text_or_empty()).map_err(|e| {
         make_diagnostic_from_token(
             src,
-            &**size_tok,
+            size_tok,
             format!("invalid fixed size for `{fixed_name}`: {e}"),
         )
     })?;
@@ -3229,18 +3294,18 @@ fn walk_fixed<'input>(
 /// Walk a `fullType` node: collect schema properties, walk the inner
 /// `plainType`, then apply any custom properties to the resulting schema.
 fn walk_full_type<'input>(
-    ctx: &FullTypeContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &FullTypeContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
-    let props = walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, BARE_PROPS)?;
+    let props = walk_schema_properties(ctx.schema_property_children(), tokens, src, BARE_PROPS)?;
 
     let plain_ctx = ctx
-        .plainType()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing plain type in fullType"))?;
+        .plain_type()
+        .map_err(|_| make_diagnostic(src, ctx, "missing plain type in fullType"))?;
 
-    let schema = walk_plain_type(&plain_ctx, token_stream, src, namespace)?;
+    let schema = walk_plain_type(&plain_ctx, tokens, src, namespace)?;
 
     // Type references may not be annotated. When the resolved type is a bare
     // reference to a previously-defined named type, any accumulated schema
@@ -3281,22 +3346,22 @@ fn walk_full_type<'input>(
 
 /// Dispatch to array, map, union, or nullable type.
 fn walk_plain_type<'input>(
-    ctx: &PlainTypeContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &PlainTypeContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
-    if let Some(array_ctx) = ctx.arrayType() {
-        return walk_array_type(&array_ctx, token_stream, src, namespace);
+    if let Some(array_ctx) = ctx.array_type() {
+        return walk_array_type(&array_ctx, tokens, src, namespace);
     }
-    if let Some(map_ctx) = ctx.mapType() {
-        return walk_map_type(&map_ctx, token_stream, src, namespace);
+    if let Some(map_ctx) = ctx.map_type() {
+        return walk_map_type(&map_ctx, tokens, src, namespace);
     }
-    if let Some(union_ctx) = ctx.unionType() {
-        return walk_union_type(&union_ctx, token_stream, src, namespace);
+    if let Some(union_ctx) = ctx.union_type() {
+        return walk_union_type(&union_ctx, tokens, src, namespace);
     }
-    if let Some(nullable_ctx) = ctx.nullableType() {
-        return walk_nullable_type(&nullable_ctx, token_stream, src, namespace);
+    if let Some(nullable_ctx) = ctx.nullable_type() {
+        return walk_nullable_type(&nullable_ctx, tokens, src, namespace);
     }
     Err(make_diagnostic(src, ctx, "unrecognized plain type"))
 }
@@ -3304,19 +3369,19 @@ fn walk_plain_type<'input>(
 /// Walk a nullable type: either a primitive type or a named reference,
 /// optionally followed by `?` to make it nullable.
 fn walk_nullable_type<'input>(
-    ctx: &NullableTypeContextAll<'input>,
-    _token_stream: &TS<'input>,
+    ctx: &NullableTypeContext<'input>,
+    _tokens: &TokenStore,
     src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
-    let base_type = if let Some(prim_ctx) = ctx.primitiveType() {
+    let base_type = if let Some(prim_ctx) = ctx.primitive_type() {
         walk_primitive_type(&prim_ctx, src)?
     } else if let Some(ref_ctx) = ctx.identifier() {
         // Named type reference. Split the identifier into name and namespace
         // so the Reference carries them separately, enabling correct namespace
         // shortening during JSON serialization.
         let type_name = identifier_text(&ref_ctx);
-        let ref_span = span_from_context(&*ref_ctx).map(|(o, l)| src.span(o, l));
+        let ref_span = span_from_context(&ref_ctx).map(|(o, l)| src.span(o, l));
         if let Some((ns, name)) = type_name.rsplit_once('.') {
             AvroSchema::Reference {
                 name: name.to_string(),
@@ -3339,7 +3404,7 @@ fn walk_nullable_type<'input>(
     // If the `?` token is present, wrap in a nullable union `[null, T]`.
     // Reject `null?` because it would produce the invalid union `[null, null]`
     // (Avro requires each type in a union to be unique). Java also rejects this.
-    if ctx.optional.is_some() {
+    if ctx.optional().is_some() {
         if matches!(base_type, AvroSchema::Null) {
             return Err(make_diagnostic(
                 src,
@@ -3358,54 +3423,58 @@ fn walk_nullable_type<'input>(
 
 /// Walk a primitive type keyword and return the corresponding `AvroSchema`.
 fn walk_primitive_type<'input>(
-    ctx: &PrimitiveTypeContextAll<'input>,
+    ctx: &PrimitiveTypeContext<'input>,
     src: &SourceInfo,
 ) -> Result<AvroSchema> {
+    // The `typeName` label always matches the rule's first token (every
+    // alternative in `primitiveType` begins with `typeName=`), so read the
+    // context's start token directly — the generator does not expose a labeled
+    // accessor for a single-token alternative label.
     let type_tok = ctx
-        .typeName
-        .as_ref()
+        .rule_node()
+        .start()
         .ok_or_else(|| make_diagnostic(src, ctx, "missing primitive type name"))?;
-    let token_type = type_tok.get_token_type();
+    let token_type = type_tok.token_type();
 
     let schema = match token_type {
-        Idl_Boolean => AvroSchema::Boolean,
-        Idl_Int => AvroSchema::Int,
-        Idl_Long => AvroSchema::Long,
-        Idl_Float => AvroSchema::Float,
-        Idl_Double => AvroSchema::Double,
-        Idl_Bytes => AvroSchema::Bytes,
-        Idl_String => AvroSchema::String,
-        Idl_Null => AvroSchema::Null,
-        Idl_Date => AvroSchema::Logical {
+        BOOLEAN => AvroSchema::Boolean,
+        INT => AvroSchema::Int,
+        LONG => AvroSchema::Long,
+        FLOAT => AvroSchema::Float,
+        DOUBLE => AvroSchema::Double,
+        BYTES => AvroSchema::Bytes,
+        STRING => AvroSchema::String,
+        NULL => AvroSchema::Null,
+        DATE => AvroSchema::Logical {
             logical_type: LogicalType::Date,
             properties: HashMap::new(),
         },
-        Idl_Time => AvroSchema::Logical {
+        TIME => AvroSchema::Logical {
             logical_type: LogicalType::TimeMillis,
             properties: HashMap::new(),
         },
-        Idl_Timestamp => AvroSchema::Logical {
+        TIMESTAMP => AvroSchema::Logical {
             logical_type: LogicalType::TimestampMillis,
             properties: HashMap::new(),
         },
-        Idl_LocalTimestamp => AvroSchema::Logical {
+        LOCAL_TIMESTAMP => AvroSchema::Logical {
             logical_type: LogicalType::LocalTimestampMillis,
             properties: HashMap::new(),
         },
-        Idl_UUID => AvroSchema::Logical {
+        UUID => AvroSchema::Logical {
             logical_type: LogicalType::Uuid,
             properties: HashMap::new(),
         },
-        Idl_Decimal => {
+        DECIMAL => {
             // decimal(precision [, scale])
             let precision_tok = ctx
-                .precision
-                .as_ref()
-                .ok_or_else(|| make_diagnostic(src, ctx, "decimal type missing precision"))?;
-            let precision = parse_integer_as_u32(precision_tok.get_text()).map_err(|e| {
+                .precision()
+                .ok_or_else(|| make_diagnostic(src, ctx, "decimal type missing precision"))?
+                .symbol();
+            let precision = parse_integer_as_u32(precision_tok.text_or_empty()).map_err(|e| {
                 make_diagnostic_from_token(
                     src,
-                    &**precision_tok,
+                    precision_tok,
                     format!("invalid decimal precision: {e}"),
                 )
             })?;
@@ -3414,16 +3483,17 @@ fn walk_primitive_type<'input>(
             if precision == 0 {
                 return Err(make_diagnostic_from_token(
                     src,
-                    &**precision_tok,
+                    precision_tok,
                     "invalid decimal precision: 0 (must be positive)".to_string(),
                 ));
             }
 
-            let scale = if let Some(scale_tok) = ctx.scale.as_ref() {
-                parse_integer_as_u32(scale_tok.get_text()).map_err(|e| {
+            let scale_tok = ctx.scale().map(|node| node.symbol());
+            let scale = if let Some(scale_tok) = scale_tok {
+                parse_integer_as_u32(scale_tok.text_or_empty()).map_err(|e| {
                     make_diagnostic_from_token(
                         src,
-                        &**scale_tok,
+                        scale_tok,
                         format!("invalid decimal scale: {e}"),
                     )
                 })?
@@ -3435,10 +3505,7 @@ fn walk_primitive_type<'input>(
             if scale > precision {
                 return Err(make_diagnostic_from_token(
                     src,
-                    &**ctx
-                        .scale
-                        .as_ref()
-                        .expect("scale token present when scale > 0"),
+                    scale_tok.expect("scale token present when scale > 0"),
                     format!(
                         "invalid decimal scale: {scale} \
                          (greater than precision: {precision})"
@@ -3454,7 +3521,7 @@ fn walk_primitive_type<'input>(
         _ => {
             return Err(make_diagnostic_from_token(
                 src,
-                type_tok.as_ref(),
+                type_tok,
                 format!("unexpected primitive type token: {token_type}"),
             ));
         }
@@ -3465,15 +3532,15 @@ fn walk_primitive_type<'input>(
 
 /// Walk `array<fullType>`.
 fn walk_array_type<'input>(
-    ctx: &ArrayTypeContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &ArrayTypeContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let element_ctx = ctx
-        .fullType()
-        .ok_or_else(|| make_diagnostic(src, ctx, "array type missing element type"))?;
-    let items = walk_full_type(&element_ctx, token_stream, src, namespace)?;
+        .full_type()
+        .map_err(|_| make_diagnostic(src, ctx, "array type missing element type"))?;
+    let items = walk_full_type(&element_ctx, tokens, src, namespace)?;
     Ok(AvroSchema::Array {
         items: Box::new(items),
         properties: HashMap::new(),
@@ -3482,15 +3549,15 @@ fn walk_array_type<'input>(
 
 /// Walk `map<fullType>`.
 fn walk_map_type<'input>(
-    ctx: &MapTypeContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &MapTypeContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     let value_ctx = ctx
-        .fullType()
-        .ok_or_else(|| make_diagnostic(src, ctx, "map type missing value type"))?;
-    let values = walk_full_type(&value_ctx, token_stream, src, namespace)?;
+        .full_type()
+        .map_err(|_| make_diagnostic(src, ctx, "map type missing value type"))?;
+    let values = walk_full_type(&value_ctx, tokens, src, namespace)?;
     Ok(AvroSchema::Map {
         values: Box::new(values),
         properties: HashMap::new(),
@@ -3499,24 +3566,24 @@ fn walk_map_type<'input>(
 
 /// Walk `union { fullType, fullType, ... }`.
 fn walk_union_type<'input>(
-    ctx: &UnionTypeContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &UnionTypeContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
+    let ft_ctxs: Vec<_> = ctx.full_type_children().collect();
     let mut types = Vec::new();
-    for ft_ctx in ctx.fullType_all() {
-        types.push(walk_full_type(&ft_ctx, token_stream, src, namespace)?);
+    for ft_ctx in &ft_ctxs {
+        types.push(walk_full_type(ft_ctx, tokens, src, namespace)?);
     }
 
     // Reject nested unions (Avro spec: "Unions may not immediately contain
     // other unions").
-    let ft_ctxs = ctx.fullType_all();
     for (i, t) in types.iter().enumerate() {
         if matches!(t, AvroSchema::Union { .. }) {
             return Err(make_diagnostic(
                 src,
-                &*ft_ctxs[i],
+                &ft_ctxs[i],
                 "Unions may not immediately contain other unions \
                  (per the Avro specification, §schemas). Note: Java avro-tools \
                  incorrectly accepts this syntax, producing an empty union.",
@@ -3534,7 +3601,7 @@ fn walk_union_type<'input>(
         if !seen_keys.insert(key.clone()) {
             return Err(make_diagnostic(
                 src,
-                &*ft_ctxs[i],
+                &ft_ctxs[i],
                 format!("Duplicate in union: {key}"),
             ));
         }
@@ -3551,20 +3618,19 @@ fn walk_union_type<'input>(
 // ==========================================================================
 
 fn walk_message<'input>(
-    ctx: &MessageDeclarationContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &MessageDeclarationContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<(String, Message)> {
-    let doc = extract_doc_from_context(ctx, token_stream, src);
-    let props =
-        walk_schema_properties(&ctx.schemaProperty_all(), token_stream, src, MESSAGE_PROPS)?;
+    let doc = extract_doc_from_context(ctx, tokens, src);
+    let props = walk_schema_properties(ctx.schema_property_children(), tokens, src, MESSAGE_PROPS)?;
 
     // Walk the result type. `void` maps to Null.
     let result_ctx = ctx
-        .resultType()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing message return type"))?;
-    let response = walk_result_type(&result_ctx, token_stream, src, namespace)?;
+        .return_type()
+        .map_err(|_| make_diagnostic(src, ctx, "missing message return type"))?;
+    let response = walk_result_type(&result_ctx, tokens, src, namespace)?;
 
     // When the return type is a named type reference, any message-level
     // annotations are ambiguous (do they apply to the message or to the
@@ -3578,32 +3644,32 @@ fn walk_message<'input>(
         ));
     }
 
-    // The message name is stored in the `name` field of the context ext.
+    // The message name is the labeled `name=identifier` (the first identifier
+    // child; any further identifiers are `throws` error names, handled below).
     let name_ctx = ctx
-        .name
-        .as_ref()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing message name"))?;
-    let message_name = identifier_text(name_ctx);
+        .name()
+        .map_err(|_| make_diagnostic(src, ctx, "missing message name"))?;
+    let message_name = identifier_text(&name_ctx);
 
     // Walk formal parameters.
     let mut request_fields = Vec::new();
     let mut seen_param_names: HashSet<String> = HashSet::new();
-    for param_ctx in ctx.formalParameter_all() {
-        let param_doc = extract_doc_from_context(&*param_ctx, token_stream, src);
+    for param_ctx in ctx.formal_parameter_children() {
+        let param_doc = extract_doc_from_context(&param_ctx, tokens, src);
 
         let ft_ctx = param_ctx
-            .fullType()
-            .ok_or_else(|| make_diagnostic(src, &*param_ctx, "missing parameter type"))?;
-        let param_type = walk_full_type(&ft_ctx, token_stream, src, namespace)?;
+            .full_type()
+            .map_err(|_| make_diagnostic(src, &param_ctx, "missing parameter type"))?;
+        let param_type = walk_full_type(&ft_ctx, tokens, src, namespace)?;
 
         let var_ctx = param_ctx
-            .variableDeclaration()
-            .ok_or_else(|| make_diagnostic(src, &*param_ctx, "missing parameter variable"))?;
+            .variable_declaration()
+            .map_err(|_| make_diagnostic(src, &param_ctx, "missing parameter variable"))?;
         let field = walk_variable(
             &var_ctx,
             &param_type,
             param_doc.as_deref(),
-            token_stream,
+            tokens,
             src,
             namespace,
             None, // message parameters have no enclosing record name
@@ -3611,7 +3677,7 @@ fn walk_message<'input>(
         if !seen_param_names.insert(field.name.clone()) {
             return Err(make_diagnostic(
                 src,
-                &*param_ctx,
+                &param_ctx,
                 format!(
                     "duplicate parameter '{}' in message '{}'",
                     field.name, message_name
@@ -3622,7 +3688,7 @@ fn walk_message<'input>(
     }
 
     // Check for oneway.
-    let one_way = ctx.oneway.is_some();
+    let one_way = ctx.oneway_token().is_some();
 
     // One-way messages must return void (AvroSchema::Null). The Avro specification
     // requires one-way messages to have a null response and no errors. The Java
@@ -3635,13 +3701,16 @@ fn walk_message<'input>(
         ));
     }
 
-    // Check for throws clause. The `errors` field on the context ext struct
-    // contains only the error type identifiers (not the message name).
-    let errors = if !ctx.errors.is_empty() {
+    // Check for throws clause. The grammar labels the message name as
+    // `name=identifier` and the thrown error types as `errors+=identifier`,
+    // all sharing the `identifier` rule. `name` is the first identifier child,
+    // so the error identifiers are every identifier child after the first.
+    let error_ctxs: Vec<_> = ctx.identifier_children().skip(1).collect();
+    let errors = if !error_ctxs.is_empty() {
         let mut error_schemas = Vec::new();
-        for error_id_ctx in &ctx.errors {
+        for error_id_ctx in &error_ctxs {
             let error_name = identifier_text(error_id_ctx);
-            let error_span = span_from_context(&**error_id_ctx).map(|(o, l)| src.span(o, l));
+            let error_span = span_from_context(error_id_ctx).map(|(o, l)| src.span(o, l));
             if let Some((ns, name)) = error_name.rsplit_once('.') {
                 error_schemas.push(AvroSchema::Reference {
                     name: name.to_string(),
@@ -3684,18 +3753,18 @@ fn walk_message<'input>(
 
 /// Walk a `resultType`: either `void` (produces Null) or a `plainType`.
 fn walk_result_type<'input>(
-    ctx: &ResultTypeContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &ResultTypeContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
     namespace: Option<&str>,
 ) -> Result<AvroSchema> {
     // If there's a Void token, return Null.
-    if ctx.Void().is_some() {
+    if ctx.void_token().is_some() {
         return Ok(AvroSchema::Null);
     }
     // Otherwise walk the plainType child.
-    if let Some(plain_ctx) = ctx.plainType() {
-        return walk_plain_type(&plain_ctx, token_stream, src, namespace);
+    if let Some(plain_ctx) = ctx.plain_type() {
+        return walk_plain_type(&plain_ctx, tokens, src, namespace);
     }
     // Fallback: void.
     Ok(AvroSchema::Null)
@@ -3706,76 +3775,69 @@ fn walk_result_type<'input>(
 // ==========================================================================
 
 fn walk_json_value<'input>(
-    ctx: &JsonValueContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &JsonValueContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
 ) -> Result<Value> {
-    if let Some(obj_ctx) = ctx.jsonObject() {
-        return walk_json_object(&obj_ctx, token_stream, src);
+    if let Some(obj_ctx) = ctx.json_object() {
+        return walk_json_object(&obj_ctx, tokens, src);
     }
-    if let Some(arr_ctx) = ctx.jsonArray() {
-        return walk_json_array(&arr_ctx, token_stream, src);
+    if let Some(arr_ctx) = ctx.json_array() {
+        return walk_json_array(&arr_ctx, tokens, src);
     }
-    if let Some(lit_ctx) = ctx.jsonLiteral() {
+    if let Some(lit_ctx) = ctx.json_literal() {
         return walk_json_literal(&lit_ctx, src);
     }
     Err(make_diagnostic(src, ctx, "empty JSON value"))
 }
 
-fn walk_json_literal<'input>(
-    ctx: &JsonLiteralContextAll<'input>,
-    src: &SourceInfo,
-) -> Result<Value> {
+fn walk_json_literal<'input>(ctx: &JsonLiteralContext<'input>, src: &SourceInfo) -> Result<Value> {
     let tok = ctx
-        .literal
-        .as_ref()
-        .ok_or_else(|| make_diagnostic(src, ctx, "missing JSON literal token"))?;
-    let token_type = tok.get_token_type();
-    let text = tok.get_text();
+        .literal()
+        .map_err(|_| make_diagnostic(src, ctx, "missing JSON literal token"))?
+        .symbol();
+    let token_type = tok.token_type();
+    let text = tok.text_or_empty();
 
     match token_type {
-        Idl_Null => Ok(Value::Null),
-        Idl_BTrue => Ok(Value::Bool(true)),
-        Idl_BFalse => Ok(Value::Bool(false)),
-        Idl_StringLiteral => {
+        NULL => Ok(Value::Null),
+        B_TRUE => Ok(Value::Bool(true)),
+        B_FALSE => Ok(Value::Bool(false)),
+        STRING_LITERAL => {
             let unescaped = get_string_from_literal(text);
             Ok(Value::String(unescaped))
         }
-        Idl_IntegerLiteral => parse_integer_literal(text).map_err(|e| {
-            make_diagnostic_from_token(src, tok.as_ref(), format!("invalid integer literal: {e}"))
+        INTEGER_LITERAL => parse_integer_literal(text).map_err(|e| {
+            make_diagnostic_from_token(src, tok, format!("invalid integer literal: {e}"))
         }),
-        Idl_FloatingPointLiteral => parse_floating_point_literal(text).map_err(|e| {
-            make_diagnostic_from_token(
-                src,
-                tok.as_ref(),
-                format!("invalid floating-point literal: {e}"),
-            )
+        FLOATING_POINT_LITERAL => parse_floating_point_literal(text).map_err(|e| {
+            make_diagnostic_from_token(src, tok, format!("invalid floating-point literal: {e}"))
         }),
         _ => Err(make_diagnostic_from_token(
             src,
-            tok.as_ref(),
+            tok,
             format!("unexpected JSON literal token type: {token_type}"),
         )),
     }
 }
 
 fn walk_json_object<'input>(
-    ctx: &JsonObjectContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &JsonObjectContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
 ) -> Result<Value> {
     let mut map = serde_json::Map::new();
-    for pair_ctx in ctx.jsonPair_all() {
+    for pair_ctx in ctx.json_pair_children() {
         let key_tok = pair_ctx
-            .name
-            .as_ref()
-            .ok_or_else(|| make_diagnostic(src, &*pair_ctx, "missing JSON object key"))?;
-        let key = get_string_from_literal(key_tok.get_text());
+            .name()
+            .map_err(|_| make_diagnostic(src, &pair_ctx, "missing JSON object key"))?
+            .symbol();
+        let key = get_string_from_literal(key_tok.text_or_empty());
 
         let value_ctx = pair_ctx
-            .jsonValue()
-            .ok_or_else(|| make_diagnostic(src, &*pair_ctx, "missing JSON object value"))?;
-        let value = walk_json_value(&value_ctx, token_stream, src)?;
+            .json_value()
+            .map_err(|_| make_diagnostic(src, &pair_ctx, "missing JSON object value"))?;
+        let value = walk_json_value(&value_ctx, tokens, src)?;
 
         map.insert(key, value);
     }
@@ -3783,13 +3845,13 @@ fn walk_json_object<'input>(
 }
 
 fn walk_json_array<'input>(
-    ctx: &JsonArrayContextAll<'input>,
-    token_stream: &TS<'input>,
+    ctx: &JsonArrayContext<'input>,
+    tokens: &TokenStore,
     src: &SourceInfo,
 ) -> Result<Value> {
     let mut elements = Vec::new();
-    for val_ctx in ctx.jsonValue_all() {
-        elements.push(walk_json_value(&val_ctx, token_stream, src)?);
+    for val_ctx in ctx.json_value_children() {
+        elements.push(walk_json_value(&val_ctx, tokens, src)?);
     }
     Ok(Value::Array(elements))
 }
@@ -3799,10 +3861,10 @@ fn walk_json_array<'input>(
 // ==========================================================================
 
 /// Extract the text from an `IdentifierContext`, removing backtick escapes.
-fn identifier_text<'input>(ctx: &IdentifierContextAll<'input>) -> String {
+fn identifier_text<'input>(ctx: &IdentifierContext<'input>) -> String {
     // The generated parser stores the matched token in `ctx.word`.
-    // We use `get_text()` on the context itself as a reliable fallback.
-    let text = ctx.get_text();
+    // We use `text()` on the context itself as a reliable fallback.
+    let text = ctx.text();
     text.replace('`', "")
 }
 
@@ -4469,18 +4531,14 @@ fn json_value_as_u32(v: &Value) -> Option<u32> {
 ///
 /// Records the consumed doc comment's token index in `src.consumed_doc_indices`
 /// so that orphaned doc comments can be detected after the full tree walk.
-fn extract_doc_from_context<'input, T>(
-    ctx: &T,
-    token_stream: &TS<'input>,
+fn extract_doc_from_context<'a>(
+    ctx: &impl AsRuleNode<'a>,
+    tokens: &TokenStore,
     src: &SourceInfo,
-) -> Option<String>
-where
-    T: antlr4rust::parser_rule_context::ParserRuleContext<'input>,
-{
-    let start = ctx.start();
-    let token_index = start.get_token_index();
+) -> Option<String> {
+    let token_index = ctx.as_rule_node().start_id()?.index();
     extract_doc_comment(
-        token_stream,
+        tokens,
         token_index,
         Some(&mut src.consumed_doc_indices.borrow_mut()),
     )
@@ -4494,30 +4552,20 @@ where
 /// checks for doc comment tokens between the previous call's position and the
 /// current call's position. Our approach is equivalent: after the full walk, any
 /// `DocComment` token not in the consumed set is orphaned.
-fn collect_orphaned_doc_comment_warnings<'input, S>(
-    token_stream: &S,
-    consumed_indices: &HashSet<isize>,
+fn collect_orphaned_doc_comment_warnings(
+    tokens: &TokenStore,
+    consumed_indices: &HashSet<usize>,
     src: &SourceInfo,
-) -> Vec<Warning>
-where
-    S: TokenStream<'input>,
-{
+) -> Vec<Warning> {
     let mut warnings = Vec::new();
-    let token_count = token_stream.size();
 
-    for i in 0..token_count {
-        let tok_wrapper = token_stream.get(i);
-        let token: &<S::TF as TokenFactory<'input>>::Inner = tok_wrapper.borrow();
-        let token_type = token.get_token_type();
-
-        if token_type == Idl_DocComment && !consumed_indices.contains(&i) {
-            warnings.push(Warning::out_of_place_doc_comment(
-                token.get_line(),
-                token.get_column(),
-                src,
-                token.get_start(),
-                token.get_stop(),
-            ));
+    for i in 0..tokens.len() {
+        let Ok(id) = TokenId::try_from(i) else { break };
+        if tokens.token_type(id) == Some(DOC_COMMENT)
+            && !consumed_indices.contains(&i)
+            && let Some(token) = tokens.view(id)
+        {
+            warnings.push(Warning::out_of_place_doc_comment(token, src));
         }
     }
 
@@ -4527,24 +4575,24 @@ where
 /// Parse a single import statement and append it as a `DeclItem::Import` to
 /// the declaration items list.
 fn collect_single_import<'input>(
-    import_ctx: &ImportStatementContextAll<'input>,
+    import_ctx: &ImportStatementContext<'input>,
     decl_items: &mut Vec<DeclItem>,
     src: &SourceInfo,
 ) {
-    let kind_tok = import_ctx.importType.as_ref();
-    let location_tok = import_ctx.location.as_ref();
+    let kind_tok = import_ctx.import_type().ok();
+    let location_tok = import_ctx.location().ok();
 
     if let (Some(kind), Some(loc)) = (kind_tok, location_tok) {
-        let import_kind = match kind.get_token_type() {
-            Idl_IDL => ImportKind::Idl,
-            Idl_Protocol => ImportKind::Protocol,
-            Idl_Schema => ImportKind::Schema,
+        let import_kind = match kind.symbol().token_type() {
+            IDL => ImportKind::Idl,
+            PROTOCOL => ImportKind::Protocol,
+            SCHEMA => ImportKind::Schema,
             _ => return,
         };
 
         decl_items.push(DeclItem::Import(ImportEntry {
             kind: import_kind,
-            path: get_string_from_literal(loc.get_text()),
+            path: get_string_from_literal(loc.symbol().text_or_empty()),
             span: span_from_context(import_ctx).map(|(o, l)| src.span(o, l)),
         }));
     }

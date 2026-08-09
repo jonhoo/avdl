@@ -24,17 +24,13 @@ Error:
         identifier
 
 Error: 
-  x line 1:30 unexpected token `}`
+  x line 1:30 mismatched input '}' expecting '(' (annotations require
+  | `@name(value)` syntax)
    ,-[<input>:1:31]
  1 | protocol P { enum E { A; B; C } }
    :                               |
-   :                               `-- unexpected `}`
+   :                               `-- line 1:30 mismatched input '}' expecting '(' (annotations require `@name(value)` syntax)
    `----
-  help: expected one of: protocol, namespace, import, idl, schema, enum,
-        fixed, error, record, array, map, union, boolean, int, long, float,
-        double, string, bytes, null, true, false, decimal, date, time_ms,
-        timestamp_ms, local_timestamp_ms, uuid, void, oneway, throws, ?,
-        identifier
 
 Error: 
   x line 1:32 unexpected '}' expected end of file
